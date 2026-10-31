@@ -40,7 +40,7 @@ allowit-vendor-paysh-stock = { path = "rails/solana/paysh-stock" }
 allowit-solana-paysh-cooperating = { path = "rails/solana/paysh-cooperating" }
 allowit-tempo = { path = "rails/tempo" }
 allowit-tempo-services = { path = "rails/tempo/services" }
-allowit-stellar-wallet = { git = "https://github.com/allowit-hq/allowit-contracts-stellar.git", rev = "2415bff42c972281fd4648bdbdc44dcf3cfccf82" }
+allowit-stellar-wallet = { git = "https://github.com/allowit-hq/allowit-contracts-stellar.git", rev = "8fc56e4a433964407ac539573a58e9e1ae83a5d6" }
 
 [profile.release]
 lto = true
