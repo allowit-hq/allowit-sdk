@@ -1,97 +1,71 @@
-//! `allowit status POLICY REQUEST_ID [--wait 60s] [--json]`: reads one request
-//! without creating another. Posts to `/api/harness/OWNER/POLICY/status` by
-//! server `requestId`, then by the client `--request-id`. `--wait` polls a
-//! pending request (default 0s, at most 10m). Tempo and installed Stellar
-//! wallets read their own journals and endpoints.
-//!
-//! ```text
-//! allowit exec POLICY --action transfer --rail solana --op transferUSDC \
-//!   --addr SOLANA_ADDRESS --amount 1 --request-id exec-0003
-//! # exit 12 (pending) or 5 (uncertain)
-//! allowit status POLICY exec-0003 --wait 60s
-//! allowit status POLICY SERVER_REQUEST_ID --json
-//! ```
+//! `allowit status ID`: reads one request without creating another.
 use crate::{
-    action::{self, Begin, check_status, poll},
-    args,
-    client::Client,
-    config::Config,
-    error::{self, Error, Result},
-    output::{self, classify},
-    request::encode,
+    ctx::Ctx,
+    error::{Error, Result},
+    request::request_id_valid,
     routing,
-    skill::{self, Network, Skill, text},
+    settings::journal,
+    vendors,
 };
-use serde_json::json;
+use std::time::Duration;
 
-pub(crate) fn run(argv: &[String], stdout: &mut String, stderr: &mut String) -> Result<i32> {
-    let parsed = match action::begin("status", argv, stdout, stderr)? {
-        Begin::Done(code) => return Ok(code),
-        Begin::Policy(parsed) => parsed,
-    };
-    let mut c = Client::new(Config::load(&parsed.pos[0])?)?;
-    if let Some(network) = routing::selected() {
-        let skill = Skill::read(&mut c)?;
-        if routing::normalize(skill.get("network"))? != network {
-            return Err(Error::config(
-                "Selected network differs from policy deployment",
-            ));
-        }
-    }
-    status(&mut c, &parsed, stdout, stderr)
+pub(crate) const EXAMPLES: &str = "\
+Examples:
+  allowit status pay-001
+  allowit status pay-001 --wait 60s
+  allowit status pay-001 --wallet CWALLET… --json";
+
+/// Read a request's state. The local journal supplies its rail and wallet;
+/// --wallet is the fallback
+#[derive(clap::Args, Debug)]
+pub(crate) struct Args {
+    /// The request ID that exec printed
+    pub id: String,
+    /// Wait up to DUR for a final state
+    #[arg(long, value_name = "DUR", default_value = "0", value_parser = super::parse_wait)]
+    pub wait: Duration,
 }
 
-fn status(
-    c: &mut Client,
-    args: &args::Args,
-    stdout: &mut String,
-    stderr: &mut String,
-) -> Result<i32> {
-    let id = &args.pos[1];
-    let net = skill::status_network(c, stderr)?;
-    let mut r = match c.call("POST", "status", Some(&encode(&json!({"requestId":id})))) {
-        Ok(r) => r,
-        Err(e) if e.status == Some(404) => match c.call(
-            "POST",
-            "status",
-            Some(&encode(&json!({"clientRequestId":id}))),
-        ) {
-            Err(e) if e.status == Some(404) => {
-                return Err(Error::uncertain(format!(
-                    "Allowit has no request {id} for this policy yet. If an exec with --request-id {id} may have been sent, rerun that identical command: Allowit applies a request ID at most once"
+pub(crate) fn run(args: Args, cx: &mut Ctx) -> Result<i32> {
+    if !request_id_valid(&args.id) {
+        return Err(Error::usage(
+            "ID is the request ID that exec or eval printed",
+        ));
+    }
+    cx.out.request_id = Some(args.id.clone());
+    let dir = cx.dir()?;
+    let entry = journal::load(&dir, &args.id)?;
+    let rail = match &entry {
+        Some(e) => {
+            let recorded = routing::info(&e.rail)?;
+            if let Some(flag) = &cx.global.rail
+                && routing::normalize(flag)? != recorded.id
+            {
+                return Err(Error::usage(format!(
+                    "request {} belongs to {}",
+                    args.id, recorded.id
                 )));
             }
-            x => x?,
+            recorded
+        }
+        None => cx.rail()?,
+    };
+    let wallet = match cx.global.wallet.clone() {
+        Some(w) => Some(w),
+        None => match entry.as_ref().and_then(|e| e.wallet.clone()) {
+            Some(w) => Some(w),
+            None => cx.wallet(rail)?,
         },
-        Err(e) => return Err(e),
     };
-    let map_error = |e: Error| {
-        Error::uncertain(format!(
-            "{e}\nThe state of request {id} is unknown; check again with allowit status"
-        ))
-    };
-    check_status(&r, id, net).map_err(map_error)?;
-    let outcome = text(&r["outcome"]);
-    if outcome == "pending"
-        || (outcome == "awaiting_input" || ["submitted", "ready"].contains(&text(&r["status"])))
-            && !args.wait.is_zero()
-    {
-        r = poll(c, text(&r["requestId"]), args.wait, &r, "status", net).map_err(map_error)?;
+    if let Some(w) = &wallet {
+        vendors::address::check_wallet(rail.family, w)?;
     }
-    if net == Network::Unknown && output::needs_network(&r) {
-        return Err(Error::uncertain(format!(
-            "Allowit reported outcome {} with status {} for request {id}, but the policy's network could not be established, so the CLI cannot tell a Local dev mock recording from a wallet transfer. Nothing is confirmed as recorded, signed or paid. Check again with allowit status once allowit show works",
-            error::quoted(text(&r["outcome"])),
-            error::quoted(text(&r["status"]))
-        )));
+    let vendor = vendors::rail(rail);
+    let code = routing::with_network(Some(rail.id.into()), || {
+        vendor.status(cx, &args.id, wallet.as_deref(), args.wait)
+    })?;
+    if entry.is_some() {
+        journal::finish(&dir, &args.id, code)?;
     }
-    let res = classify(&r, "status");
-    if args.json {
-        r["state"] = json!(res.state);
-        r["exitCode"] = json!(res.exit);
-        *stdout += &output::json(&r);
-    } else {
-        *stdout += &output::print_result(&r, &res, "");
-    }
-    Ok(res.exit)
+    Ok(code)
 }

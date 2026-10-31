@@ -1,16 +1,20 @@
-//! `allowit skills search QUERY`: searches catalog services through
-//! `GET /api/gateway/services?query=QUERY`.
-//!
-//! ```text
-//! allowit skills search "image generation"
-//! allowit skills show SERVICE_ID
-//! ```
-use super::ROUTE;
-use crate::{
-    error::Result,
-    gateway::{args::Invocation, control},
-};
+//! `allowit skills search QUERY`.
+use crate::{ctx::Ctx, error::Result};
 
-pub(crate) fn run(inv: &Invocation, query: Option<&String>, stdout: &mut String) -> Result<i32> {
-    control::read(inv, ROUTE, query, stdout)
+pub(crate) const EXAMPLES: &str = "\
+Examples:
+  allowit skills search weather
+  allowit skills search \"image generation\" --json";
+
+/// Search the catalog
+#[derive(clap::Args, Debug)]
+pub(crate) struct Args {
+    /// Search text
+    pub query: String,
+}
+
+pub(crate) fn run(args: Args, cx: &mut Ctx) -> Result<i32> {
+    let value = super::read(Some(&args.query))?;
+    cx.out.json_value(&value);
+    Ok(0)
 }

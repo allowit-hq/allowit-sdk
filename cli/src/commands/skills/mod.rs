@@ -1,31 +1,52 @@
-//! `allowit skills [list|search|show] [QUERY]`: reads the backend service catalog.
-//! Every action reads `GET /api/gateway/services`; `QUERY` is sent as `query`.
-//! `ls` and `endpoints` alias `list` and `show`.
-//!
-//! ```text
-//! allowit skills list --sandbox
-//! allowit skills search weather
-//! allowit skills show SERVICE_ID
-//! allowit call SERVICE_ID --input '{"city":"Paris"}' --sandbox
-//! ```
-mod list;
+//! `allowit skills`: the paid-service catalog.
+mod ls;
 mod search;
 mod show;
 
 use crate::{
-    error::{Error, Result},
-    gateway::{args::Invocation, control},
+    ctx::Ctx,
+    error::Result,
+    gateway::{Common, args::Invocation, control},
 };
+use clap::Subcommand;
+
+pub(crate) const EXAMPLES: &str = "\
+Examples:
+  allowit skills search weather
+  allowit skills show SERVICE_ID
+  allowit skills ls";
 
 pub(crate) const ROUTE: &str = "/api/gateway/services";
 
-pub(crate) fn run(inv: &Invocation, stdout: &mut String) -> Result<i32> {
-    let c = control::input(inv)?;
-    let query = c.pos.get(1);
-    match c.pos.first().map(String::as_str).unwrap_or("list") {
-        "list" | "ls" => list::run(inv, query, stdout),
-        "search" => search::run(inv, query, stdout),
-        "show" | "endpoints" => show::run(inv, query, stdout),
-        _ => Err(Error::usage("unknown skills action")),
+/// Search and inspect the paid-service catalog
+#[derive(Subcommand, Debug)]
+pub(crate) enum Command {
+    #[command(before_help = search::EXAMPLES)]
+    Search(search::Args),
+    #[command(before_help = show::EXAMPLES)]
+    Show(show::Args),
+    #[command(visible_alias = "list", before_help = ls::EXAMPLES)]
+    Ls(ls::Args),
+}
+
+pub(crate) fn run(command: Command, cx: &mut Ctx) -> Result<i32> {
+    cx.vendor()?.gateway("skills")?;
+    match command {
+        Command::Search(a) => search::run(a, cx),
+        Command::Show(a) => show::run(a, cx),
+        Command::Ls(a) => ls::run(a, cx),
     }
+}
+
+/// Reads the catalog, optionally narrowed by a query.
+pub(crate) fn read(query: Option<&String>) -> Result<serde_json::Value> {
+    let inv = Invocation {
+        group: "skills".into(),
+        args: vec![],
+        common: Common::default(),
+    };
+    let mut text = String::new();
+    control::read(&inv, ROUTE, query, &mut text)?;
+    serde_json::from_str(&text)
+        .map_err(|_| crate::error::Error::uncertain("the catalog reply is not JSON"))
 }

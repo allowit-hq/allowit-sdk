@@ -1,32 +1,70 @@
-//! `allowit wallet SUBCOMMAND`: local agent keys and owner wallet handoffs.
-//!
-//! `generate` writes a new private signer file; `show` prints its public
-//! metadata. Both are local only. `configure` and `approve` read Stellar
-//! testnet account data from Horizon and print owner browser links; they submit
-//! no transaction and hold no owner key.
-//!
-//! ```text
-//! allowit wallet generate --network stellar:testnet --output agent.key
-//! allowit wallet show --network stellar:testnet agent.key > agent.json
-//! allowit setup --input-file agent.json
-//! allowit wallet configure --network stellar:testnet --owner G_OWNER \
-//!   --agent G_AGENT --engine G_ENGINE --request-id setup-0001
-//! ```
+//! `allowit wallet`: policy wallets. A wallet is identified only by its
+//! address; `wallet use` caches it as the rail's default.
 mod approve;
+mod close;
 mod configure;
-mod generate;
+mod create;
+mod fund;
+mod ls;
+mod pause;
+mod resume;
 mod show;
+mod update;
+mod r#use;
+mod withdraw;
 
-use crate::error::{Error, Result};
+use crate::{ctx::Ctx, error::Result};
+use clap::Subcommand;
 
-pub(crate) fn run(args: &[String], stdout: &mut String) -> Result<i32> {
-    match args.first().map(String::as_str) {
-        Some("configure") => configure::run(&args[1..], stdout),
-        Some("approve") => approve::run(&args[1..], stdout),
-        Some("generate") => generate::run(args, stdout),
-        Some("show") if args.len() == 2 => show::run(&args[1], stdout),
-        _ => Err(Error::usage(
-            "allowit wallet generate --network NETWORK --output PRIVATE_FILE | allowit wallet show PRIVATE_FILE",
-        )),
+pub(crate) const EXAMPLES: &str = "\
+Examples:
+  allowit wallet create --kind common --asset XLM --policy policy.rs --owner owner --agent agent
+  allowit wallet use CWALLET…
+  allowit wallet fund XLM:200 --from owner
+  allowit wallet show";
+
+/// Create, select, fund and manage policy wallets
+#[derive(Subcommand, Debug)]
+pub(crate) enum Command {
+    #[command(before_help = create::EXAMPLES)]
+    Create(create::Args),
+    #[command(visible_alias = "list", before_help = ls::EXAMPLES)]
+    Ls(ls::Args),
+    #[command(before_help = show::EXAMPLES)]
+    Show(show::Args),
+    #[command(before_help = r#use::EXAMPLES)]
+    Use(r#use::Args),
+    #[command(before_help = fund::EXAMPLES)]
+    Fund(fund::Args),
+    #[command(before_help = withdraw::EXAMPLES)]
+    Withdraw(withdraw::Args),
+    #[command(before_help = update::EXAMPLES)]
+    Update(update::Args),
+    #[command(before_help = pause::EXAMPLES)]
+    Pause(pause::Args),
+    #[command(before_help = resume::EXAMPLES)]
+    Resume(resume::Args),
+    #[command(before_help = close::EXAMPLES)]
+    Close(close::Args),
+    #[command(hide = true, before_help = configure::EXAMPLES)]
+    Configure(configure::Args),
+    #[command(hide = true, before_help = approve::EXAMPLES)]
+    Approve(approve::Args),
+}
+
+pub(crate) fn run(command: Command, cx: &mut Ctx) -> Result<i32> {
+    match command {
+        Command::Create(a) => create::run(a, cx),
+        Command::Ls(a) => ls::run(a, cx),
+        Command::Show(a) => show::run(a, cx),
+        Command::Use(a) => r#use::run(a, cx),
+        Command::Fund(a) => fund::run(a, cx),
+        Command::Withdraw(a) => withdraw::run(a, cx),
+        Command::Update(a) => update::run(a, cx),
+        Command::Pause(a) => pause::run(a, cx),
+        Command::Resume(a) => resume::run(a, cx),
+        Command::Close(a) => close::run(a, cx),
+        Command::Configure(a) => configure::run(a, cx),
+        Command::Approve(a) => approve::run(a, cx),
     }
 }

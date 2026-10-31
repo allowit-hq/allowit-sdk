@@ -1,28 +1,42 @@
-//! `allowit mcp`: local MCP transport for the same Allowit backend command boundary.
-//! Reads newline-delimited JSON-RPC on stdin and writes replies on stdout.
-//! Tools: `allowit_call`, `allowit_services`, `allowit_status`, which call
-//! `/api/gateway/quote`, `/api/gateway/call`, `/api/gateway/services` and
-//! `/api/gateway/operations/status`. `allowit claude` and `allowit codex`
-//! start it for the agent.
-//!
-//! ```text
-//! printf '%s\n' '{"jsonrpc":"2.0","id":1,"method":"tools/list"}' \
-//!   | allowit mcp --sandbox
-//! allowit claude --sandbox -- -p "List Allowit services"   # starts allowit mcp
-//! ```
+//! `allowit mcp`: the local MCP server for paid services. Reads
+//! newline-delimited JSON-RPC on stdin and writes replies on stdout. Tools:
+//! `allowit_call`, `allowit_services` and `allowit_status`. `allowit claude`
+//! and `allowit codex` start it for the agent.
 mod tools;
 
 use crate::{
+    ctx::Ctx,
     error::{Error, Result},
-    gateway::args::Invocation,
+    gateway::args::parse,
 };
 use serde_json::{Value, json};
 use std::io::{BufRead, Read, Write};
 
-pub(crate) fn run(inv: &Invocation, stderr: &mut String) -> Result<i32> {
-    if !inv.args.is_empty() {
+pub(crate) const EXAMPLES: &str = "\
+Examples:
+  printf '%s\\n' '{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/list\"}' | allowit mcp
+  allowit mcp -- --sandbox";
+
+/// Run the MCP server for paid services on stdin and stdout
+#[derive(clap::Args, Debug)]
+pub(crate) struct Args {
+    /// Service flags: --sandbox, --policy VERSION@ADDR, --account NAME
+    #[arg(
+        trailing_var_arg = true,
+        allow_hyphen_values = true,
+        value_name = "FLAGS"
+    )]
+    pub args: Vec<String>,
+}
+
+pub(crate) fn run(args: Args, cx: &mut Ctx) -> Result<i32> {
+    cx.vendor()?.gateway("mcp")?;
+    let mut argv = vec!["mcp".to_owned()];
+    argv.extend(args.args);
+    let inv = parse(&argv)?;
+    if !inv.args.iter().all(|a| a == "--") {
         return Err(Error::usage(
-            "usage: allowit mcp [--policy version@addr] [--sandbox]",
+            "allowit mcp takes only service flags: --sandbox, --policy, --account",
         ));
     }
     let stdin = std::io::stdin();
@@ -48,7 +62,7 @@ pub(crate) fn run(inv: &Invocation, stderr: &mut String) -> Result<i32> {
             continue;
         }
         let id = message["id"].clone();
-        let result = tools::dispatch(&message, inv, stderr);
+        let result = tools::dispatch(&message, &inv, &mut cx.out.stderr);
         let response = match result {
             Ok(v) => json!({"jsonrpc":"2.0","id":id,"result":v}),
             Err(e) => {

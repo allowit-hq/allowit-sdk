@@ -1,24 +1,18 @@
-//! `allowit wallet show --network CAIP2 PRIVATE_FILE`: prints the public
-//! metadata of an existing signer file. Local only; prints no private material.
-//! The output is the input that `allowit setup` accepts.
-//!
-//! ```text
-//! allowit wallet generate --network stellar:testnet --output agent.key
-//! allowit wallet show --network stellar:testnet agent.key > agent.json
-//! allowit setup --input-file agent.json
-//! ```
-use crate::{
-    error::{Error, Result},
-    routing,
-    wallet::inspect_wallet,
-};
-use std::path::Path;
+//! `allowit wallet show`.
+use crate::{ctx::Ctx, error::Result};
 
-pub(crate) fn run(path: &str, stdout: &mut String) -> Result<i32> {
-    let value = inspect_wallet(
-        &routing::selected().ok_or_else(|| Error::usage("wallet show requires --network"))?,
-        Path::new(path),
-    )?;
-    *stdout += &crate::output::json(&serde_json::to_value(value).unwrap());
-    Ok(0)
+pub(crate) const EXAMPLES: &str = "\
+Examples:
+  allowit wallet show
+  allowit wallet show --wallet CWALLET… --json";
+
+/// Show the wallet: its roles, asset and state
+#[derive(clap::Args, Debug)]
+pub(crate) struct Args {}
+
+pub(crate) fn run(_: Args, cx: &mut Ctx) -> Result<i32> {
+    let rail = cx.rail()?;
+    let wallet = cx.wallet(rail)?;
+    let vendor = cx.vendor()?;
+    vendor.wallet_show(cx, wallet.as_deref())
 }

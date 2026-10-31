@@ -1,14 +1,29 @@
-//! `allowit codex -- [native arguments]`: launches Codex with the Allowit MCP
-//! server (`allowit mcp`). Requires a ChatGPT sign-in; API-key environment and
-//! provider overrides are removed or refused. The agent gets only the selected
-//! authority: the account token, or `ALLOWIT_TOKEN` with `--policy`.
-//!
-//! ```text
-//! export ALLOWIT_URL=https://allowit.example ALLOWIT_TOKEN=OWNER.POLICY.SECRET
-//! allowit codex --policy 3@POLICY_ADDRESS -- "Buy one search result under 0.05 USDC"
-//! ```
-use crate::{agents, error::Result, gateway::args::Invocation};
+//! `allowit codex [-- ARGS]`: Codex with the paid-service MCP server.
+use crate::{ctx::Ctx, error::Result, gateway::args::parse};
 
-pub(crate) fn run(inv: &Invocation) -> Result<i32> {
-    agents::run("codex", &inv.args, &inv.common)
+pub(crate) const EXAMPLES: &str = "\
+Examples:
+  allowit codex -- \"Buy one search result under 0.05 USDC\"
+  allowit codex -- --policy 3@POLICY_ADDRESS \"Find a weather API\"";
+
+/// Run Codex with the AllowIt MCP server. Needs a ChatGPT sign-in; API-key
+/// settings are removed
+#[derive(clap::Args, Debug)]
+pub(crate) struct Args {
+    /// Service flags, then Codex arguments
+    #[arg(
+        trailing_var_arg = true,
+        allow_hyphen_values = true,
+        value_name = "ARGS"
+    )]
+    pub args: Vec<String>,
+}
+
+pub(crate) fn run(args: Args, cx: &mut Ctx) -> Result<i32> {
+    // Codex reaches paid services through the MCP tools.
+    cx.vendor()?.gateway("codex")?;
+    let mut argv = vec!["codex".to_owned()];
+    argv.extend(args.args);
+    let inv = parse(&argv)?;
+    crate::agents::run("codex", &inv.args, &inv.common)
 }

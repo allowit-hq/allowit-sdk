@@ -1,22 +1,50 @@
-//! `allowit whoami`: shows the selected account. Reads `GET /api/gateway/whoami`
-//! with `ALLOWIT_ACCOUNT_TOKEN`. Takes no input and refuses `--policy`.
-//!
-//! ```text
-//! export ALLOWIT_URL=https://allowit.example ALLOWIT_ACCOUNT_TOKEN=TOKEN
-//! allowit whoami --json
-//! allowit skills list
-//! ```
+//! `allowit whoami`: the current rail, agent key and wallet, and the engine
+//! account when `ALLOWIT_ACCOUNT_TOKEN` is set.
 use crate::{
-    error::{Error, Result},
-    gateway::{args::Invocation, control},
+    config::env_value,
+    ctx::Ctx,
+    error::Result,
+    gateway::{ACCOUNT_TOKEN_ENV, Common, args::Invocation, control},
 };
+use serde_json::{Value, json};
 
-pub(crate) fn run(inv: &Invocation, stdout: &mut String) -> Result<i32> {
-    let c = control::input(inv)?;
-    if !c.pos.is_empty() {
-        return Err(Error::usage("usage: allowit whoami"));
+pub(crate) const EXAMPLES: &str = "\
+Examples:
+  allowit whoami
+  allowit whoami --json";
+
+/// Show the current rail, agent key, default wallet and engine account
+#[derive(clap::Args, Debug)]
+pub(crate) struct Args {}
+
+pub(crate) fn run(_: Args, cx: &mut Ctx) -> Result<i32> {
+    let rail = cx.rail_opt()?;
+    let mut value = json!({
+        "rail": rail.map(|r| r.id),
+        "agent": Value::Null,
+        "agentAddress": Value::Null,
+        "wallet": Value::Null,
+    });
+    if let Some(rail) = rail {
+        let settings = cx.settings()?.rail(rail.id);
+        if let Some(name) = &settings.agent {
+            value["agent"] = json!(name);
+            if let Ok(key) = cx.key(name) {
+                value["agentAddress"] = json!(key.address);
+            }
+        }
+        value["wallet"] = json!(cx.wallet(rail)?);
     }
-    control::require_account_authority(inv)?;
-    control::public_fields(&c.input, &[])?;
-    control::read(inv, "/api/gateway/whoami", None, stdout)
+    if !env_value(ACCOUNT_TOKEN_ENV).is_empty() {
+        let inv = Invocation {
+            group: "whoami".into(),
+            args: vec![],
+            common: Common::default(),
+        };
+        let mut reply = String::new();
+        control::read(&inv, "/api/gateway/whoami", None, &mut reply)?;
+        value["account"] = serde_json::from_str(&reply).unwrap_or(Value::Null);
+    }
+    cx.out.value(&value);
+    Ok(0)
 }
