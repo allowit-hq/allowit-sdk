@@ -4,6 +4,9 @@
 import {writeFile} from 'node:fs/promises';
 import {createRequire} from 'node:module';
 import {pathToFileURL} from 'node:url';
+if (!process.env.ALLOWIT_SOLANA_NATIVE) {
+  throw new Error('Set ALLOWIT_SOLANA_NATIVE to the allowit-contracts-solana native/ folder');
+}
 const native = pathToFileURL(`${process.env.ALLOWIT_SOLANA_NATIVE}/`);
 const {
   ComputeBudgetProgram,

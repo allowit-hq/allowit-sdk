@@ -26,7 +26,10 @@ case "${1-}" in
   *) echo "usage: scripts/build.sh [--check | --update]" >&2; exit 2 ;;
 esac
 
-workspaces=$(git ls-files -- '*Cargo.toml' | while read -r m; do
+# Tracked and new manifests, so an unstaged workspace is checked too.
+manifests=$(git ls-files --cached --others --exclude-standard -- '*Cargo.toml' \
+  | while read -r m; do if [ -f "$m" ]; then echo "$m"; fi; done)
+workspaces=$(for m in $manifests; do
   if grep -q '^\[workspace\]' "$m"; then echo "$m"; fi
 done)
 all=""
@@ -95,7 +98,7 @@ if [ -n "$stale" ]; then
     echo "stale pins: run scripts/build.sh --update" >&2
     exit 1
   fi
-  for manifest in $(git ls-files -- '*Cargo.toml'); do
+  for manifest in $manifests; do
     for pair in $stale; do
       sed -i.orig "s/${pair%%:*}/${pair##*:}/g" "$manifest" && rm "$manifest.orig"
     done
@@ -104,5 +107,5 @@ if [ -n "$stale" ]; then
 fi
 [ "$mode" = check ] && exit 0
 
-cargo build --workspace --locked
+cargo build --workspace --all-targets --locked
 cargo rustc --locked -p allowit-sdk --release --lib --target wasm32-unknown-unknown --crate-type cdylib
