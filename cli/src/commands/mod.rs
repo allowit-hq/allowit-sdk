@@ -543,6 +543,227 @@ mod tests {
         assert!(cli.global.rail_flag);
         assert!(!cli.global.wallet_flag);
     }
+    /// The words of one example line: `allowit ...`, after a leading
+    /// `cat FILE |` and before a later `|` or `>`. Synopsis lines (with
+    /// `[`, `|`, `(`, `...` or ` = `) are not examples.
+    fn example_words(line: &str) -> Option<Vec<String>> {
+        let mut line = line.trim();
+        if line.starts_with("cat ")
+            && let Some(at) = line.find("| allowit ")
+        {
+            line = &line[at + 2..];
+        }
+        let line = line.strip_prefix("allowit ")?;
+        let mut words = vec!["allowit".to_owned()];
+        let (mut word, mut quote, mut any) = (String::new(), None, false);
+        for c in line.chars() {
+            match (quote, c) {
+                (Some(q), c) if c == q => quote = None,
+                (Some(_), c) => word.push(c),
+                (None, '\'' | '"') => {
+                    quote = Some(c);
+                    any = true;
+                }
+                (None, c) if c.is_whitespace() => {
+                    if any || !word.is_empty() {
+                        words.push(std::mem::take(&mut word));
+                    }
+                    any = false;
+                }
+                (None, c) => word.push(c),
+            }
+        }
+        if any || !word.is_empty() {
+            words.push(word);
+        }
+        if let Some(at) = words.iter().position(|w| w == "|" || w == ">") {
+            words.truncate(at);
+        }
+        let synopsis = words.iter().take_while(|w| *w != "--").any(|w| {
+            w == "=" || w.contains("...") || (w.contains(['[', '|', '(']) && !w.starts_with('{'))
+        });
+        (!synopsis).then_some(words)
+    }
+
+    /// A placeholder such as `ID`, `SERVICE_ID` or `GDEST…`.
+    fn placeholder(value: &str) -> bool {
+        value.contains('…')
+            || (value.starts_with(|c: char| c.is_ascii_uppercase())
+                && value
+                    .bytes()
+                    .all(|b| b.is_ascii_uppercase() || b.is_ascii_digit() || b == b'_'))
+    }
+
+    /// Checks the values of one parsed example: request IDs, amounts,
+    /// parameters and waits must be valid on the example's rail, or on some
+    /// rail when it names none.
+    fn check_example(words: &[String]) -> std::result::Result<(), String> {
+        use crate::{
+            request::request_id_valid,
+            routing,
+            vendors::{self, asset::Use},
+        };
+        if let Parsed::Error(e) = parse(words, false) {
+            return Err(e.to_string().lines().next().unwrap_or_default().to_owned());
+        }
+        let words: Vec<&str> = words
+            .iter()
+            .map(String::as_str)
+            .take_while(|w| *w != "--")
+            .collect();
+        let flag = |name: &str| -> Vec<&str> {
+            words
+                .windows(2)
+                .filter(|w| w[0] == name)
+                .map(|w| w[1])
+                .collect()
+        };
+        let rails: Vec<_> = match flag("--rail").first() {
+            Some(r) => vec![routing::info(r).map_err(|e| e.message)?],
+            None => routing::RAILS.iter().collect(),
+        };
+        let amount = |text: &str, usage: Use| -> std::result::Result<(), String> {
+            if placeholder(text)
+                || rails
+                    .iter()
+                    .any(|r| vendors::rail(r).parse_amount(text, usage).is_ok())
+            {
+                Ok(())
+            } else {
+                Err(format!(
+                    "amount {text:?} is valid on no rail of the example"
+                ))
+            }
+        };
+        for id in flag("--request-id") {
+            if !placeholder(id) && !request_id_valid(id) {
+                return Err(format!("request ID {id:?} breaks the request-ID rule"));
+            }
+        }
+        // The command words, without the global flags and their values.
+        let mut command = vec![];
+        let mut skip = false;
+        for w in &words[1..] {
+            if skip {
+                skip = false;
+            } else if w.starts_with('-') {
+                skip = VALUE_FLAGS.contains(w) || (command.is_empty() && *w == "--wallet");
+                if !command.is_empty() {
+                    break;
+                }
+            } else {
+                command.push(*w);
+            }
+        }
+        match command.as_slice() {
+            ["status", id, ..] if !placeholder(id) && !request_id_valid(id) => {
+                return Err(format!("request ID {id:?} breaks the request-ID rule"));
+            }
+            ["wallet", "fund", value, ..] => amount(value, Use::Spend)?,
+            ["wallet", "withdraw", value, ..] => amount(value, Use::Withdraw)?,
+            ["policy", "params", "set", pairs @ ..] => {
+                for pair in pairs {
+                    let ok = placeholder(pair)
+                        || rails.iter().any(|r| {
+                            policy::params_set_parse(vendors::rail(r).as_ref(), pair).is_ok()
+                        });
+                    if !ok {
+                        return Err(format!("parameter {pair:?} is valid on no rail"));
+                    }
+                }
+            }
+            _ => {}
+        }
+        for value in [flag("--amount"), flag("--fund")].concat() {
+            amount(value, Use::Spend)?;
+        }
+        for value in [
+            flag("--max-amount"),
+            flag("--max-payment"),
+            flag("--budget"),
+        ]
+        .concat()
+        {
+            let decimal = vendors::asset::decimal_units(value, 18).is_ok_and(|u| u > 0);
+            if !decimal {
+                amount(value, Use::Spend)?;
+            }
+        }
+        for value in flag("--wait") {
+            parse_wait(value)?;
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn example_checks_catch_bad_values() {
+        let words = |s: &str| example_words(s).unwrap();
+        for bad in [
+            "allowit status pay-001 --wait 60s",
+            "allowit exec --op transfer --to GDEST… --amount XLM:5 --request-id pay-001",
+            "allowit exec --op transfer --to GDEST… --amount XLM:-5",
+            "allowit --rail tempo:testnet exec --op transfer --to 0xR… --amount XLM:5",
+            "allowit wallet fund XLM:0",
+            "allowit policy params set transaction_cap=XLM:0",
+            "allowit status pay-0001 --wait 1d",
+            "allowit exec --op transfer --amount XLM:5",
+            "allowit keys generate",
+        ] {
+            assert!(check_example(&words(bad)).is_err(), "{bad}");
+        }
+        assert_eq!(
+            words("cat signed.json | allowit tx send -"),
+            ["allowit", "tx", "send", "-"]
+        );
+        assert_eq!(
+            words("allowit keys export agent | pass insert -m allowit/agent"),
+            ["allowit", "keys", "export", "agent"]
+        );
+        assert_eq!(
+            words("allowit call S --input '{\"city\":\"Paris\"}'"),
+            ["allowit", "call", "S", "--input", "{\"city\":\"Paris\"}"]
+        );
+        assert!(example_words("allowit status ID [--wait DUR]").is_none());
+    }
+
+    /// Every example in help, the guide and the READMEs parses, and its
+    /// request IDs, amounts, parameters and waits are valid.
+    #[test]
+    fn every_example_parses_with_valid_values() {
+        fn walk(cmd: &clap::Command, path: String, out: &mut Vec<(String, String)>) {
+            if let Some(help) = cmd.get_before_help() {
+                for line in help.to_string().lines() {
+                    out.push((path.clone(), line.to_owned()));
+                }
+            }
+            for sub in cmd.get_subcommands() {
+                walk(sub, format!("{path} {}", sub.get_name()), out);
+            }
+        }
+        let mut lines = vec![];
+        walk(&command(), "allowit".into(), &mut lines);
+        for (doc, text) in [
+            ("guide.md", include_str!("guide/guide.md")),
+            ("cli/README.md", include_str!("../../README.md")),
+            ("README.md", include_str!("../../../README.md")),
+        ] {
+            lines.extend(text.lines().map(|l| (doc.to_owned(), l.to_owned())));
+        }
+        let mut checked = 0;
+        let mut failures = vec![];
+        for (source, line) in &lines {
+            let Some(words) = example_words(line) else {
+                continue;
+            };
+            checked += 1;
+            if let Err(e) = check_example(&words) {
+                failures.push(format!("{source}: {}: {e}", line.trim()));
+            }
+        }
+        assert!(checked > 120, "{checked} examples");
+        assert!(failures.is_empty(), "{}", failures.join("\n"));
+    }
+
     #[test]
     fn waits_parse_and_are_bounded() {
         assert_eq!(parse_wait("60s").unwrap(), Duration::from_secs(60));

@@ -71,4 +71,6 @@ pub(crate) fn is_local(command: &Command) -> bool {
 
 pub(crate) use build::write_source;
 pub(crate) use check::run_operation;
+#[cfg(test)]
+pub(crate) use params::parse_set as params_set_parse;
 pub(crate) use test::{Mode as TestMode, evaluate};

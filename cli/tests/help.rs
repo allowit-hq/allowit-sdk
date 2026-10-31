@@ -60,6 +60,128 @@ fn example_ids_follow_the_request_id_rule() {
 }
 
 #[test]
+fn data_lines_refuse_prose() {
+    for prose in [
+        "state: settled\nThe transfer is confirmed on chain.",
+        "next: request pay-0001 stays uncertain",
+        "Imported Tempo policy 0f0f",
+        "Tempo request pay-0001: status",
+        "allowit: setup operation ID; do not repeat an uncertain mutation",
+    ] {
+        let text = prose.to_owned();
+        let refused = std::panic::catch_unwind(|| common::assert_data(&text, "prose"));
+        assert!(refused.is_err(), "{prose:?} passed as data");
+    }
+    common::assert_data(
+        "name     agent\naddress  GABC\nsource\n  fn a() {}\n",
+        "data",
+    );
+    common::assert_data("NAME   RAIL\nagent  stellar:testnet\n", "table");
+    common::assert_data("* CWALLET\n  COTHER\n", "list");
+}
+
+/// Help examples that run offline, in order: each must exit 0 and print
+/// only data (a JSON document, Rust source, or data lines).
+#[test]
+fn offline_help_examples_run_and_print_only_data() {
+    let sandbox = common::Sandbox::new("examples");
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    std::fs::copy(
+        root.join("../docs/examples/research.rs"),
+        sandbox.work().join("policy.rs"),
+    )
+    .unwrap();
+    std::fs::copy(
+        root.join("../docs/examples/context.json"),
+        sandbox.work().join("context.json"),
+    )
+    .unwrap();
+    // Every example that appears in help.
+    let mut examples = BTreeSet::new();
+    for path in allowit_cli::command_paths() {
+        let mut args: Vec<&str> = path.iter().map(String::as_str).collect();
+        args.push("--help");
+        let text = String::from_utf8(sandbox.run(&args).stdout).unwrap();
+        examples.extend(
+            text.lines()
+                .map(str::trim)
+                .filter(|l| l.starts_with("allowit "))
+                .map(str::to_owned),
+        );
+    }
+    let run_all = [
+        "allowit rail ls",
+        "allowit rail ls --json",
+        "allowit rail use stellar:testnet",
+        "allowit rail show",
+        "allowit rail show solana:devnet --json",
+        "allowit keys generate agent",
+        "allowit keys ls",
+        "allowit keys ls --json",
+        "allowit keys show agent",
+        "allowit keys show agent --json",
+        "allowit setup --agent agent",
+        // Preparation that no example covers.
+        "prepare keys generate old-agent",
+        "allowit whoami",
+        "allowit whoami --json",
+        "allowit config path",
+        "allowit config show",
+        "allowit config show --json",
+        "allowit wallet ls",
+        "allowit wallet ls --json",
+        "allowit history",
+        "allowit history --limit 5 --json",
+        "allowit policy check policy.rs",
+        "allowit policy test policy.rs --context context.json",
+        "allowit policy functions",
+        "allowit policy functions transaction_cap",
+        "allowit keys rm old-agent --yes",
+        "allowit --rail tempo:testnet keys generate executor",
+        "allowit --rail solana:devnet policy new \"Spend up to 5 tokens per day\" -o policy.json",
+        "allowit version",
+        "allowit guide",
+    ];
+    for example in run_all {
+        if let Some(args) = example.strip_prefix("prepare ") {
+            sandbox.ok(&args.split(' ').collect::<Vec<_>>());
+            continue;
+        }
+        assert!(
+            examples.contains(example),
+            "{example:?} is not a help example"
+        );
+        let mut words = vec![];
+        let mut rest = example.strip_prefix("allowit ").unwrap();
+        while !rest.is_empty() {
+            rest = rest.trim_start();
+            let (word, next) = match rest.strip_prefix('"') {
+                Some(quoted) => quoted.split_once('"').unwrap(),
+                None => rest.split_once(' ').unwrap_or((rest, "")),
+            };
+            words.push(word);
+            rest = next;
+        }
+        let output = sandbox.run(&words);
+        assert_eq!(
+            output.status.code(),
+            Some(0),
+            "{example}: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let stdout = String::from_utf8(output.stdout).unwrap();
+        let stderr = String::from_utf8(output.stderr).unwrap();
+        if words.contains(&"--json") {
+            serde_json::from_str::<serde_json::Value>(&stdout)
+                .unwrap_or_else(|_| panic!("{example}: stdout is not JSON"));
+        } else if !matches!(words[..], ["version"] | ["guide"]) && !words.contains(&"new") {
+            common::assert_data(&stdout, example);
+        }
+        common::assert_data(&stderr, example);
+    }
+}
+
+#[test]
 fn every_help_node_matches_its_snapshot() {
     let update = std::env::var_os("ALLOWIT_UPDATE_SNAPSHOTS").is_some();
     let dir = snapshot_dir();

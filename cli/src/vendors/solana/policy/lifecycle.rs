@@ -135,15 +135,25 @@ pub(super) fn run(session: &Session, name: &str, pos: &[String], out: &mut Out) 
                 // A failed observation cannot turn it into a config-only exit.
                 let name = format!("request-{}", result.id);
                 match journal.locked(|| {
-                    let mut current = journal.read::<Record>(&name)?.ok_or_else(|| allowit_native::error::Error::config("Operation journal disappeared"))?;
-                    if current.signature != result.signature || current.signed_bytes != result.signed_bytes || current.intent != result.intent {
-                        return Err(allowit_native::error::Error::config("Operation journal changed"));
+                    let mut current = journal.read::<Record>(&name)?.ok_or_else(|| {
+                        allowit_native::error::Error::config("Operation journal disappeared")
+                    })?;
+                    if current.signature != result.signature
+                        || current.signed_bytes != result.signed_bytes
+                        || current.intent != result.intent
+                    {
+                        return Err(allowit_native::error::Error::config(
+                            "Operation journal changed",
+                        ));
                     }
                     if !current.final_status() && !current.expired() {
                         current.status = "uncertain".into();
                         current.extra.remove("replayed");
-                        current.extra.insert("error".into(),serde_json::json!("Recovery observation failed; keep this request ID and original journal, and run allowit wallet show"));
-                        journal.write(&name,&current)?;
+                        current.extra.insert(
+                            "error".into(),
+                            serde_json::json!("recovery observation failed"),
+                        );
+                        journal.write(&name, &current)?;
                     }
                     Ok(current)
                 }) {
@@ -190,6 +200,18 @@ pub(super) fn run(session: &Session, name: &str, pos: &[String], out: &mut Out) 
         save_text(&local.directory.join("SKILL.md"), &skill)?;
         output["skill"] = serde_json::json!(skill);
     }
+    // The flags of the next step after an unfinished vault operation, for
+    // the current commands; the hidden verbs keep their recovery hints.
+    let retry = retry_flags(
+        &result.id,
+        result.expired(),
+        result.extra.get("decisionCode") == Some(&serde_json::json!("EXPIRED_UNEXECUTED")),
+        audit_pending,
+    )
+    .filter(|_| !run_options.legacy);
+    if let Some(flags) = &retry {
+        output["retry"] = serde_json::json!(flags);
+    }
     if out.json {
         out.json_value(&output);
     } else {
@@ -208,6 +230,7 @@ pub(super) fn run(session: &Session, name: &str, pos: &[String], out: &mut Out) 
             "blockhashExpired",
             "error",
             "skill",
+            "retry",
         ] {
             if let Some(value) = output.get(key) {
                 view[key] = value.clone();
@@ -216,7 +239,7 @@ pub(super) fn run(session: &Session, name: &str, pos: &[String], out: &mut Out) 
         out.value(&view);
     }
     // The hidden verbs of earlier releases keep their recovery hints; the
-    // result fields carry the same state for the current commands.
+    // `retry` field carries the same step for the current commands.
     if run_options.legacy {
         if result.expired() {
             out.progress("The original operation remains uncertain and cannot be broadcast again. For an explicitly additional fund/withdraw, set both a fresh ALLOWIT_REQUEST_ID and ALLOWIT_ADDITIONAL_OWNER_OPERATION=1; retain the old proof.");
@@ -230,13 +253,6 @@ pub(super) fn run(session: &Session, name: &str, pos: &[String], out: &mut Out) 
         if audit_pending {
             out.progress("Native SQL audit is pending. Retain the original journal and request ID; retry the identical command or run allowit wallet show.");
         }
-    } else if let Some(hint) = next_step(
-        &result.id,
-        result.expired(),
-        result.extra.get("decisionCode") == Some(&serde_json::json!("EXPIRED_UNEXECUTED")),
-        audit_pending,
-    ) {
-        out.progress(hint);
     }
     if audit_pending {
         return Ok(5);
@@ -252,21 +268,16 @@ pub(super) fn run(session: &Session, name: &str, pos: &[String], out: &mut Out) 
     })
 }
 
-/// The next step after an unfinished vault operation, in the flags of the
-/// current commands.
-fn next_step(id: &str, expired: bool, unexecuted: bool, audit_pending: bool) -> Option<String> {
+/// The flags that repeat or replace an unfinished vault operation in the
+/// current commands: a new request ID (and `--additional` for a second
+/// operation after an uncertain one), or the same request ID.
+fn retry_flags(id: &str, expired: bool, unexecuted: bool, audit_pending: bool) -> Option<String> {
     if expired {
-        Some(format!(
-            "next: request {id} stays uncertain; for a deliberate second operation pass a new --request-id and --additional"
-        ))
+        Some("--request-id NEW_ID --additional".into())
     } else if unexecuted {
-        Some(format!(
-            "next: request {id} expired unexecuted; for a deliberate retry pass a new --request-id"
-        ))
+        Some("--request-id NEW_ID".into())
     } else if audit_pending {
-        Some(format!(
-            "next: rerun the same command with --request-id {id}, or run allowit wallet show"
-        ))
+        Some(format!("--request-id {id}"))
     } else {
         None
     }
@@ -275,16 +286,19 @@ fn next_step(id: &str, expired: bool, unexecuted: bool, audit_pending: bool) -> 
 #[cfg(test)]
 mod tests {
     #[test]
-    fn next_steps_name_the_current_flags() {
-        for (expired, unexecuted, pending) in [
-            (true, false, false),
-            (false, true, false),
-            (false, false, true),
-        ] {
-            let hint = super::next_step("fund-0001", expired, unexecuted, pending).unwrap();
-            assert!(hint.contains("--request-id"), "{hint}");
-            assert!(!hint.contains("ALLOWIT_"), "{hint}");
-        }
-        assert!(super::next_step("fund-0001", false, false, false).is_none());
+    fn retry_flags_name_the_current_flags() {
+        assert_eq!(
+            super::retry_flags("fund-0001", true, false, false).unwrap(),
+            "--request-id NEW_ID --additional"
+        );
+        assert_eq!(
+            super::retry_flags("fund-0001", false, true, false).unwrap(),
+            "--request-id NEW_ID"
+        );
+        assert_eq!(
+            super::retry_flags("fund-0001", false, false, true).unwrap(),
+            "--request-id fund-0001"
+        );
+        assert!(super::retry_flags("fund-0001", false, false, false).is_none());
     }
 }

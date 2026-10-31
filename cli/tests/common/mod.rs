@@ -223,3 +223,41 @@ pub fn reply(stream: &mut TcpStream, status: u16, body: &Value) {
     )
     .unwrap();
 }
+
+/// True for one line of text data: a single value, `key  value`, or a table
+/// row whose cells are separated by two or more spaces. A leading `* `
+/// marks the selected row. Prose (words separated by single spaces before
+/// the first cell ends) is not data.
+pub fn data_line(line: &str) -> bool {
+    let body = line
+        .strip_prefix("* ")
+        .or_else(|| line.strip_prefix("  "))
+        .unwrap_or(line);
+    let first = body.split("  ").next().unwrap_or_default();
+    !first.is_empty() && !first.contains(char::is_whitespace)
+}
+
+/// Asserts that terminal text is data only: a JSON document, or data lines.
+/// A bare key line may be followed by its indented multi-line value; a
+/// blank line separates blocks.
+pub fn assert_data(text: &str, what: &str) {
+    if text.trim().is_empty() || serde_json::from_str::<Value>(text).is_ok() {
+        return;
+    }
+    let mut block = false;
+    for line in text.lines() {
+        // A blank line separates two blocks of data.
+        if line.is_empty() {
+            block = false;
+            continue;
+        }
+        if block && line.starts_with("  ") {
+            continue;
+        }
+        assert!(
+            data_line(line),
+            "{what}: {line:?} is not a data line in\n{text}"
+        );
+        block = !line.contains(char::is_whitespace);
+    }
+}

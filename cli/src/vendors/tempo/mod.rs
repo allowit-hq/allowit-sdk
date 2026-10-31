@@ -232,13 +232,19 @@ impl Tempo {
     /// Renders a crate result through the output module.
     fn show(cx: &mut Ctx, code: i32, value: Option<Value>) -> Result<i32> {
         match value {
-            Some(v) => cx.out.value(&v),
-            None if code == 0 => {
-                return Err(Error::uncertain("allowit-tempo returned no JSON result"));
+            Some(v) => {
+                cx.out.value(&v);
+                Ok(code)
             }
-            None => {}
+            None if code == 0 => Err(Error::uncertain("allowit-tempo returned no JSON result")),
+            // A failure keeps its exit code and still reports on stderr.
+            None => Err(Error {
+                code,
+                message: format!("allowit-tempo exited {code} without a JSON result"),
+                status: None,
+                config: false,
+            }),
         }
-        Ok(code)
     }
     /// The public policy with its canonical rail ID.
     fn view(&self, mut policy: Value) -> Value {

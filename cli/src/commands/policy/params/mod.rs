@@ -1,6 +1,8 @@
 //! `allowit policy params`: the policy parameters, keyed by the canonical
 //! keys of the contracts params map.
 mod set;
+#[cfg(test)]
+pub(crate) use set::parse as parse_set;
 mod show;
 
 use crate::{ctx::Ctx, error::Result};

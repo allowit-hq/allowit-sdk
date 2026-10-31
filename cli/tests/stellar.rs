@@ -344,6 +344,8 @@ fn two_phase_exec_verifies_real_signatures_and_unknown_retry_only_recovers() {
     assert_eq!(code(&recovered), Some(0), "{}", stderr(&recovered));
     let output = String::from_utf8_lossy(&recovered.stdout);
     assert!(output.contains("confirmed"));
+    common::assert_data(&output, "stellar exec");
+    common::assert_data(&stderr(&recovered), "stellar exec");
     let seed = common::stellar_seed([2; 32]);
     assert!(!output.contains(&seed));
     for dir in ["stellar-journal", "requests"] {

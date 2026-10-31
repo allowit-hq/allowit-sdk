@@ -52,7 +52,7 @@ fn check_rail(s: &Skill) -> Result<()> {
 }
 
 /// `policy show`: the description, or only the policy source.
-pub(crate) fn show(source: bool, json: bool, stdout: &mut String) -> Result<i32> {
+pub(crate) fn show(source: bool, out: &mut Out) -> Result<i32> {
     let mut c = client()?;
     let policy = c.cfg.policy.clone();
     let s = read_skill(&mut c)?;
@@ -63,13 +63,10 @@ pub(crate) fn show(source: bool, json: bool, stdout: &mut String) -> Result<i32>
                 "the engine did not publish this policy's source",
             ));
         }
-        stdout.push_str(code);
-        if !code.ends_with('\n') {
-            stdout.push('\n');
-        }
+        out.source(code);
         return Ok(0);
     }
-    if json {
+    if out.json {
         let mut raw = s.0;
         let map = raw
             .as_object_mut()
@@ -77,11 +74,65 @@ pub(crate) fn show(source: bool, json: bool, stdout: &mut String) -> Result<i32>
         for private in ["authorization", "accessUrl", "policy"] {
             map.remove(private);
         }
-        *stdout += &output::json(&raw);
+        out.json_value(&raw);
     } else {
-        *stdout += &s.show(&policy, false);
+        out.value(&description(&s, &policy));
     }
     Ok(0)
+}
+
+/// The text view of a policy description: one data field per line.
+fn description(s: &Skill, policy: &str) -> Value {
+    let field = |value: &str| {
+        if value.is_empty() {
+            Value::Null
+        } else {
+            json!(value)
+        }
+    };
+    let id = s.get("policyId");
+    let mut view = json!({
+        "policyId": if id.is_empty() { policy } else { id },
+        "title": s.title(),
+        "network": field(s.get("network")),
+        "status": field(s.get("status")),
+        "revision": s.0["revision"].as_i64(),
+        "sourceHash": field(s.get("sourceHash")),
+        "expiresAt": field(s.get("expiresAt")),
+    });
+    if let Some(binding) = s.contract().map(|c| &c["binding"])
+        && !text(&binding["irHash"]).is_empty()
+    {
+        view["irHash"] = binding["irHash"].clone();
+        view["registryVersion"] = binding["registryVersion"].clone();
+    }
+    if !s.0["budget"].is_null() {
+        view["budgetAllocated"] = json!(text(&s.0["budget"]["allocation"]));
+        view["budgetSpent"] = json!(text(&s.0["budget"]["spent"]));
+    } else if !s.0["allocation"].is_null() {
+        view["budgetAllocated"] = json!(text(&s.0["allocation"]["amount"]));
+    }
+    let rails: serde_json::Map<String, Value> = s
+        .rails()
+        .into_iter()
+        .map(|(rail, assets)| (rail, json!(assets)))
+        .collect();
+    view["rails"] = Value::Object(rails);
+    if let Some(keys) = s.0["contract"]["contextU64Keys"]
+        .as_array()
+        .filter(|a| !a.is_empty())
+    {
+        view["contextFields"] = json!(keys);
+    }
+    if let Some(steps) = s.0["workflow"].as_array().filter(|a| !a.is_empty()) {
+        view["checks"] = json!(
+            steps
+                .iter()
+                .map(|step| text(&step["label"]).to_owned())
+                .collect::<Vec<_>>()
+        );
+    }
+    view
 }
 
 fn check_status(r: &Value, id: &str, net: Network) -> Result<()> {
@@ -204,7 +255,7 @@ pub(crate) fn submit(
     r["clientRequestId"] = json!(request_id);
     if out.json {
         r["exitCode"] = json!(res.exit);
-        out.stdout += &output::json(&r);
+        out.json_value(&r);
     } else {
         out.text(&r);
     }
@@ -222,10 +273,7 @@ pub(crate) fn status(id: &str, wait: Duration, out: &mut Out) -> Result<i32> {
             s.net()
         }
         Err(e) if e.config || matches!(e.status, Some(401 | 403)) => return Err(e),
-        Err(_) => {
-            out.progress("policy description unavailable; network unknown");
-            Network::Unknown
-        }
+        Err(_) => Network::Unknown,
     };
     let mut r = match c.call("POST", "status", Some(&encode(&json!({"requestId":id})))) {
         Ok(r) => r,
@@ -266,9 +314,13 @@ pub(crate) fn status(id: &str, wait: Duration, out: &mut Out) -> Result<i32> {
     }
     let res = classify(&r, "status");
     r["state"] = json!(res.state);
+    // Without the policy description the result names no network.
+    if net == Network::Unknown && r.get("network").is_none() {
+        r["network"] = json!("unknown");
+    }
     if out.json {
         r["exitCode"] = json!(res.exit);
-        out.stdout += &output::json(&r);
+        out.json_value(&r);
     } else {
         out.text(&r);
     }

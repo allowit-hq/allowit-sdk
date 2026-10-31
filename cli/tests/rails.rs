@@ -235,21 +235,38 @@ fn setup_keeps_the_exit_code_of_a_registration_that_did_not_complete() {
         .set("ALLOWIT_URL", &mock.url);
     let listener = mock.listener;
     let server = std::thread::spawn(move || {
-        let (mut conn, _) = listener.accept().unwrap();
-        let (head, request) = common::read_request(&mut conn);
-        assert!(head.starts_with("POST /api/gateway/setup "), "{head}");
-        common::reply(
-            &mut conn,
-            200,
-            &json!({"operationId": request["operationId"], "state": "denied"}),
-        );
+        for _ in 0..2 {
+            let (mut conn, _) = listener.accept().unwrap();
+            let (head, request) = common::read_request(&mut conn);
+            assert!(head.starts_with("POST /api/gateway/setup "), "{head}");
+            common::reply(
+                &mut conn,
+                200,
+                &json!({"operationId": request["operationId"], "state": "denied"}),
+            );
+        }
     });
     let output = sandbox.run(&["--json", "setup", "--agent", "agent"]);
-    server.join().unwrap();
     assert_eq!(code(&output), Some(20), "{}", stderr(&output));
     let value: Value = serde_json::from_slice(&output.stdout).unwrap();
     assert_eq!(value["registered"], false);
     assert_eq!(value["registration"]["state"], "denied");
+    // Text mode: data lines, and the operation ID alone on stderr, also
+    // with -q.
+    let output = sandbox.run(&["-q", "setup", "--agent", "agent"]);
+    server.join().unwrap();
+    assert_eq!(code(&output), Some(20), "{}", stderr(&output));
+    common::assert_data(&stdout(&output), "setup");
+    assert!(
+        stdout(&output)
+            .lines()
+            .any(|l| l.starts_with("registration.state ") && l.ends_with("  denied")),
+        "{}",
+        stdout(&output)
+    );
+    let id = stderr(&output);
+    assert_eq!(id.lines().count(), 1, "{id}");
+    assert!(id.trim().starts_with("allowit-"), "{id}");
 }
 
 #[test]
@@ -733,6 +750,22 @@ fn tempo_bundle_serves_only_its_rail_and_vault() {
     let key = sandbox.json(&["keys", "show", "executor"]);
     assert_eq!(key["address"], addr(6));
     assert_eq!(key["secret"], false);
+    for args in [["wallet", "show"], ["policy", "show"]] {
+        let text = sandbox.ok(&args);
+        common::assert_data(&text, &args.join(" "));
+        assert!(text.contains("network"), "{text}");
+    }
+    // A second import finds the stored bundle: one error line, and none of
+    // the crate's text.
+    let output = sandbox.run(&["keys", "import", "executor2", source.to_str().unwrap()]);
+    assert_eq!(code(&output), Some(3), "{}", stderr(&output));
+    assert!(stdout(&output).is_empty(), "{}", stdout(&output));
+    assert!(
+        stderr(&output).starts_with("error: "),
+        "{}",
+        stderr(&output)
+    );
+    assert_eq!(stderr(&output).lines().count(), 1, "{}", stderr(&output));
     let shown = sandbox.json(&["wallet", "show"]);
     assert_eq!(shown["vault"], addr(16));
     assert_eq!(shown["network"], "eip155:42431");
@@ -943,6 +976,9 @@ fn solana_status_reads_the_request_when_the_policy_description_fails() {
     assert!(text.contains("denied"), "{text}");
     // Text output is key-value data, without a prose note.
     assert!(!text.contains("state: "), "{text}");
+    common::assert_data(&text, "solana status");
+    common::assert_data(&stderr(&output), "solana status");
+    assert!(text.contains("network    unknown\n"), "{text}");
     let paths = server.join().unwrap();
     assert!(paths.iter().any(|p| p.ends_with("/skill")), "{paths:?}");
 }
@@ -970,4 +1006,57 @@ fn arguments_that_are_not_utf8_are_usage_errors() {
     assert_eq!(code(&output), Some(2));
     let error: Value = serde_json::from_str(stderr(&output).trim()).unwrap();
     assert_eq!(error["error"]["code"], "usage");
+}
+
+#[test]
+fn solana_harness_results_print_only_data_lines() {
+    let mut sandbox = Sandbox::new("solana-harness");
+    let mock = Mock::new();
+    sandbox
+        .set("ALLOWIT_URL", &mock.url)
+        .set("ALLOWIT_TOKEN", format!("owner.policy.{}", "s".repeat(32)));
+    let listener = mock.listener.try_clone().unwrap();
+    let server = std::thread::spawn(move || {
+        let skill = json!({
+            "policyId": "policy",
+            "owner": "owner",
+            "title": "Research spend",
+            "network": "solana:devnet",
+            "status": "active",
+            "policy": "fn policy() {}",
+            "workflow": [{"label": "cap", "description": "per-day cap"}],
+        });
+        for stream in listener.incoming() {
+            let mut stream = stream.unwrap();
+            let (head, _) = read_request(&mut stream);
+            let path = head
+                .split_whitespace()
+                .nth(1)
+                .unwrap_or_default()
+                .to_owned();
+            if path.ends_with("/status") {
+                reply(
+                    &mut stream,
+                    200,
+                    &json!({"requestId":"pay-0001","outcome":"fail","status":"denied","kind":"transaction","reason":"over the cap"}),
+                );
+                return;
+            }
+            reply(&mut stream, 200, &skill);
+        }
+    });
+    let shown = sandbox.run(&["--rail", "solana:devnet", "policy", "show"]);
+    assert_eq!(code(&shown), Some(0), "{}", stderr(&shown));
+    let text = stdout(&shown);
+    common::assert_data(&text, "solana policy show");
+    assert!(text.contains("title"), "{text}");
+    assert!(!text.contains("Allowit policy:"), "{text}");
+    let source = sandbox.run(&["--rail", "solana:devnet", "policy", "show", "--source"]);
+    assert_eq!(stdout(&source), "fn policy() {}\n");
+    let status = sandbox.run(&["--rail", "solana:devnet", "status", "pay-0001"]);
+    assert_eq!(code(&status), Some(20), "{}", stderr(&status));
+    common::assert_data(&stdout(&status), "solana status");
+    common::assert_data(&stderr(&status), "solana status");
+    assert!(!stdout(&status).contains("network"), "{}", stdout(&status));
+    server.join().unwrap();
 }

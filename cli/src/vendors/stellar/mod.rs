@@ -240,7 +240,8 @@ impl Rail for Stellar {
             units,
         )?;
         if r.build_only {
-            // The unsigned request is a document for `tx send`: always JSON.
+            // The unsigned request is a document for a signer and submitter
+            // outside the CLI: always JSON.
             let wire = typed.wire()?;
             cx.out.json_value(&wire);
             return Ok(0);

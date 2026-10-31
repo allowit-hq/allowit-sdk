@@ -74,10 +74,10 @@ pub(crate) fn run(args: Args, cx: &mut Ctx) -> Result<i32> {
         vec!["curve".into(), caps.curve.into()],
         vec!["tokens".into(), list(&codes)],
         vec!["ops".into(), list(caps.ops)],
-        vec!["param keys".into(), list(caps.param_keys)],
+        vec!["paramKeys".into(), list(caps.param_keys)],
         vec!["signing".into(), list(caps.signing)],
         vec!["available".into(), list(caps.verbs)],
-        vec!["not available".into(), list(&unavailable)],
+        vec!["notAvailable".into(), list(&unavailable)],
         vec![
             "wallet".into(),
             settings.wallet.unwrap_or_else(|| "-".into()),

@@ -536,12 +536,7 @@ impl Rail for Solana {
     fn policy_show(&self, cx: &mut Ctx, source: bool) -> Result<i32> {
         let wallet = cx.wallet(self.0)?;
         self.harness_wallet(wallet.as_deref())?;
-        let json = cx.out.json;
-        let code = harness::show(source, json, &mut cx.out.stdout)?;
-        if source {
-            cx.out.kind = crate::term::Kind::Rust;
-        }
-        Ok(code)
+        harness::show(source, &mut cx.out)
     }
     fn policy_params_set(&self, cx: &mut Ctx, params: &[Param], s: &Signing) -> Result<i32> {
         let signer = self.owner_signer(cx, "policy params set", s)?;

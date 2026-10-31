@@ -81,31 +81,9 @@ impl Out {
             self.text(value);
         }
     }
-    /// A structured result as text: one `key  value` line per scalar, with
-    /// dotted paths for nested fields (`config.rail`, `steps.0.name`). Lists
-    /// of scalars join with commas; a multi-line string follows its key,
-    /// indented. Null and empty values print as `-`.
+    /// A structured result as text; see [`text`].
     pub(crate) fn text(&mut self, value: &Value) {
-        let mut rows = vec![];
-        flatten(String::new(), value, &mut rows);
-        let width = rows
-            .iter()
-            .filter(|(_, v)| !v.contains('\n'))
-            .map(|(k, _)| k.chars().count())
-            .max()
-            .unwrap_or(0);
-        for (key, text) in rows {
-            if key.is_empty() {
-                self.line(text);
-            } else if text.contains('\n') {
-                self.line(&key);
-                for line in text.lines() {
-                    self.line(format!("  {line}").trim_end());
-                }
-            } else {
-                self.line(format!("{key:width$}  {text}"));
-            }
-        }
+        self.stdout.push_str(&text(value));
     }
     /// A JSON document, highlighted on a terminal in text mode.
     pub(crate) fn json_value(&mut self, value: &Value) {
@@ -198,6 +176,39 @@ impl Out {
             "error:"
         }
     }
+}
+
+/// A structured result as text: one `key  value` line per scalar, with
+/// dotted paths for nested fields (`config.rail`, `steps.0.name`). Lists of
+/// scalars join with commas; a multi-line string follows its key, indented.
+/// Null and empty values print as `-`.
+pub(crate) fn text(value: &Value) -> String {
+    let mut rows = vec![];
+    flatten(String::new(), value, &mut rows);
+    let width = rows
+        .iter()
+        .filter(|(_, v)| !v.contains('\n'))
+        .map(|(k, _)| k.chars().count())
+        .max()
+        .unwrap_or(0);
+    let mut out = String::new();
+    let mut line = |text: &str| {
+        out.push_str(text);
+        out.push('\n');
+    };
+    for (key, text) in rows {
+        if key.is_empty() {
+            line(&text);
+        } else if text.contains('\n') {
+            line(&key);
+            for l in text.lines() {
+                line(format!("  {l}").trim_end());
+            }
+        } else {
+            line(&format!("{key:width$}  {text}"));
+        }
+    }
+    out
 }
 
 fn scalar(value: &Value) -> String {
