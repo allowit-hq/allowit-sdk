@@ -1,7 +1,7 @@
 //! Local agent keys. PublicWallet is the only serializable registration value.
 use crate::{
     error::{Error, Result},
-    routing,
+    routing::{self, Family},
 };
 use allowit_sdk::client::store::Store;
 use serde::{Deserialize, Serialize};
@@ -16,8 +16,8 @@ pub struct PublicWallet {
     pub key_type: String,
 }
 fn public(network: &str, seed: &[u8; 32]) -> Result<PublicWallet> {
-    let normalized = routing::normalize(network)?;
-    let (address, public_key, key_type) = if normalized.starts_with("tempo:") {
+    let family = routing::family(network)?;
+    let (address, public_key, key_type) = if family == Family::Tempo {
         let (address, public_key) = allowit_tempo::wallet::public_key(seed)
             .map_err(|_| Error::config("Invalid Tempo wallet seed"))?;
         (address, public_key, "secp256k1".to_owned())
@@ -25,19 +25,16 @@ fn public(network: &str, seed: &[u8; 32]) -> Result<PublicWallet> {
         let key = ed25519_dalek::SigningKey::from_bytes(seed)
             .verifying_key()
             .to_bytes();
-        let address = if normalized.starts_with("stellar:") {
+        // A Stellar public key is its G strkey; Solana uses base58.
+        let address = if family == Family::Stellar {
             stellar_address(&key)
         } else {
             bs58::encode(key).into_string()
         };
-        (
-            address,
-            bs58::encode(key).into_string(),
-            "ed25519".to_owned(),
-        )
+        (address.clone(), address, "ed25519".to_owned())
     };
     Ok(PublicWallet {
-        network: routing::caip2(network)?.into(),
+        network: routing::normalize(network)?.into(),
         address,
         public_key,
         key_type,
@@ -80,7 +77,7 @@ fn storage(path: &Path) -> Result<(Store, String)> {
 }
 /// Generates an executor key in the rail's existing private-file format.
 pub fn generate_wallet(network: &str, path: &Path) -> Result<PublicWallet> {
-    let network = routing::normalize(network)?;
+    let family = routing::family(network)?;
     let (_lock, _name) = storage(path)?;
     let mut seed = Zeroizing::new([0u8; 32]);
     let metadata = loop {
@@ -90,9 +87,9 @@ pub fn generate_wallet(network: &str, path: &Path) -> Result<PublicWallet> {
             break p;
         }
     };
-    let secret = if network.starts_with("tempo:") {
+    let secret = if family == Family::Tempo {
         seed.iter().map(|b| format!("{b:02x}")).collect::<String>()
-    } else if network.starts_with("solana:") {
+    } else if family == Family::Solana {
         let key = ed25519_dalek::SigningKey::from_bytes(&seed);
         serde_json::to_string(&key.to_keypair_bytes().as_slice())
             .map_err(|_| Error::config("Cannot encode signer"))?
@@ -202,11 +199,11 @@ pub fn stellar_signing_seed(path: &Path) -> Result<Zeroizing<[u8; 32]>> {
 /// Inspect a native signer file without returning its secret.
 pub fn inspect_wallet(network: &str, path: &Path) -> Result<PublicWallet> {
     let text = read_signer(path)?;
-    let n = routing::normalize(network)?;
-    let mut bytes = Zeroizing::new(if n.starts_with("solana:") {
+    let family = routing::family(network)?;
+    let mut bytes = Zeroizing::new(if family == Family::Solana {
         serde_json::from_str::<Vec<u8>>(&text)
             .map_err(|_| Error::config("Invalid Solana signer"))?
-    } else if n.starts_with("tempo:") {
+    } else if family == Family::Tempo {
         if text.len() != 64 || !text.bytes().all(|b| b.is_ascii_hexdigit()) {
             return Err(Error::config("Invalid Tempo signer"));
         }
@@ -230,7 +227,7 @@ pub fn inspect_wallet(network: &str, path: &Path) -> Result<PublicWallet> {
         .map_err(|_| Error::config("Invalid seed"))?,
     );
     let metadata = public(network, &seed)?;
-    if n.starts_with("solana:") {
+    if family == Family::Solana {
         let expected = ed25519_dalek::SigningKey::from_bytes(&seed).to_keypair_bytes();
         if bytes.as_slice() != expected {
             return Err(Error::config("Invalid Solana key pair"));
@@ -260,6 +257,10 @@ mod tests {
             stellar_address(&[0; 32]),
             "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF"
         );
+        let stellar = public("stellar:testnet", &[0; 32]).unwrap();
+        assert_eq!(stellar.public_key, stellar.address);
+        assert!(stellar.public_key.starts_with('G'));
+        stellar.validate().unwrap();
         let mut seed = [0; 32];
         seed[31] = 1;
         assert_eq!(
@@ -271,11 +272,11 @@ mod tests {
 
 impl PublicWallet {
     pub fn validate(&self) -> Result<()> {
-        if routing::caip2(&self.network)? != self.network {
+        if routing::normalize(&self.network)? != self.network {
             return Err(Error::usage("Registration requires a canonical network"));
         }
-        let normalized = routing::normalize(&self.network)?;
-        let expected = if normalized.starts_with("tempo:") {
+        let family = routing::family(&self.network)?;
+        let expected = if family == Family::Tempo {
             if self.key_type != "secp256k1" {
                 return Err(Error::usage("Invalid public key type"));
             }
@@ -286,14 +287,19 @@ impl PublicWallet {
             if self.key_type != "ed25519" {
                 return Err(Error::usage("Invalid public key type"));
             }
-            let key: [u8; 32] = bs58::decode(&self.public_key)
-                .into_vec()
-                .map_err(|_| Error::usage("Invalid public key"))?
-                .try_into()
-                .map_err(|_| Error::usage("Invalid public key"))?;
+            let key: [u8; 32] = if family == Family::Stellar {
+                allowit_stellar_wallet::account_key(&self.public_key)
+                    .map_err(|_| Error::usage("Invalid public key"))?
+            } else {
+                bs58::decode(&self.public_key)
+                    .into_vec()
+                    .map_err(|_| Error::usage("Invalid public key"))?
+                    .try_into()
+                    .map_err(|_| Error::usage("Invalid public key"))?
+            };
             ed25519_dalek::VerifyingKey::from_bytes(&key)
                 .map_err(|_| Error::usage("Invalid public point"))?;
-            if normalized.starts_with("stellar:") {
+            if family == Family::Stellar {
                 stellar_address(&key)
             } else {
                 bs58::encode(key).into_string()
