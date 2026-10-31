@@ -28,7 +28,7 @@ pub(crate) struct Args {
     /// JSON input for the service
     #[arg(long, value_name = "JSON")]
     pub input: Option<String>,
-    /// The most this call may cost: CODE:DECIMAL or a USDC decimal
+    /// The most this call may cost: CODE:DECIMAL, or a decimal of the paying asset
     #[arg(long, value_name = "AMOUNT")]
     pub max_amount: Option<String>,
     /// Operation ID; a retry reuses it

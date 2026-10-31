@@ -3,7 +3,7 @@
 //! `stellar-native` (`policy build` on Stellar), `registry`
 //! (`policy functions`) and the `tempo` group.
 use super::{compiler, policy};
-use crate::{ctx::Ctx, error::Result};
+use crate::{ctx::Ctx, error::Result, routing, vendors};
 use clap::Subcommand;
 use serde_json::json;
 use std::path::PathBuf;
@@ -54,24 +54,22 @@ pub(crate) enum Command {
 
 pub(crate) fn run(command: Command, cx: &mut Ctx) -> Result<i32> {
     match command {
-        Command::Compile { file } => policy::run_operation("compile", &file, cx),
-        Command::Check { file } => policy::run_operation("check", &file, cx),
-        Command::Workflow { file } => policy::run_operation("workflow", &file, cx),
+        Command::Compile { file } => policy::run_operation("compile", &file, true, cx),
+        Command::Check { file } => policy::run_operation("check", &file, true, cx),
+        Command::Workflow { file } => policy::run_operation("workflow", &file, true, cx),
         Command::Evaluate {
             file,
             context,
             profile,
-        } => policy::evaluate(&file, &context, profile, cx),
+        } => policy::evaluate(&file, &context, profile, true, cx),
         Command::StellarNative { file } => {
             let source = compiler::read(&file)?;
-            let built = allowit_sdk::compile_stellar_policy(&source)
-                .map_err(|e| compiler::failure(e.to_string()))?;
-            policy::stellar_source(&built.rust_source, None, cx)
+            let built = vendors::rail(routing::info("stellar:testnet")?).policy_build(&source)?;
+            policy::write_source(&built, None, cx)
         }
-        Command::Registry => compiler::process(json!({"operation":"registry"}), cx),
+        Command::Registry => compiler::process(json!({"operation":"registry"}), cx, true),
         Command::Tempo { args } => {
-            let out = &mut cx.out;
-            crate::vendors::tempo::legacy(&args, &mut out.stdout, &mut out.stderr)
+            vendors::rail(routing::info("tempo:testnet")?).legacy(cx, "tempo", &args)
         }
     }
 }

@@ -4,9 +4,11 @@
 //! - `keys import` of an owner-issued executor bundle, `wallet show`,
 //!   `wallet fund`, `wallet withdraw`, `wallet pause`, `wallet close`,
 //!   `policy new` and `policy params set`: the native vault lifecycle, test
-//!   networks only. Owner operations sign with `--sign-with-key`.
+//!   networks only. Owner operations sign with `--sign-with-key`. A selected
+//!   wallet must be the vault of the policy in `ALLOWIT_POLICY_DIR`.
 //! - `exec`, `eval`, `status`, `policy show`: the engine harness, through
-//!   `ALLOWIT_TOKEN`.
+//!   `ALLOWIT_TOKEN`. The harness names no vault, so these refuse a selected
+//!   wallet.
 pub(crate) mod audit;
 pub mod handoff;
 pub(crate) mod harness;
@@ -25,6 +27,7 @@ use crate::{
     routing::RailInfo,
     settings::keys::{self, Key},
 };
+use policy::RunOptions;
 use sha2::Digest;
 use std::{path::Path, time::Duration};
 
@@ -92,6 +95,7 @@ impl Solana {
         cx: &mut Ctx,
         name: &str,
         pos: &[String],
+        options: &RunOptions,
         mut settings: Vec<(&'static str, String)>,
     ) -> Result<i32> {
         if let Some(url) = cx.rpc_url(self.0)? {
@@ -100,8 +104,40 @@ impl Solana {
         let json = cx.out.json;
         let out = &mut cx.out;
         config::with_settings(&settings, || {
-            policy::run(name, pos, json, &mut out.stdout, &mut out.stderr)
+            policy::run(name, pos, options, json, &mut out.stdout, &mut out.stderr)
         })
+    }
+    /// The options of a vault operation: the selected wallet, which must be
+    /// the vault of the loaded policy.
+    fn vault_options(&self, cx: &mut Ctx, s: Option<&Signing>) -> Result<RunOptions> {
+        Ok(RunOptions {
+            wallet: cx.wallet(self.0)?,
+            request_id: s.and_then(|s| s.request_id.clone()),
+            additional: s.is_some_and(|s| s.additional),
+            legacy: false,
+        })
+    }
+    /// The engine harness names a policy but no vault, so it cannot confirm a
+    /// selected wallet.
+    fn harness_wallet(&self, wallet: Option<&str>) -> Result<()> {
+        match wallet {
+            None => Ok(()),
+            Some(w) => Err(Error::config(format!(
+                "the engine harness cannot confirm wallet {w} on {}; unset --wallet, ALLOWIT_WALLET and allowit wallet use to send through the policy that ALLOWIT_TOKEN names",
+                self.0.id
+            ))),
+        }
+    }
+    /// The vault token: the rail's USDC.
+    fn vault_token(&self) -> Option<&'static Token> {
+        self.tokens().iter().find(|t| t.code == "USDC")
+    }
+    /// True when a named token is a token of the rail's table with the same
+    /// mint. An explicit mint that the table cannot confirm is refused.
+    fn known_token(&self, code: &str, issuer: Option<&str>) -> bool {
+        self.tokens()
+            .iter()
+            .any(|t| !t.native && t.code == code && t.issuer == issuer)
     }
     /// The owner key file for an owner operation.
     fn owner_signer(
@@ -121,9 +157,11 @@ impl Solana {
     }
     /// A vault amount as a six-decimal display amount.
     fn vault_amount(&self, amount: &Amount) -> Result<String> {
+        let vault = self.vault_token();
         match &amount.asset {
             Asset::Installed => {}
-            Asset::Token { code, .. } if code == "USDC" => {}
+            Asset::Token { code, issuer }
+                if vault.is_some_and(|t| t.code == code && t.issuer == issuer.as_deref()) => {}
             _ => {
                 return Err(Error {
                     code: 4,
@@ -144,7 +182,21 @@ impl Solana {
     fn harness_flags(&self, r: &ExecRequest) -> Result<Flags> {
         let code = match &r.amount.asset {
             Asset::Installed => "USDC".to_owned(),
-            Asset::Native { code } | Asset::Token { code, .. } => code.clone(),
+            Asset::Native { code } => code.clone(),
+            Asset::Token { code, issuer } if self.known_token(code, issuer.as_deref()) => {
+                code.clone()
+            }
+            Asset::Token { .. } => {
+                return Err(Error {
+                    code: 4,
+                    message: format!(
+                        "{} names a token that this rail does not list; use one of its codes",
+                        r.amount.text
+                    ),
+                    status: None,
+                    config: false,
+                });
+            }
             Asset::Contract(_) => return Err(Error::usage("Solana has no asset contracts")),
         };
         let decimals = r.amount.decimals.unwrap_or(VAULT_DECIMALS);
@@ -180,8 +232,11 @@ impl Rail for Solana {
     fn caps(&self) -> Caps {
         Caps {
             curve: "ed25519",
+            address_is_key: true,
+            service_asset: "USDC",
             ops: &["transfer"],
-            param_keys: &["transaction_cap", "day_total_cap"],
+            // SetDailyLimit counts transferred amounts without gas.
+            param_keys: &["transaction_cap", "day_spent_cap"],
             signing: &["key", "link"],
             verbs: if self.0.testnet {
                 &[
@@ -263,7 +318,13 @@ impl Rail for Solana {
         if keys::exists(&dir, name) {
             return Err(Error::config(format!("key {name} already exists")));
         }
-        let code = self.native(cx, "import", &[file.to_string_lossy().into_owned()], vec![])?;
+        let code = self.native(
+            cx,
+            "import",
+            &[file.to_string_lossy().into_owned()],
+            &RunOptions::default(),
+            vec![],
+        )?;
         keys::add(&dir, name, self.0.id, &executor)?;
         Ok(code)
     }
@@ -278,6 +339,9 @@ impl Rail for Solana {
                     "build-only"
                 }
             )));
+        }
+        if w.signing.wait.is_some() {
+            return Err(self.na("wallet create --wait"));
         }
         if w.kind.is_some() {
             return Err(Error::usage("--kind does not apply to Solana vaults"));
@@ -313,21 +377,29 @@ impl Rail for Solana {
                 .collect::<String>()
         );
         cx.out.progress(&request_id);
+        let options = RunOptions {
+            request_id: Some(request_id),
+            ..RunOptions::default()
+        };
         self.native(
             cx,
             "deploy",
             &[amount],
+            &options,
             vec![
                 ("ALLOWIT_OWNER", w.owner.clone()),
                 ("ALLOWIT_EXECUTOR", w.agent.address.clone()),
                 ("ALLOWIT_POLICY_FILE", policy.to_string_lossy().into_owned()),
-                ("ALLOWIT_REQUEST_ID", request_id),
             ],
         )
     }
-    fn wallet_show(&self, cx: &mut Ctx, _: Option<&str>) -> Result<i32> {
+    fn wallet_show(&self, cx: &mut Ctx, wallet: Option<&str>) -> Result<i32> {
         self.testnet_only("wallet show")?;
-        self.native(cx, "status", &[], vec![])
+        let mut options = self.vault_options(cx, None)?;
+        if let Some(w) = wallet {
+            options.wallet = Some(w.to_owned());
+        }
+        self.native(cx, "status", &[], &options, vec![])
     }
     fn wallet_fund(
         &self,
@@ -345,7 +417,8 @@ impl Rail for Solana {
             ));
         }
         let value = self.vault_amount(amount)?;
-        self.native(cx, "fund", &[value], vec![signer])
+        let options = self.vault_options(cx, Some(s))?;
+        self.native(cx, "fund", &[value], &options, vec![signer])
     }
     fn wallet_withdraw(
         &self,
@@ -362,15 +435,18 @@ impl Rail for Solana {
         }
         let signer = self.owner_signer(cx, "wallet withdraw", s)?;
         let value = self.vault_amount(amount)?;
-        self.native(cx, "withdraw", &[value], vec![signer])
+        let options = self.vault_options(cx, Some(s))?;
+        self.native(cx, "withdraw", &[value], &options, vec![signer])
     }
     fn wallet_pause(&self, cx: &mut Ctx, s: &Signing) -> Result<i32> {
         let signer = self.owner_signer(cx, "wallet pause", s)?;
-        self.native(cx, "revoke", &[], vec![signer])
+        let options = self.vault_options(cx, Some(s))?;
+        self.native(cx, "revoke", &[], &options, vec![signer])
     }
     fn wallet_close(&self, cx: &mut Ctx, s: &Signing) -> Result<i32> {
         let signer = self.owner_signer(cx, "wallet close", s)?;
-        self.native(cx, "close", &[], vec![signer])
+        let options = self.vault_options(cx, Some(s))?;
+        self.native(cx, "close", &[], &options, vec![signer])
     }
     fn policy_new(&self, cx: &mut Ctx, prompt: &str, output: Option<&Path>) -> Result<i32> {
         self.testnet_only("policy new")?;
@@ -385,13 +461,21 @@ impl Rail for Solana {
             };
             settings.push(("ALLOWIT_POLICY_FILE", path.to_string_lossy().into_owned()));
         }
-        let code = self.native(cx, "generate", &[prompt.to_owned()], settings)?;
+        let code = self.native(
+            cx,
+            "generate",
+            &[prompt.to_owned()],
+            &RunOptions::default(),
+            settings,
+        )?;
         if !cx.out.json {
             cx.out.kind = crate::term::Kind::Rust;
         }
         Ok(code)
     }
     fn policy_show(&self, cx: &mut Ctx, source: bool) -> Result<i32> {
+        let wallet = cx.wallet(self.0)?;
+        self.harness_wallet(wallet.as_deref())?;
         let json = cx.out.json;
         let code = harness::show(source, json, &mut cx.out.stdout)?;
         if source {
@@ -404,7 +488,7 @@ impl Rail for Solana {
         let mut operations = vec![];
         for p in params {
             let method = match p.key.as_str() {
-                "day_total_cap" => "tune",
+                "day_spent_cap" => "tune",
                 "transaction_cap" => "tune-action",
                 other => return Err(self.na(&format!("policy params set {other}"))),
             };
@@ -414,9 +498,10 @@ impl Rail for Solana {
                 .ok_or_else(|| Error::usage(format!("{} needs an amount", p.key)))?;
             operations.push((method, self.vault_amount(amount)?));
         }
+        let options = self.vault_options(cx, Some(s))?;
         let mut code = 0;
         for (method, value) in operations {
-            code = self.native(cx, method, &[value], vec![signer.clone()])?;
+            code = self.native(cx, method, &[value], &options, vec![signer.clone()])?;
             if code != 0 {
                 break;
             }
@@ -429,7 +514,30 @@ impl Rail for Solana {
     fn eval(&self, cx: &mut Ctx, r: &ExecRequest) -> Result<i32> {
         self.request(cx, r)
     }
-    fn status(&self, cx: &mut Ctx, id: &str, _: Option<&str>, wait: Duration) -> Result<i32> {
+    fn exec_wallet(&self, wallet: Option<&str>) -> Result<()> {
+        self.harness_wallet(wallet)
+    }
+    fn legacy(&self, cx: &mut Ctx, verb: &str, args: &[String]) -> Result<i32> {
+        let Some(name) = verb.strip_prefix("policy ") else {
+            return Err(self.na(verb));
+        };
+        if name == "execute"
+            && !args
+                .first()
+                .is_some_and(|r| crate::request::solana_address(r))
+        {
+            return Err(Error::usage(format!(
+                "RECIPIENT {} is not a Solana token account address",
+                args.first().map(String::as_str).unwrap_or_default()
+            )));
+        }
+        let options = RunOptions::from_environment(cx.wallet(self.0)?);
+        let json = cx.out.json;
+        let out = &mut cx.out;
+        policy::run(name, args, &options, json, &mut out.stdout, &mut out.stderr)
+    }
+    fn status(&self, cx: &mut Ctx, id: &str, wallet: Option<&str>, wait: Duration) -> Result<i32> {
+        self.harness_wallet(wallet)?;
         let json = cx.out.json;
         let out = &mut cx.out;
         harness::status(id, wait, json, &mut out.stdout, &mut out.stderr)
@@ -439,6 +547,7 @@ impl Rail for Solana {
 impl Solana {
     fn request(&self, cx: &mut Ctx, r: &ExecRequest) -> Result<i32> {
         require_op(self, &r.op)?;
+        self.harness_wallet(r.wallet.as_deref())?;
         if r.build_only {
             return Err(self.na("exec --build-only"));
         }
@@ -494,6 +603,34 @@ mod tests {
         assert_eq!(rail.vault_amount(&base).unwrap(), "0.25");
         let sol = parse(crate::routing::Family::Solana, DEVNET, "SOL:1", Use::Spend).unwrap();
         assert_eq!(rail.vault_amount(&sol).unwrap_err().code, 4);
+        let mint = DEVNET[1].issuer.unwrap();
+        let explicit = parse(
+            crate::routing::Family::Solana,
+            DEVNET,
+            &format!("USDC:{mint}:1"),
+            Use::Spend,
+        )
+        .unwrap();
+        assert_eq!(rail.vault_amount(&explicit).unwrap(), "1");
+        // The testnet table has no USDC mint, so an explicit mint cannot be
+        // confirmed as the vault token.
+        let testnet = Solana(crate::routing::info("solana:testnet").unwrap());
+        let other = parse(
+            crate::routing::Family::Solana,
+            TESTNET,
+            &format!("USDC:{}:5", MAINNET[1].issuer.unwrap()),
+            Use::Spend,
+        )
+        .unwrap();
+        assert_eq!(testnet.vault_amount(&other).unwrap_err().code, 4);
+        let plain = parse(
+            crate::routing::Family::Solana,
+            TESTNET,
+            "USDC:5",
+            Use::Spend,
+        )
+        .unwrap();
+        assert_eq!(testnet.vault_amount(&plain).unwrap(), "5");
     }
 
     #[test]
@@ -513,6 +650,18 @@ mod tests {
         };
         let flags = rail.harness_flags(&r).unwrap();
         assert_eq!(flags.get("op"), "transferUSDC");
+        let testnet = Solana(crate::routing::info("solana:testnet").unwrap());
+        let other = ExecRequest {
+            amount: parse(
+                crate::routing::Family::Solana,
+                TESTNET,
+                &format!("USDC:{}:2", MAINNET[1].issuer.unwrap()),
+                Use::Spend,
+            )
+            .unwrap(),
+            ..r
+        };
+        assert_eq!(testnet.harness_flags(&other).err().map(|e| e.code), Some(4));
         assert_eq!(flags.get("amount"), "2");
         assert_eq!(flags.get("action"), "transfer");
         assert_eq!(flags.get("rail"), "solana");

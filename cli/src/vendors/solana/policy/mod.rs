@@ -3,7 +3,8 @@
 //! command process. The adapter passes resolved settings (the selected rail,
 //! the signing key file, the request ID and the RPC override) through
 //! `config::with_settings`; `ALLOWIT_POLICY_DIR` (default `.allowit`) holds
-//! the policy, its public context and its journal.
+//! the policy, its public context and its journal. The selected wallet,
+//! request ID and additional-operation choice arrive as [`RunOptions`].
 mod deploy;
 mod generate;
 mod import;
@@ -31,6 +32,31 @@ use std::{
     path::{Path, PathBuf},
     sync::Arc,
 };
+
+/// Per-run choices that the command line makes.
+#[derive(Clone, Debug, Default)]
+pub(crate) struct RunOptions {
+    /// The selected wallet. A vault operation refuses another vault.
+    pub wallet: Option<String>,
+    /// The operation's request ID; a retry reuses it.
+    pub request_id: Option<String>,
+    /// An explicitly additional fund or withdraw after an uncertain one.
+    pub additional: bool,
+    /// Hidden verbs of earlier releases, whose hints name their settings.
+    pub legacy: bool,
+}
+impl RunOptions {
+    /// The settings of the hidden verbs of earlier releases.
+    pub(crate) fn from_environment(wallet: Option<String>) -> Self {
+        Self {
+            wallet,
+            request_id: crate::config::env_present("ALLOWIT_REQUEST_ID")
+                .then(|| env_value("ALLOWIT_REQUEST_ID")),
+            additional: env_value("ALLOWIT_ADDITIONAL_OWNER_OPERATION") == "1",
+            legacy: true,
+        }
+    }
+}
 
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -193,10 +219,12 @@ struct Session<'a> {
     audit: Option<&'a Reporter>,
     journal: &'a FileJournal,
     lifecycle: &'a PolicyLifecycle<'a>,
+    options: &'a RunOptions,
 }
 pub(crate) fn run(
     name: &str,
     pos: &[String],
+    options: &RunOptions,
     json: bool,
     stdout: &mut String,
     stderr: &mut String,
@@ -239,7 +267,7 @@ pub(crate) fn run(
         ));
     }
     if name == "deploy" {
-        return deploy::run(&local, &policy, pos, json, stdout);
+        return deploy::run(&local, &policy, pos, options, json, stdout);
     }
     let owner_role = !matches!(name, "execute" | "status");
     let signer = if owner_role {
@@ -254,6 +282,18 @@ pub(crate) fn run(
         ));
     }
     let (client, audit) = local.client(&policy.id, matches!(name, "execute" | "status"))?;
+    if let Some(wallet) = &options.wallet {
+        // The vault address derives offline from the deployment, owner and policy.
+        let vault = native(client.public_binding(&policy, owner))?
+            .vault
+            .to_string();
+        if &vault != wallet {
+            return Err(Error::config(format!(
+                "the policy in {} is for vault {vault}, not {wallet}",
+                local.directory.display()
+            )));
+        }
+    }
     let journal = FileJournal::new(local.directory.join("journal"));
     if owner_role && local.context.is_none() {
         let bundle = native(client.bundle(&policy, owner))?;
@@ -278,6 +318,7 @@ pub(crate) fn run(
         audit: audit.as_deref(),
         journal: &journal,
         lifecycle: &lifecycle,
+        options,
     };
     if name == "status" {
         return status::run(&session, json, stdout, stderr);

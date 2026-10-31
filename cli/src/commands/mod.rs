@@ -124,10 +124,10 @@ impl Global {
     }
 }
 
-/// AllowIt: policy wallets for agents. Go on. On your terms.
 #[derive(Parser, Debug)]
 #[command(
     name = "allowit",
+    about = "AllowIt: policy wallets for agents. Go on. On your terms.",
     version = VERSION,
     before_help = ROOT_EXAMPLES,
     after_help = EXIT_CODES,
@@ -226,6 +226,8 @@ impl SigningArgs {
         Ok(Signing {
             with,
             wait: self.wait,
+            request_id: None,
+            additional: false,
         })
     }
 }

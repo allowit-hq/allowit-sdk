@@ -113,7 +113,14 @@ fn expiry(value: &str) -> Result<()> {
     if time::OffsetDateTime::parse(value, &Rfc3339).is_ok() {
         return Ok(());
     }
-    let (number, unit) = value.split_at(value.len().saturating_sub(1));
+    let Some((number, unit)) = value
+        .is_ascii()
+        .then(|| value.split_at(value.len().saturating_sub(1)))
+    else {
+        return Err(Error::usage(
+            "expiry is an RFC 3339 time or a duration such as 30d",
+        ));
+    };
     if !number.is_empty()
         && number.bytes().all(|b| b.is_ascii_digit())
         && matches!(unit, "s" | "m" | "h" | "d" | "w")
@@ -155,6 +162,9 @@ mod tests {
             "transaction_cap",
             "call_cap=-1",
             "expiry=soon",
+            "expiry=é",
+            "expiry=1é",
+            "expiry=日d",
             "recipients=nope",
             "operations=steal",
             "tokens=",

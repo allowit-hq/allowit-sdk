@@ -29,13 +29,15 @@ pub(crate) struct Args {
 }
 
 pub(crate) fn run(args: Args, cx: &mut Ctx) -> Result<i32> {
-    evaluate(&args.file, &args.context, args.mode, cx)
+    let json = cx.out.json;
+    evaluate(&args.file, &args.context, args.mode, json, cx)
 }
 
 pub(crate) fn evaluate(
     file: &std::path::Path,
     context: &std::path::Path,
     mode: Mode,
+    json: bool,
     cx: &mut Ctx,
 ) -> Result<i32> {
     let source = compiler::read(file)?;
@@ -48,5 +50,6 @@ pub(crate) fn evaluate(
     compiler::process(
         json!({"operation":"evaluate","source":source,"context":context,"profile":profile}),
         cx,
+        json,
     )
 }

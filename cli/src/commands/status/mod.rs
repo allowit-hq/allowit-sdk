@@ -50,12 +50,21 @@ pub(crate) fn run(args: Args, cx: &mut Ctx) -> Result<i32> {
         }
         None => cx.rail()?,
     };
-    let wallet = match cx.global.wallet.clone() {
-        Some(w) => Some(w),
-        None => match entry.as_ref().and_then(|e| e.wallet.clone()) {
-            Some(w) => Some(w),
-            None => cx.wallet(rail)?,
-        },
+    // The journal's wallet comes first; a different --wallet is refused, as
+    // a different --rail is.
+    let wallet = match entry.as_ref().and_then(|e| e.wallet.clone()) {
+        Some(recorded) => {
+            if let Some(flag) = &cx.global.wallet
+                && flag != &recorded
+            {
+                return Err(Error::usage(format!(
+                    "request {} belongs to wallet {recorded}",
+                    args.id
+                )));
+            }
+            Some(recorded)
+        }
+        None => cx.wallet(rail)?,
     };
     if let Some(w) = &wallet {
         vendors::address::check_wallet(rail.family, w)?;

@@ -17,12 +17,17 @@ fn mode(path: &std::path::Path) -> u32 {
 
 /// An executor bundle that an owner exports after deploying a vault.
 fn executor_bundle(network: &str, custody: u8) -> Value {
+    let owner = Key::parse("AKnL4NNf3DGWZJS6cPknBuEGnVsV4A4m5tgebLHaRSZ9").unwrap();
+    owned_bundle(network, custody, owner)
+}
+
+/// An executor bundle for a vault of OWNER.
+fn owned_bundle(network: &str, custody: u8, owner: Key) -> Value {
     let p = Policy::generate(network, PROMPT).unwrap();
     let program = Key([2; 32]);
     let policy_data = Key::find_program_address(&[&program.0], Key::parse(LOADER).unwrap())
         .unwrap()
         .0;
-    let owner = Key::parse("AKnL4NNf3DGWZJS6cPknBuEGnVsV4A4m5tgebLHaRSZ9").unwrap();
     let executor = Key::parse("9hSR6S7WPtxmTojgo6GG3k4yDPecgJY292j7xrsUGWBu").unwrap();
     let authority = Key::parse("GyGKxMyg1p9SsHfm15MkNUu1u9TN2JtTspcdmrtGUdse").unwrap();
     json!({"version":2,"policy":p,"context":{"policyId":p.id,"owner":owner,"network":p.network,
@@ -277,6 +282,12 @@ fn wallet_create_prints_the_bound_owner_link_without_an_owner_key_or_rpc() {
     let mut build = create.to_vec();
     build.push("--build-only");
     assert_eq!(code(&sandbox.run(&build)), Some(3));
+    // No adapter waits for the owner yet; --wait is refused, never dropped.
+    let mut wait = create.to_vec();
+    wait.extend(["--wait", "5m"]);
+    let output = sandbox.run(&wait);
+    assert_eq!(code(&output), Some(3), "{}", stderr(&output));
+    assert!(stderr(&output).contains("--wait"), "{}", stderr(&output));
 }
 
 #[test]
@@ -313,4 +324,102 @@ fn owner_verbs_need_a_local_key_and_a_supported_parameter() {
     let output = sandbox.run(&["policy", "params", "set", "daily_limit=USDC:3"]);
     assert_eq!(code(&output), Some(2));
     assert!(stderr(&output).contains("transaction_cap"));
+}
+
+#[test]
+fn vault_operations_refuse_a_selected_wallet_of_another_vault() {
+    let sandbox = isolated("solana-wallet");
+    sandbox.ok(&["rail", "use", "solana:testnet"]);
+    let owner = sandbox.json(&["keys", "generate", "owner"]);
+    let owner = Key::parse(owner["address"].as_str().unwrap()).unwrap();
+    let bundle = owned_bundle("solana:testnet", 7, owner);
+    let source = sandbox.work().join("executor.json");
+    std::fs::write(&source, bundle.to_string()).unwrap();
+    sandbox.ok(&["keys", "import", "executor", source.to_str().unwrap()]);
+    let id = allowit_native::client::hex32(bundle["policy"]["id"].as_str().unwrap()).unwrap();
+    let vault = Key::find_program_address(&[b"allowit-vault-v2", &owner.0, &id], Key([7; 32]))
+        .unwrap()
+        .0
+        .to_string();
+    let other = Key([5; 32]).to_string();
+    let mock = Mock::new();
+    for args in [
+        vec!["wallet", "show"],
+        vec!["wallet", "fund", "USDC:1", "--sign-with-key", "owner"],
+        vec!["wallet", "withdraw", "USDC:1", "--sign-with-key", "owner"],
+        vec!["wallet", "pause", "--sign-with-key", "owner"],
+        vec!["wallet", "close", "--sign-with-key", "owner", "--yes"],
+        vec![
+            "policy",
+            "params",
+            "set",
+            "day_spent_cap=USDC:3",
+            "--sign-with-key",
+            "owner",
+        ],
+    ] {
+        let mut all = vec!["--rpc-url", mock.url.as_str(), "--wallet", other.as_str()];
+        all.extend(&args);
+        let output = sandbox.run(&all);
+        assert_eq!(code(&output), Some(3), "{args:?}: {}", stderr(&output));
+        assert!(
+            stderr(&output).contains(&format!("is for vault {vault}, not {other}")),
+            "{args:?}: {}",
+            stderr(&output)
+        );
+        // `wallet use` selects the same way.
+        sandbox.ok(&["wallet", "use", &other]);
+        let mut used = vec!["--rpc-url", mock.url.as_str()];
+        used.extend(&args);
+        assert_eq!(code(&sandbox.run(&used)), Some(3), "{args:?}");
+        sandbox.ok(&["wallet", "use", &vault]);
+    }
+    mock.assert_untouched();
+    // The matching wallet passes the check and reaches the RPC.
+    let listener = mock.listener;
+    let server = std::thread::spawn(move || {
+        let (mut conn, _) = listener.accept().unwrap();
+        let (_, request) = read_request(&mut conn);
+        reply(
+            &mut conn,
+            200,
+            &json!({"jsonrpc":"2.0","id":request["id"],"result":"wrong-genesis"}),
+        );
+    });
+    let output = sandbox.run(&["--rpc-url", &mock.url, "--wallet", &vault, "wallet", "show"]);
+    assert_eq!(code(&output), Some(3));
+    assert!(stderr(&output).contains("genesis"), "{}", stderr(&output));
+    server.join().unwrap();
+    // The engine harness names no vault: a selected wallet is refused before
+    // a request ID is spent.
+    for args in [
+        vec![
+            "exec",
+            "--op",
+            "transfer",
+            "--to",
+            "9hSR6S7WPtxmTojgo6GG3k4yDPecgJY292j7xrsUGWBu",
+            "--amount",
+            "USDC:1",
+        ],
+        vec!["policy", "show"],
+        vec!["status", "pay-00000001"],
+    ] {
+        let output = sandbox.run(&args);
+        assert_eq!(code(&output), Some(3), "{args:?}: {}", stderr(&output));
+        let error = stderr(&output);
+        assert!(error.contains("cannot confirm wallet"), "{args:?}: {error}");
+        assert_eq!(error.lines().count(), 1, "{args:?}: {error}");
+    }
+    // No owner verb waits for the owner yet.
+    let output = sandbox.run(&[
+        "wallet",
+        "pause",
+        "--sign-with-key",
+        "owner",
+        "--wait",
+        "1m",
+    ]);
+    assert_eq!(code(&output), Some(3), "{}", stderr(&output));
+    assert!(stderr(&output).contains("--wait"), "{}", stderr(&output));
 }

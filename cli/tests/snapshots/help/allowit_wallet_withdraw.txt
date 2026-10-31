@@ -10,8 +10,11 @@ Arguments:
   <AMOUNT>  The amount, or CODE:max for the whole balance
 
 Options:
-      --to <KEY|ADDR>  The receiving key or address [default: the owner]
-  -h, --help           Print help
+      --to <KEY|ADDR>    The receiving key or address [default: the owner]
+      --request-id <ID>  Operation ID; a retry reuses it
+      --additional       Send an additional operation after an uncertain one; needs a new
+                         --request-id
+  -h, --help             Print help
 
 Signing:
       --sign-with-link       Print the owner signing link on stderr (the default)

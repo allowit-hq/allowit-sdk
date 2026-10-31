@@ -59,7 +59,7 @@ allowit lsp | completion --shell SHELL | guide | version | help [CMD]
 
 Every node has `--help` with examples first. A bare group prints its help and changes nothing. An unknown command exits 2 and lists the commands at that level. `allowit guide` prints the agent guide.
 
-Owner verbs (`wallet create`, `fund`, `withdraw`, `update`, `pause`, `resume`, `close`, `policy deploy` and `policy params set`) share three signing flags: `--sign-with-link` (the default) prints the owner signing link on stderr, `--sign-with-key NAME` signs with a local key, and `--build-only` prints the unsigned transaction for `tx send`. `--wait DUR` waits for the owner.
+Owner verbs (`wallet create`, `fund`, `withdraw`, `update`, `pause`, `resume`, `close`, `policy deploy` and `policy params set`) share three signing flags: `--sign-with-link` (the default) prints the owner signing link on stderr, `--sign-with-key NAME` signs with a local key, and `--build-only` prints the unsigned transaction for `tx send`. `--wait DUR` waits for the owner; a rail that cannot wait exits 3. `wallet fund` and `wallet withdraw` also take `--request-id ID`, which a retry reuses, and `--additional`, which sends a deliberate second operation after an uncertain one.
 
 Earlier command names stay as hidden aliases: `compile`, `check` and `workflow` (`policy check`), `evaluate` (`policy test`), `stellar-native` (`policy build` on Stellar), `registry` (`policy functions`), the `tempo` group, the Solana `policy generate|import|fund|execute|status|revoke|withdraw|close|tune|tune-action` verbs, and the Stellar `wallet configure` and `wallet approve` links. `wget` and `fetch` are aliases of `curl` and `http`. `json` is the hidden editor wire protocol.
 
@@ -90,7 +90,8 @@ There is no default rail. A command that needs one exits 3 with the hint `allowi
 | `wallet fund`, `withdraw`, `pause`, `close` | not available | `--sign-with-key` | not available |
 | `wallet update`, `resume`, `tx send` | not available | not available | not available |
 | `policy new` | not available | native generation | not available |
-| `policy params set` | not available | `day_total_cap`, `transaction_cap` | not available |
+| `policy build` | custom policy wallet source | not available | not available |
+| `policy params set` | not available | `day_spent_cap`, `transaction_cap` | not available |
 | `policy deploy` | not available | not available | not available |
 | `exec --op transfer` | engine endpoints, `--build-only` | engine harness | vault payment, `--build-only` |
 | `eval` | not available | engine harness | not available |
@@ -98,7 +99,9 @@ There is no default rail. A command that needs one exits 3 with the hint `allowi
 | `call URL` | not available | not available | MPP |
 | `call SERVICE`, `skills`, `curl`, `http`, `mcp`, `claude`, `codex` | not available | not available | not available |
 
-Mainnet rails serve `exec`, `status`, `wallet show` and `policy show` on Stellar, and `exec`, `eval`, `status` and `policy show` on Solana. Tempo mainnet serves no verb yet. `swap`, `deposit`, `redeem` and `custom` operations need new contract entrypoints on every rail; they exit 3. The paid-service commands keep their request builders in `src/gateway/`, but the engine serves no paid-service route, so they exit 3 on every rail.
+A selected wallet (`--wallet`, `ALLOWIT_WALLET` or `wallet use`) must be the wallet that the Stellar profile, the Tempo bundle or the Solana policy context in `ALLOWIT_POLICY_DIR` names; another wallet exits 3. The Solana engine harness names a policy but no vault, so Solana `exec`, `eval`, `status` and `policy show` exit 3 while a wallet is selected. `status ID` uses the rail and wallet in the request journal and refuses a different `--rail` or `--wallet`.
+
+Mainnet rails serve `exec`, `status`, `wallet show`, `policy show` and `policy build` on Stellar, and `exec`, `eval`, `status` and `policy show` on Solana. Tempo mainnet serves no verb yet. `swap`, `deposit`, `redeem` and `custom` operations need new contract entrypoints on every rail; they exit 3. The paid-service commands keep their request builders in `src/gateway/`, but the engine serves no paid-service route, so they exit 3 on every rail.
 
 ## Amounts
 
@@ -110,7 +113,7 @@ Mainnet rails serve `exec`, `status`, `wallet show` and `policy show` on Stellar
 | `INTEGER` | Base units of the wallet's installed asset. |
 | `CODE:max` | The whole balance, for `wallet withdraw` only. |
 
-`--token-out` takes `ASSET:MIN`, where MIN may be zero. Each rail supplies its decimals: 7 on Stellar, 9 for SOL and 6 for USDC on Solana, 6 on Tempo. An amount with more decimal places than its token exits 2.
+`--token-out` takes `ASSET:MIN`, where MIN may be zero. Each rail supplies its decimals: 7 on Stellar, 9 for SOL and 6 for USDC on Solana, 6 on Tempo. An amount with more decimal places than its token exits 2. An amount of a token other than the wallet's own exits 4. `call --max-amount` also takes a plain decimal of the paying asset, for example `0.05`.
 
 Policy parameter keys are the canonical keys of the contracts params map: `transaction_cap`, `spent_cap`, `day_spent_cap` and `day_total_cap` take amounts, `call_cap` a count, `recipients` addresses, `tokens` assets, `expiry` an RFC 3339 time or a duration such as `30d`, and `operations` operation names. A list value replaces the earlier list.
 
@@ -120,13 +123,13 @@ Global flags work in any position: `--rail RAIL` (aliases `-n`, `--network`; env
 
 The configuration directory is `$XDG_CONFIG_HOME/allowit` (default `~/.config/allowit`):
 
-- `config.toml` holds the current rail and, per rail, the default wallet, known wallets, the agent key, an RPC override (`rpc_url`) and the paid-service asset that `setup` chose (USDC; AlphaUSD on Tempo).
+- `config.toml` holds the current rail and, per rail, the default wallet, known wallets, the agent key, an RPC override (`rpc_url`) and the paid-service asset that `setup` chose (USDC; AlphaUSD on Tempo testnet, which has no USDC).
 - `keys/NAME.toml` holds public key metadata: rail, address, public key and curve.
 - `secrets/NAME` holds a private key in the rail's signer format: a Stellar S… seed, a Solana key-pair JSON array or a Tempo 32-byte hex key. The file is mode 0600 in a 0700 directory. No flag accepts a secret; `keys export` prints one.
 - `requests/` is the request journal. `exec` and `eval` record each request before it leaves the process, so `status ID` finds its rail and wallet and `history` lists it. A request ID never names two different requests.
 - `stellar-journal/` holds the Stellar operation journal for recovery.
 
-Data goes to stdout. Progress, links, hints, prompts and new request IDs go to stderr. Text is the default, also when stdout is a pipe; `--json` selects JSON. Policy source and JSON documents are syntax-highlighted only when stdout is a terminal, and never with `--json`, `NO_COLOR`, `TERM=dumb`, `--no-color` or a pipe. `NO_DNA` selects compact JSON and no prompts. In JSON mode an error is one object on stderr: `{"error":{"code","exit","message","request_id"}}`. A destructive verb asks for confirmation on a terminal and needs `--yes` otherwise.
+Data goes to stdout. Progress, links, hints, prompts and new request IDs go to stderr; progress and new request IDs leave at once, so an interrupted command keeps its request ID. Text is the default, also when stdout is a pipe: a result prints one `key value` line per field, with dotted paths such as `config.rail` for nested fields. `--json` selects JSON. The unsigned output of `--build-only` and the hidden aliases of earlier releases always print JSON. Policy source and JSON documents are syntax-highlighted only when stdout is a terminal, and never with `--json`, `NO_COLOR`, `TERM=dumb`, `--no-color` or a pipe. `NO_DNA` selects compact JSON and no prompts. In JSON mode an error is one object on stderr: `{"error":{"code","exit","message","request_id"}}`. A destructive verb asks for confirmation on a terminal and needs `--yes` otherwise.
 
 | Exit | Meaning |
 | --- | --- |

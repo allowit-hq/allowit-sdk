@@ -20,7 +20,8 @@ pub(crate) struct Args {
 
 pub(crate) fn run(args: Args, cx: &mut Ctx) -> Result<i32> {
     let Some(name) = args.name else {
-        return compiler::process(json!({"operation":"registry"}), cx);
+        let json = cx.out.json;
+        return compiler::process(json!({"operation":"registry"}), cx, json);
     };
     let mut result = allowit_sdk::process_value(json!({"operation":"registry"}));
     result.sort_all_objects();
@@ -29,7 +30,8 @@ pub(crate) fn run(args: Args, cx: &mut Ctx) -> Result<i32> {
             "no policy function {name}; run allowit policy functions"
         ))
     })?;
-    compiler::print(&found, cx);
+    let json = cx.out.json;
+    compiler::print(&found, cx, json);
     Ok(0)
 }
 

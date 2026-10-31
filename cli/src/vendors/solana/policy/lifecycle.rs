@@ -1,8 +1,9 @@
 //! Owner operations (fund, withdraw, revoke, close, tune, tune-action) and
 //! executor payments (execute) submitted through the native lifecycle.
 //! Owner operations sign with the `ALLOWIT_OWNER_KEYPAIR` key file; execute
-//! signs with `ALLOWIT_EXECUTOR_KEYPAIR` and needs `ALLOWIT_REQUEST_ID`. The
-//! adapter supplies both from `--sign-with-key` and the agent key.
+//! signs with `ALLOWIT_EXECUTOR_KEYPAIR` and needs a request ID. The adapter
+//! supplies the owner key from `--sign-with-key` and the request ID from
+//! `--request-id`; the hidden verbs of earlier releases read their settings.
 use super::*;
 
 pub(super) fn run(
@@ -22,10 +23,10 @@ pub(super) fn run(
         audit,
         journal,
         lifecycle,
+        options: run_options,
     } = *session;
-    let request_id = env_value("ALLOWIT_REQUEST_ID");
-    let saved_request_id =
-        crate::config::env_present("ALLOWIT_REQUEST_ID").then_some(request_id.as_str());
+    let saved_request_id = run_options.request_id.as_deref();
+    let request_id = saved_request_id.unwrap_or_default().to_owned();
     let options = match name {
         "deploy" => Options {
             amount: Some(pos[0].clone()),
@@ -33,7 +34,7 @@ pub(super) fn run(
         },
         "fund" | "withdraw" => Options {
             amount: Some(pos[0].clone()),
-            additional_owner_operation: env_value("ALLOWIT_ADDITIONAL_OWNER_OPERATION") == "1",
+            additional_owner_operation: run_options.additional,
             ..Options::default()
         },
         "tune" => Options {
@@ -53,7 +54,7 @@ pub(super) fn run(
         name
     };
     let mut result = if name == "execute" {
-        if !crate::config::env_present("ALLOWIT_REQUEST_ID") || request_id.is_empty() {
+        if request_id.is_empty() {
             return Err(Error::config(
                 "Set one fresh ALLOWIT_REQUEST_ID for this intended payment; keep it unchanged for retries",
             ));
@@ -214,10 +215,18 @@ pub(super) fn run(
         }
     }
     if result.expired() {
-        stderr.push_str("The original operation remains uncertain and cannot be broadcast again. For an explicitly additional fund/withdraw, set both a fresh ALLOWIT_REQUEST_ID and ALLOWIT_ADDITIONAL_OWNER_OPERATION=1; retain the old proof.\n");
+        stderr.push_str(if run_options.legacy {
+            "The original operation remains uncertain and cannot be broadcast again. For an explicitly additional fund/withdraw, set both a fresh ALLOWIT_REQUEST_ID and ALLOWIT_ADDITIONAL_OWNER_OPERATION=1; retain the old proof.\n"
+        } else {
+            "The original operation remains uncertain and cannot be broadcast again. For an explicitly additional wallet fund or withdraw, rerun it with a new --request-id and --additional; retain the old proof.\n"
+        });
     }
     if result.extra.get("decisionCode") == Some(&serde_json::json!("EXPIRED_UNEXECUTED")) {
-        stderr.push_str("This request expired without execution. For a deliberate retry, set a new ALLOWIT_REQUEST_ID; keep the original journal.\n");
+        stderr.push_str(if run_options.legacy {
+            "This request expired without execution. For a deliberate retry, set a new ALLOWIT_REQUEST_ID; keep the original journal.\n"
+        } else {
+            "This request expired without execution. For a deliberate retry, give a new --request-id; keep the original journal.\n"
+        });
     }
     if audit_pending {
         if broadcast_withheld {

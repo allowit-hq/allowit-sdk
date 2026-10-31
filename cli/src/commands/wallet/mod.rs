@@ -68,3 +68,13 @@ pub(crate) fn run(command: Command, cx: &mut Ctx) -> Result<i32> {
         Command::Approve(a) => approve::run(a, cx),
     }
 }
+
+/// Checks an owner operation's `--request-id`.
+fn request_id(id: Option<String>) -> Result<Option<String>> {
+    match id {
+        Some(id) if !crate::request::request_id_valid(&id) => Err(crate::error::Error::usage(
+            "--request-id must be 8 to 100 characters from A-Z a-z 0-9 . _ : -",
+        )),
+        id => Ok(id),
+    }
+}

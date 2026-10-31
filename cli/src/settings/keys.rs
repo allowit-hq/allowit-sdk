@@ -41,13 +41,6 @@ impl Key {
     }
 }
 
-pub(crate) fn curve(family: Family) -> &'static str {
-    match family {
-        Family::Tempo => "secp256k1",
-        Family::Stellar | Family::Solana => "ed25519",
-    }
-}
-
 pub(crate) fn valid_name(name: &str) -> Result<()> {
     if name.is_empty()
         || name.len() > 64
@@ -152,14 +145,15 @@ pub(crate) fn generate(dir: &Path, name: &str, rail: &str) -> Result<Key> {
 /// Records a public address that this device cannot sign for.
 pub(crate) fn add(dir: &Path, name: &str, rail: &str, address: &str) -> Result<Key> {
     refuse_existing(dir, name)?;
-    let family = routing::family(rail)?;
-    crate::vendors::address::check_account(family, address)?;
+    let info = routing::info(rail)?;
+    crate::vendors::address::check_account(info.family, address)?;
+    let caps = crate::vendors::rail(info).caps();
     let key = Key {
         name: name.into(),
-        rail: routing::normalize(rail)?.into(),
+        rail: info.id.into(),
         address: address.into(),
-        public_key: (family != Family::Tempo).then(|| address.to_owned()),
-        curve: curve(family).into(),
+        public_key: caps.address_is_key.then(|| address.to_owned()),
+        curve: caps.curve.into(),
         secret: false,
     };
     save(dir, &key)?;

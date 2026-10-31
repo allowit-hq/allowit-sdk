@@ -61,6 +61,6 @@ pub(crate) fn run(args: Args, cx: &mut Ctx) -> Result<i32> {
         // Revealed values must reach the terminal unchanged.
         cx.out.raw = true;
     }
-    cx.out.json_value(&value);
+    cx.out.value(&value);
     Ok(0)
 }

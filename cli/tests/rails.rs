@@ -65,6 +65,14 @@ fn rail_aliases_resolve_to_canonical_caip2_and_each_rail_keeps_its_own_settings(
     assert_eq!(sandbox.json(&["whoami"])["wallet"], contract);
     let config = sandbox.json(&["config", "show"]);
     assert_eq!(config["rail"], "stellar:testnet");
+    // Without --json the nested settings print as text lines.
+    let text = sandbox.ok(&["config", "show"]);
+    assert!(serde_json::from_str::<Value>(&text).is_err(), "{text}");
+    assert!(
+        text.lines()
+            .any(|l| l.starts_with("config.rails.stellar:testnet.wallet") && l.ends_with(&contract)),
+        "{text}"
+    );
     assert_eq!(config["railSource"], "config.toml");
     assert_eq!(
         config["config"]["rails"]["stellar:testnet"]["wallet"],
@@ -411,7 +419,13 @@ fn verbs_without_a_backend_exit_3_as_not_available() {
             .unwrap()
             .contains(&json!("wallet close"))
     );
-    assert_eq!(shown["paramKeys"][0], "transaction_cap");
+    // Stellar has no `policy params set` backend, so it lists no keys.
+    assert_eq!(shown["paramKeys"], json!([]));
+    let solana = sandbox.json(&["rail", "show", "solana:devnet"]);
+    assert_eq!(
+        solana["paramKeys"],
+        json!(["transaction_cap", "day_spent_cap"])
+    );
 }
 
 fn stellar_approval_fixture() -> Value {
@@ -682,6 +696,80 @@ fn tempo_bundle_serves_only_its_rail_and_vault() {
     let output = sandbox.run(&["--rail", "tempo:mainnet", "wallet", "show"]);
     assert_eq!(code(&output), Some(3));
     assert!(stderr(&output).contains("not available on eip155:4217"));
+    // Paid calls and the policy follow the selected wallet too.
+    let (other, recipient) = (addr(17), addr(9));
+    for args in [
+        vec![
+            "call",
+            "https://service.invalid/data",
+            "--max-amount",
+            "0.05",
+        ],
+        vec!["policy", "show"],
+    ] {
+        let mut all = vec!["--wallet", other.as_str()];
+        all.extend(&args);
+        let output = sandbox.run(&all);
+        assert_eq!(code(&output), Some(3), "{args:?}: {}", stderr(&output));
+        assert!(stderr(&output).contains("is for vault"), "{args:?}");
+    }
+    // status follows the wallet in the journal and refuses another one.
+    sandbox.ok(&["wallet", "use", &addr(16)]);
+    let output = sandbox.run(&[
+        "exec",
+        "--op",
+        "transfer",
+        "--to",
+        &recipient,
+        "--amount",
+        "pathUSD:1",
+        "--request-id",
+        "tempo-pay-0001",
+    ]);
+    assert_eq!(code(&output), Some(4), "{}", stderr(&output));
+    let output = sandbox.run(&["--wallet", &other, "status", "tempo-pay-0001"]);
+    assert_eq!(code(&output), Some(2), "{}", stderr(&output));
+    assert!(
+        stderr(&output).contains("belongs to wallet"),
+        "{}",
+        stderr(&output)
+    );
+    // An amount of another token exits 4 before anything is sent.
+    for args in [
+        vec![
+            "exec",
+            "--op",
+            "transfer",
+            "--to",
+            recipient.as_str(),
+            "--amount",
+            "pathUSD:1",
+        ],
+        vec![
+            "exec",
+            "--op",
+            "transfer",
+            "--to",
+            recipient.as_str(),
+            "--amount",
+            "AlphaUSD:1",
+            "--build-only",
+        ],
+        vec![
+            "call",
+            "https://service.invalid/data",
+            "--max-amount",
+            "pathUSD:0.05",
+        ],
+    ] {
+        let output = sandbox.run(&args);
+        assert_eq!(code(&output), Some(4), "{args:?}: {}", stderr(&output));
+        assert!(
+            stderr(&output).contains("names another asset"),
+            "{args:?}: {}",
+            stderr(&output)
+        );
+    }
     // eval is not available on Tempo, and nothing is sent.
     let output = sandbox.run(&[
         "eval",

@@ -1,13 +1,12 @@
 //! `allowit setup --agent NAME [--force]`: onboarding for the current rail.
-//! Chooses the agent key and the paid-service asset (USDC; AlphaUSD on Tempo)
-//! and, with `ALLOWIT_ACCOUNT_TOKEN`, registers the agent's public key with
+//! Chooses the agent key and the rail's paid-service asset (USDC; AlphaUSD on
+//! Tempo testnet, which has no USDC) and, with `ALLOWIT_ACCOUNT_TOKEN`, registers the agent's public key with
 //! the engine. Running it again changes nothing.
 use crate::{
     config::env_value,
     ctx::Ctx,
     error::{Error, Result},
     gateway::{ACCOUNT_TOKEN_ENV, Common, args::Invocation, control},
-    routing::Family,
 };
 use serde_json::{Value, json};
 
@@ -50,6 +49,7 @@ fn registration(input: &Value) -> Result<()> {
 
 pub(crate) fn run(args: Args, cx: &mut Ctx) -> Result<i32> {
     let rail = cx.rail()?;
+    let default_asset = cx.vendor()?.caps().service_asset;
     let key = cx.key(&args.agent)?;
     key.check_rail(rail.id)?;
     if !key.secret {
@@ -69,13 +69,10 @@ pub(crate) fn run(args: Args, cx: &mut Ctx) -> Result<i32> {
             rail.id
         )));
     }
-    let service_asset = current.service_asset.clone().unwrap_or_else(|| {
-        match rail.family {
-            Family::Tempo => "AlphaUSD",
-            Family::Stellar | Family::Solana => "USDC",
-        }
-        .into()
-    });
+    let service_asset = current
+        .service_asset
+        .clone()
+        .unwrap_or_else(|| default_asset.into());
     let changed = current.agent.as_deref() != Some(key.name.as_str())
         || current.service_asset.as_deref() != Some(service_asset.as_str());
     if changed {

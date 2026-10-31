@@ -31,6 +31,9 @@ pub(crate) struct Out {
     pub raw: bool,
     /// The request this command acts on, for JSON errors.
     pub request_id: Option<String>,
+    /// Write progress, with any pending stderr, at once instead of when the
+    /// command ends, so an interrupted command keeps its request ID.
+    pub live: bool,
 }
 
 fn env_set(name: &str) -> bool {
@@ -62,6 +65,7 @@ impl Out {
             kind: Kind::Text,
             raw: false,
             request_id: None,
+            live: false,
         }
     }
     /// One line of text data.
@@ -69,28 +73,38 @@ impl Out {
         self.stdout.push_str(text.as_ref());
         self.stdout.push('\n');
     }
-    /// A structured result. JSON mode prints JSON; text mode prints `key: value`
-    /// lines for a flat object and an indented JSON document otherwise.
+    /// A structured result: JSON in JSON mode, [`Out::text`] otherwise.
     pub(crate) fn value(&mut self, value: &Value) {
         if self.json {
             self.json_value(value);
-            return;
+        } else {
+            self.text(value);
         }
-        match value {
-            Value::Object(map) if map.values().all(|v| !v.is_object() && !v.is_array()) => {
-                let width = map.keys().map(String::len).max().unwrap_or(0);
-                for (k, v) in map {
-                    let text = match v {
-                        Value::String(s) => s.clone(),
-                        Value::Null => "-".into(),
-                        other => other.to_string(),
-                    };
-                    self.line(format!("{k:width$}  {text}"));
+    }
+    /// A structured result as text: one `key  value` line per scalar, with
+    /// dotted paths for nested fields (`config.rail`, `steps.0.name`). Lists
+    /// of scalars join with commas; a multi-line string follows its key,
+    /// indented.
+    pub(crate) fn text(&mut self, value: &Value) {
+        let mut rows = vec![];
+        flatten(String::new(), value, &mut rows);
+        let width = rows
+            .iter()
+            .filter(|(_, v)| !v.contains('\n'))
+            .map(|(k, _)| k.chars().count())
+            .max()
+            .unwrap_or(0)
+            .min(32);
+        for (key, text) in rows {
+            if key.is_empty() {
+                self.line(text);
+            } else if text.contains('\n') {
+                self.line(&key);
+                for line in text.lines() {
+                    self.line(format!("  {line}").trim_end());
                 }
-            }
-            Value::String(s) => self.line(s),
-            other => {
-                self.json_value(other);
+            } else {
+                self.line(format!("{key:width$}  {text}"));
             }
         }
     }
@@ -145,6 +159,9 @@ impl Out {
         if !self.quiet {
             self.stderr.push_str(text.as_ref());
             self.stderr.push('\n');
+            if self.live {
+                crate::flush_stderr(&mut self.stderr);
+            }
         }
     }
     /// Extra diagnostics on stderr with `-v`.
@@ -175,6 +192,44 @@ impl Out {
         } else {
             "error:"
         }
+    }
+}
+
+fn scalar(value: &Value) -> String {
+    match value {
+        Value::String(s) => s.clone(),
+        Value::Null => "-".into(),
+        other => other.to_string(),
+    }
+}
+
+/// Collects `(path, text)` rows for [`Out::text`].
+fn flatten(prefix: String, value: &Value, rows: &mut Vec<(String, String)>) {
+    let join = |key: &str| {
+        if prefix.is_empty() {
+            key.to_owned()
+        } else {
+            format!("{prefix}.{key}")
+        }
+    };
+    match value {
+        Value::Object(map) if map.is_empty() => rows.push((prefix, "-".into())),
+        Value::Object(map) => {
+            for (k, v) in map {
+                flatten(join(k), v, rows);
+            }
+        }
+        Value::Array(items) if items.is_empty() => rows.push((prefix, "-".into())),
+        Value::Array(items) if items.iter().all(|v| !v.is_object() && !v.is_array()) => {
+            let text = items.iter().map(scalar).collect::<Vec<_>>().join(", ");
+            rows.push((prefix, text));
+        }
+        Value::Array(items) => {
+            for (i, v) in items.iter().enumerate() {
+                flatten(join(&i.to_string()), v, rows);
+            }
+        }
+        other => rows.push((prefix, scalar(other))),
     }
 }
 
@@ -228,6 +283,39 @@ mod tests {
         assert_eq!(out.stdout, "{\n  \"name\": \"agent\"\n}\n");
     }
     #[test]
+    fn nested_values_print_as_text_lines_and_never_as_json() {
+        let mut out = plain(false);
+        out.value(&json!({
+            "rail": "stellar:testnet",
+            "config": {"rail": "stellar:testnet", "rails": {}},
+            "keys": ["a", "b"],
+            "steps": [{"name": "fund"}],
+            "none": null,
+            "source": "fn a() {}\nfn b() {}",
+        }));
+        let text = out.stdout.clone();
+        assert!(serde_json::from_str::<Value>(&text).is_err());
+        assert_eq!(out.kind, Kind::Text);
+        for (key, value) in [
+            ("rail", "stellar:testnet"),
+            ("config.rail", "stellar:testnet"),
+            ("config.rails", "-"),
+            ("keys", "a, b"),
+            ("steps.0.name", "fund"),
+            ("none", "-"),
+        ] {
+            let line = format!("{key:12}  {value}\n");
+            assert!(text.contains(&line), "{line:?} in\n{text}");
+        }
+        assert!(text.contains("source\n  fn a() {}\n  fn b() {}\n"));
+        let mut out = plain(false);
+        out.value(&json!([{"a": 1}, {"a": 2}]));
+        assert_eq!(out.stdout, "0.a  1\n1.a  2\n");
+        let mut out = plain(false);
+        out.value(&json!("plain"));
+        assert_eq!(out.stdout, "plain\n");
+    }
+    #[test]
     fn highlighting_adds_color_and_keeps_the_text() {
         let source = "fn main() { let x = 1; }\n";
         let colored = highlight(source, "rs");
@@ -241,6 +329,14 @@ mod tests {
         assert_eq!(out.rendered_stdout(out.stdout.clone()), source);
         out.color_out = true;
         assert!(out.rendered_stdout(out.stdout.clone()).contains("\x1b["));
+    }
+    #[test]
+    fn live_progress_leaves_at_once() {
+        let mut out = Out::new(false, false, false, true);
+        out.stderr.push_str("pending\n");
+        out.live = true;
+        out.progress("request-0001");
+        assert!(out.stderr.is_empty());
     }
     #[test]
     fn quiet_drops_progress_but_not_data() {

@@ -64,6 +64,6 @@ pub(crate) fn is_local(command: &Command) -> bool {
     )
 }
 
-pub(crate) use build::stellar_source;
+pub(crate) use build::write_source;
 pub(crate) use check::run_operation;
 pub(crate) use test::{Mode as TestMode, evaluate};

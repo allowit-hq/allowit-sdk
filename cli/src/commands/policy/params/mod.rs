@@ -9,7 +9,7 @@ use clap::Subcommand;
 pub(crate) const EXAMPLES: &str = "\
 Examples:
   allowit policy params
-  allowit policy params set day_total_cap=USDC:50 transaction_cap=USDC:10 --sign-with-key owner";
+  allowit policy params set day_spent_cap=USDC:50 transaction_cap=USDC:10 --sign-with-key owner";
 
 /// Show or change the policy parameters
 #[derive(clap::Args, Debug)]

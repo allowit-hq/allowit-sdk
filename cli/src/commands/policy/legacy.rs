@@ -6,7 +6,7 @@
 use crate::{
     ctx::Ctx,
     error::{Error, Result},
-    routing::Family,
+    routing, vendors,
 };
 use clap::Subcommand;
 use std::path::PathBuf;
@@ -37,7 +37,7 @@ Examples:
   allowit --rail solana:testnet wallet close --sign-with-key owner --yes";
 const TUNE: &str = "\
 Examples:
-  allowit --rail solana:testnet policy params set day_total_cap=USDC:20 --sign-with-key owner";
+  allowit --rail solana:testnet policy params set day_spent_cap=USDC:20 --sign-with-key owner";
 const TUNE_ACTION: &str = "\
 Examples:
   allowit --rail solana:testnet policy params set transaction_cap=USDC:1 --sign-with-key owner";
@@ -67,26 +67,15 @@ pub(crate) enum Command {
 }
 
 pub(crate) fn run(command: Command, cx: &mut Ctx) -> Result<i32> {
-    if let Some(rail) = cx.rail_opt()?
-        && rail.family != Family::Solana
-    {
-        return Err(Error::unsupported(format!(
-            "this policy verb serves Solana vaults, not {}",
-            rail.id
-        )));
-    }
+    let rail = match cx.rail_opt()? {
+        Some(rail) => rail,
+        None => routing::info("solana:testnet")?,
+    };
     let (name, pos): (&str, Vec<String>) = match command {
         Command::Generate { prompt } => ("generate", vec![prompt]),
         Command::Import { file } => ("import", vec![file.to_string_lossy().into_owned()]),
         Command::Fund { amount } => ("fund", vec![amount]),
-        Command::Execute { recipient, amount } => {
-            if !crate::request::solana_address(&recipient) {
-                return Err(Error::usage(format!(
-                    "RECIPIENT {recipient} is not a Solana token account address"
-                )));
-            }
-            ("execute", vec![recipient, amount])
-        }
+        Command::Execute { recipient, amount } => ("execute", vec![recipient, amount]),
         Command::Status => ("status", vec![]),
         Command::Revoke => ("revoke", vec![]),
         Command::Withdraw { amount } => ("withdraw", vec![amount]),
@@ -97,7 +86,5 @@ pub(crate) fn run(command: Command, cx: &mut Ctx) -> Result<i32> {
     if pos.iter().any(|p| p.contains('\0') || p.trim().is_empty()) {
         return Err(Error::usage("arguments must be non-empty text"));
     }
-    let json = cx.out.json;
-    let out = &mut cx.out;
-    crate::vendors::solana::policy::run(name, &pos, json, &mut out.stdout, &mut out.stderr)
+    vendors::rail(rail).legacy(cx, &format!("policy {name}"), &pos)
 }

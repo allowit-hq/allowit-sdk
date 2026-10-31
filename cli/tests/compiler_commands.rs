@@ -77,8 +77,8 @@ fn compiler_commands_ignore_wallet_environment() {
 
 #[test]
 fn global_flags_in_any_position_leave_compiler_output_unchanged() {
-    // The policy verbs and their hidden aliases of earlier releases print the
-    // same bytes; rail and output flags do not change a local command.
+    // With --json the policy verbs print the bytes of their hidden aliases of
+    // earlier releases; rail and wallet flags do not change a local command.
     let research = "../docs/examples/research.rs";
     let context = "../docs/examples/context.json";
     let cases: &[(&[&str], &[&str])] = &[
@@ -90,10 +90,13 @@ fn global_flags_in_any_position_leave_compiler_output_unchanged() {
             &["check", research],
             &["--network=stellar:testnet", "check", research],
         ),
-        (&["check", research], &["policy", "check", research]),
         (
             &["check", research],
-            &["policy", "check", research, "--rail", "nope"],
+            &["policy", "check", research, "--json"],
+        ),
+        (
+            &["check", research],
+            &["policy", "check", research, "--rail", "nope", "--json"],
         ),
         (&["registry"], &["--json", "registry"]),
         (&["registry"], &["policy", "functions", "--output", "json"]),
@@ -107,6 +110,7 @@ fn global_flags_in_any_position_leave_compiler_output_unchanged() {
                 context,
                 "--mode",
                 "contract",
+                "--json",
             ],
         ),
         (
@@ -119,6 +123,7 @@ fn global_flags_in_any_position_leave_compiler_output_unchanged() {
                 research,
                 "--context",
                 context,
+                "--json",
             ],
         ),
     ];
@@ -145,6 +150,21 @@ fn global_flags_in_any_position_leave_compiler_output_unchanged() {
         &[],
     );
     assert_eq!(other.status.code(), Some(3));
+    // Without --json the policy verbs print text lines, also when piped.
+    for args in [
+        &["policy", "check", research][..],
+        &["policy", "functions"],
+        &["policy", "test", research, "--context", context],
+    ] {
+        let text = allowit(args, &[]);
+        assert_eq!(text.status.code(), Some(0), "{args:?}");
+        let stdout = String::from_utf8(text.stdout).unwrap();
+        assert!(!stdout.is_empty(), "{args:?}");
+        assert!(
+            serde_json::from_str::<serde_json::Value>(&stdout).is_err(),
+            "{args:?}: {stdout}"
+        );
+    }
     // A missing file is a usage error with nothing on stdout.
     let output = allowit(&["policy", "check", "--json"], &[]);
     assert_eq!(output.status.code(), Some(2));

@@ -14,6 +14,12 @@ pub(crate) struct Args {
     /// The receiving key or address [default: the owner]
     #[arg(long, value_name = "KEY|ADDR")]
     pub to: Option<String>,
+    /// Operation ID; a retry reuses it
+    #[arg(long, value_name = "ID")]
+    pub request_id: Option<String>,
+    /// Send an additional operation after an uncertain one; needs a new --request-id
+    #[arg(long, requires = "request_id")]
+    pub additional: bool,
     #[command(flatten)]
     pub signing: SigningArgs,
 }
@@ -29,6 +35,8 @@ pub(crate) fn run(args: Args, cx: &mut Ctx) -> Result<i32> {
         }
         None => None,
     };
-    let signing = args.signing.resolve(cx, rail.id)?;
+    let mut signing = args.signing.resolve(cx, rail.id)?;
+    signing.request_id = super::request_id(args.request_id)?;
+    signing.additional = args.additional;
     vendor.wallet_withdraw(cx, &amount, to.as_deref(), &signing)
 }

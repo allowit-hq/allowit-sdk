@@ -12,7 +12,8 @@ Arguments:
 
 Options:
       --input <JSON>         JSON input for the service
-      --max-amount <AMOUNT>  The most this call may cost: CODE:DECIMAL or a USDC decimal
+      --max-amount <AMOUNT>  The most this call may cost: CODE:DECIMAL, or a decimal of the paying
+                             asset
       --request-id <ID>      Operation ID; a retry reuses it
   -h, --help                 Print help
 

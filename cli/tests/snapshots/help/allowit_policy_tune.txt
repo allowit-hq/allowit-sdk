@@ -1,7 +1,7 @@
 Usage: allowit policy tune [OPTIONS] <VALUE>
 
 Examples:
-  allowit --rail solana:testnet policy params set day_total_cap=USDC:20 --sign-with-key owner
+  allowit --rail solana:testnet policy params set day_spent_cap=USDC:20 --sign-with-key owner
 
 Arguments:
   <VALUE>  

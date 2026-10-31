@@ -117,6 +117,7 @@ pub(crate) fn submit(mode: Mode, a: RequestArgs, build_only: bool, cx: &mut Ctx)
         ));
     }
     let wallet = cx.wallet(rail)?;
+    vendor.exec_wallet(wallet.as_deref())?;
     let request_id = match a.request_id {
         Some(id) => id,
         None => {

@@ -19,6 +19,6 @@ pub(crate) struct Args {
 }
 
 pub(crate) fn run(args: Args, cx: &mut Ctx) -> Result<i32> {
-    cx.rail()?;
-    crate::vendors::stellar::approval::run(&args.args, &mut cx.out.stdout)
+    let vendor = cx.vendor()?;
+    vendor.legacy(cx, "wallet approve", &args.args)
 }

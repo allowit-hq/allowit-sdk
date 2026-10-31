@@ -1,4 +1,4 @@
-AllowIt: policy wallets for agents. Go on. On your terms
+AllowIt: policy wallets for agents. Go on. On your terms.
 
 Usage: allowit [OPTIONS] [COMMAND]
 

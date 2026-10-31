@@ -88,12 +88,13 @@ fn strip_ansi(text: &str) -> String {
 
 fn execute(cli: commands::Cli) -> i32 {
     let global = cli.global;
-    let out = Out::new(
+    let mut out = Out::new(
         global.json_output(),
         global.quiet,
         global.verbose,
         global.no_color,
     );
+    out.live = true;
     let mut cx = ctx::Ctx::new(global, out);
     let Some(command) = cli.command else {
         return 0;

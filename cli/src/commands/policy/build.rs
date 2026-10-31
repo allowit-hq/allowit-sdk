@@ -1,6 +1,6 @@
 //! `allowit policy build FILE [-o OUT]`.
 use super::super::compiler;
-use crate::{ctx::Ctx, error::Result, exit::not_available, routing::Family};
+use crate::{ctx::Ctx, error::Result};
 use std::path::PathBuf;
 
 pub(crate) const EXAMPLES: &str = "\
@@ -20,18 +20,17 @@ pub(crate) struct Args {
 }
 
 pub(crate) fn run(args: Args, cx: &mut Ctx) -> Result<i32> {
-    let rail = cx.rail()?;
-    if rail.family != Family::Stellar {
-        return Err(not_available("policy build", rail.id));
+    let vendor = cx.vendor()?;
+    if !vendor.caps().verbs.contains(&"policy build") {
+        return Err(vendor.na("policy build"));
     }
     let source = compiler::read(&args.file)?;
-    let policy = allowit_sdk::compile_stellar_policy(&source)
-        .map_err(|e| compiler::failure(e.to_string()))?;
-    stellar_source(&policy.rust_source, args.out.as_deref(), cx)
+    let built = vendor.policy_build(&source)?;
+    write_source(&built, args.out.as_deref(), cx)
 }
 
-/// Prints or writes generated Stellar Rust.
-pub(crate) fn stellar_source(
+/// Prints or writes generated Rust source.
+pub(crate) fn write_source(
     rust: &str,
     output: Option<&std::path::Path>,
     cx: &mut Ctx,

@@ -10,8 +10,11 @@ Arguments:
   <AMOUNT>  The amount: CODE:DECIMAL, CODE:ISSUER:DECIMAL or INTEGER base units
 
 Options:
-      --from <KEY>  The paying key
-  -h, --help        Print help
+      --from <KEY>       The paying key
+      --request-id <ID>  Operation ID; a retry reuses it
+      --additional       Send an additional operation after an uncertain one; needs a new
+                         --request-id
+  -h, --help             Print help
 
 Signing:
       --sign-with-link       Print the owner signing link on stderr (the default)

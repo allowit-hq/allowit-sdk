@@ -19,5 +19,5 @@ pub(crate) fn run(args: Args, cx: &mut Ctx) -> Result<i32> {
     let path = args.file.unwrap_or_else(|| PathBuf::from("-"));
     let input = compiler::read(&path)?;
     let request = serde_json::from_str(&input).map_err(|e| compiler::failure(e.to_string()))?;
-    compiler::process(request, cx)
+    compiler::process(request, cx, true)
 }

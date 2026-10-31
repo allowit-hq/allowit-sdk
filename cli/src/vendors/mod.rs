@@ -36,6 +36,7 @@ pub(crate) const VERBS: &[&str] = &[
     "wallet close",
     "policy new",
     "policy show",
+    "policy build",
     "policy deploy",
     "policy params",
     "policy params set",
@@ -66,6 +67,10 @@ pub(crate) const PARAM_KEYS: &[&str] = &[
 /// What a rail supports. It drives `rail show`, help and the exit-3 errors.
 pub(crate) struct Caps {
     pub curve: &'static str,
+    /// True when an account address is its public key (ed25519 rails).
+    pub address_is_key: bool,
+    /// The asset `setup` chooses for paid services.
+    pub service_asset: &'static str,
     /// `exec --op` values that work.
     pub ops: &'static [&'static str],
     /// `policy params set` keys that the rail can change.
@@ -124,10 +129,13 @@ impl SignWith {
 }
 pub(crate) struct Signing {
     pub with: SignWith,
-    /// How long to wait for the owner. Read by adapters that serve
-    /// `--sign-with-link` with `--wait`.
-    #[allow(dead_code)]
+    /// How long to wait for the owner. No adapter serves it yet, so
+    /// [`require_signing`] refuses it with exit 3.
     pub wait: Option<Duration>,
+    /// The owner operation's request ID; a retry reuses it.
+    pub request_id: Option<String>,
+    /// An explicitly additional fund or withdraw after an uncertain one.
+    pub additional: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -187,6 +195,19 @@ pub(crate) trait Rail {
     }
     fn na(&self, verb: &str) -> Error {
         not_available(verb, self.info().id)
+    }
+    /// Refuses a selected wallet that the agent request path cannot confirm.
+    /// Runs before a request ID is spent.
+    fn exec_wallet(&self, _: Option<&str>) -> Result<()> {
+        Ok(())
+    }
+    /// Builds a policy source for this rail: the generated Rust source.
+    fn policy_build(&self, _: &str) -> Result<String> {
+        Err(self.na("policy build"))
+    }
+    /// A hidden command of earlier releases: VERB names it, ARGS are its words.
+    fn legacy(&self, _: &mut Ctx, verb: &str, _: &[String]) -> Result<i32> {
+        Err(self.na(verb))
     }
     fn keys_fund(&self, _: &mut Ctx, _: &Key) -> Result<i32> {
         Err(self.na("keys fund"))
@@ -283,8 +304,11 @@ pub(crate) fn require_op(rail: &dyn Rail, op: &str) -> Result<()> {
     }
 }
 
-/// Refuses a signing mode the rail does not serve yet.
+/// Refuses a signing mode, or `--wait`, that the rail does not serve yet.
 pub(crate) fn require_signing(rail: &dyn Rail, verb: &str, signing: &Signing) -> Result<()> {
+    if signing.wait.is_some() {
+        return Err(not_available(&format!("{verb} --wait"), rail.info().id));
+    }
     if rail.caps().signing.contains(&signing.with.mode()) {
         Ok(())
     } else {
@@ -324,6 +348,8 @@ mod tests {
         Signing {
             with: SignWith::Link,
             wait: None,
+            request_id: None,
+            additional: false,
         }
     }
     /// Calls one verb with inert arguments. Only verbs a rail does not list
@@ -381,6 +407,7 @@ mod tests {
             "wallet close" => r.wallet_close(cx, &signing()),
             "policy new" => r.policy_new(cx, "prompt", None),
             "policy show" => r.policy_show(cx, false),
+            "policy build" => r.policy_build("").map(|_| 0),
             "policy deploy" => r.policy_deploy(cx, p, None, &signing()),
             "policy params" => r.policy_params(cx),
             "policy params set" => r.policy_params_set(cx, &[], &signing()),
@@ -459,7 +486,21 @@ mod tests {
             let build = Signing {
                 with: SignWith::BuildOnly,
                 wait: None,
+                request_id: None,
+                additional: false,
             };
+            let wait = Signing {
+                with: SignWith::Link,
+                wait: Some(Duration::from_secs(300)),
+                request_id: None,
+                additional: false,
+            };
+            assert_eq!(
+                require_signing(r.as_ref(), "wallet create", &wait)
+                    .unwrap_err()
+                    .code,
+                3
+            );
             if !r.caps().signing.contains(&"build-only") {
                 assert_eq!(
                     require_signing(r.as_ref(), "wallet pause", &build)

@@ -6,8 +6,9 @@
 //!   wallet profile comes from `ALLOWIT_STELLAR_BUNDLE` until the wallet is
 //!   resolved from chain state.
 //! - `wallet show`, `policy show`: the public wallet profile.
-//! - Hidden `wallet configure` and `wallet approve`: the classic-account owner
-//!   links of earlier releases.
+//! - `policy build`: the Rust source of a custom policy wallet.
+//! - Hidden `wallet configure`, `wallet approve` and `stellar-native`: the
+//!   classic-account owner links and the policy build of earlier releases.
 pub mod approval;
 pub mod owner;
 pub(crate) mod request;
@@ -116,13 +117,29 @@ impl Rail for Stellar {
     fn caps(&self) -> Caps {
         Caps {
             curve: "ed25519",
+            address_is_key: true,
+            service_asset: "USDC",
             ops: &["transfer"],
-            param_keys: super::PARAM_KEYS,
+            // No `policy params set` backend yet.
+            param_keys: &[],
             signing: &[],
             verbs: if self.0.testnet {
-                &["keys fund", "wallet show", "policy show", "exec", "status"]
+                &[
+                    "keys fund",
+                    "wallet show",
+                    "policy show",
+                    "policy build",
+                    "exec",
+                    "status",
+                ]
             } else {
-                &["wallet show", "policy show", "exec", "status"]
+                &[
+                    "wallet show",
+                    "policy show",
+                    "policy build",
+                    "exec",
+                    "status",
+                ]
             },
         }
     }
@@ -161,6 +178,18 @@ impl Rail for Stellar {
             "transactionHash": body["hash"],
         }));
         Ok(0)
+    }
+    fn policy_build(&self, source: &str) -> Result<String> {
+        allowit_sdk::compile_stellar_policy(source)
+            .map(|policy| policy.rust_source)
+            .map_err(|e| Error::usage(e.to_string()))
+    }
+    fn legacy(&self, cx: &mut Ctx, verb: &str, args: &[String]) -> Result<i32> {
+        match verb {
+            "wallet configure" => owner::run(args, &mut cx.out.stdout),
+            "wallet approve" => approval::run(args, &mut cx.out.stdout),
+            _ => Err(self.na(verb)),
+        }
     }
     fn wallet_show(&self, cx: &mut Ctx, wallet: Option<&str>) -> Result<i32> {
         let bundle = self.profile(cx, wallet)?;
@@ -204,8 +233,9 @@ impl Rail for Stellar {
             units,
         )?;
         if r.build_only {
+            // The unsigned request is a document for `tx send`: always JSON.
             let wire = typed.wire()?;
-            cx.out.value(&wire);
+            cx.out.json_value(&wire);
             return Ok(0);
         }
         let journal = self.journal(cx)?;

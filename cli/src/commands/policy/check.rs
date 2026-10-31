@@ -18,11 +18,17 @@ pub(crate) struct Args {
 }
 
 pub(crate) fn run(args: Args, cx: &mut Ctx) -> Result<i32> {
-    run_operation("check", &args.file, cx)
+    let json = cx.out.json;
+    run_operation("check", &args.file, json, cx)
 }
 
 /// Runs one compile-family operation on a policy file.
-pub(crate) fn run_operation(operation: &str, file: &std::path::Path, cx: &mut Ctx) -> Result<i32> {
+pub(crate) fn run_operation(
+    operation: &str,
+    file: &std::path::Path,
+    json: bool,
+    cx: &mut Ctx,
+) -> Result<i32> {
     let source = compiler::read(file)?;
-    compiler::process(json!({"operation":operation,"source":source}), cx)
+    compiler::process(json!({"operation":operation,"source":source}), cx, json)
 }
