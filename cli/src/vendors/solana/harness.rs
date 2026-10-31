@@ -10,7 +10,8 @@ use crate::{
     output::{self, check_result, classify},
     request::{Flags, encode, request_id_valid},
     routing,
-    skill::{self, Network, Skill, text},
+    skill::{Network, Skill, text},
+    term::Out,
 };
 use serde_json::{Value, json};
 use std::time::Duration;
@@ -34,14 +35,20 @@ fn client() -> Result<Client> {
 /// Reads the policy description and checks it against the selected rail.
 fn read_skill(c: &mut Client) -> Result<Skill> {
     let s = Skill::read(c)?;
-    if let Some(network) = routing::selected()
-        && routing::normalize(s.get("network")).ok() != Some(network.as_str())
-    {
-        return Err(Error::config(
-            "the selected rail differs from the policy deployment",
-        ));
-    }
+    check_rail(&s)?;
     Ok(s)
+}
+
+/// Checks a policy description against the selected rail.
+fn check_rail(s: &Skill) -> Result<()> {
+    match routing::selected() {
+        Some(network) if routing::normalize(s.get("network")).ok() != Some(network.as_str()) => {
+            Err(Error::config(
+                "the selected rail differs from the policy deployment",
+            ))
+        }
+        _ => Ok(()),
+    }
 }
 
 /// `policy show`: the description, or only the policy source.
@@ -140,16 +147,14 @@ pub(crate) fn submit(
     flags: &Flags,
     request_id: &str,
     wait: Duration,
-    json: bool,
-    stdout: &mut String,
-    stderr: &mut String,
+    out: &mut Out,
 ) -> Result<i32> {
     let mut c = client()?;
     let s = read_skill(&mut c)?;
     let mut b = crate::request::build_body(command, flags, &s, &mut std::io::empty())?;
     b.request_id = request_id.into();
     // Pending progress leaves the process before the POST.
-    crate::flush_stderr(stderr);
+    crate::flush_stderr(&mut out.stderr);
     let mut r = match c.call(
         "POST",
         if command == "exec" {
@@ -194,34 +199,34 @@ pub(crate) fn submit(
             r["createdAt"] = v;
         }
     }
-    let mut res = classify(&r, command);
-    if r["replayed"] == true {
-        res.note += " This is the stored result of an earlier request with this request ID; nothing new was submitted.";
-    }
-    if json {
-        r["state"] = json!(res.state);
-        r["clientRequestId"] = json!(request_id);
+    let res = classify(&r, command);
+    r["state"] = json!(res.state);
+    r["clientRequestId"] = json!(request_id);
+    if out.json {
         r["exitCode"] = json!(res.exit);
-        *stdout += &output::json(&r);
+        out.stdout += &output::json(&r);
     } else {
-        *stdout += &output::print_result(&r, &res, request_id);
+        out.text(&r);
     }
     Ok(res.exit)
 }
 
 /// `status ID`: reads one request without creating another.
-pub(crate) fn status(
-    id: &str,
-    wait: Duration,
-    json: bool,
-    stdout: &mut String,
-    stderr: &mut String,
-) -> Result<i32> {
+pub(crate) fn status(id: &str, wait: Duration, out: &mut Out) -> Result<i32> {
     let mut c = client()?;
-    if routing::selected().is_some() {
-        read_skill(&mut c)?;
-    }
-    let net = skill::status_network(&mut c, stderr)?;
+    // Status recovery tolerates an unavailable description; the rail check
+    // runs only when a description is available.
+    let net = match Skill::read(&mut c) {
+        Ok(s) => {
+            check_rail(&s)?;
+            s.net()
+        }
+        Err(e) if e.config || matches!(e.status, Some(401 | 403)) => return Err(e),
+        Err(_) => {
+            out.progress("policy description unavailable; network unknown");
+            Network::Unknown
+        }
+    };
     let mut r = match c.call("POST", "status", Some(&encode(&json!({"requestId":id})))) {
         Ok(r) => r,
         Err(e) if e.status == Some(404) => match c.call(
@@ -260,12 +265,12 @@ pub(crate) fn status(
         )));
     }
     let res = classify(&r, "status");
-    if json {
-        r["state"] = json!(res.state);
+    r["state"] = json!(res.state);
+    if out.json {
         r["exitCode"] = json!(res.exit);
-        *stdout += &output::json(&r);
+        out.stdout += &output::json(&r);
     } else {
-        *stdout += &output::print_result(&r, &res, "");
+        out.text(&r);
     }
     Ok(res.exit)
 }

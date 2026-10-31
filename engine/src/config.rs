@@ -15,14 +15,11 @@ fn valid_id(s: &str, min: usize, max: usize) -> bool {
             .all(|c| c.is_ascii_alphanumeric() || c == b'_' || c == b'-')
 }
 pub use allowit_sdk::client::config::parse_origin;
-use std::{cell::RefCell, collections::BTreeMap};
-thread_local! {
-    static OVERRIDES: RefCell<BTreeMap<String, String>> = const { RefCell::new(BTreeMap::new()) };
-}
+use allowit_sdk::client::config::{override_value, with_overrides};
 /// Reads one setting. A value from [`with_settings`] wins over the process
 /// environment, so callers pass resolved settings without changing it.
 pub fn env_value(name: &str) -> String {
-    if let Some(value) = OVERRIDES.with(|o| o.borrow().get(name).cloned()) {
+    if let Some(value) = override_value(name) {
         return value;
     }
     if name == "ALLOWIT_NETWORK"
@@ -34,23 +31,13 @@ pub fn env_value(name: &str) -> String {
 }
 /// True when the setting is present, from [`with_settings`] or the environment.
 pub fn env_present(name: &str) -> bool {
-    OVERRIDES.with(|o| o.borrow().contains_key(name)) || std::env::var_os(name).is_some()
+    override_value(name).is_some() || std::env::var_os(name).is_some()
 }
 /// Runs `f` with resolved settings in place of the named environment values.
-/// The process environment never changes.
+/// The process environment never changes. Rail crates that read settings
+/// through `allowit-sdk` see the same values.
 pub fn with_settings<T>(settings: &[(&str, String)], f: impl FnOnce() -> Result<T>) -> Result<T> {
-    struct Restore(BTreeMap<String, String>);
-    impl Drop for Restore {
-        fn drop(&mut self) {
-            OVERRIDES.with(|o| *o.borrow_mut() = std::mem::take(&mut self.0));
-        }
-    }
-    let mut next = OVERRIDES.with(|o| o.borrow().clone());
-    for (name, value) in settings {
-        next.insert((*name).to_owned(), value.clone());
-    }
-    let _restore = Restore(OVERRIDES.with(|o| o.replace(next)));
-    f()
+    with_overrides(settings, f)
 }
 impl Config {
     pub fn load(policy: &str) -> Result<Self> {

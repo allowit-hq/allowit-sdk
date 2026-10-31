@@ -4,7 +4,7 @@ use crate::{ctx::Ctx, error::Result, gateway::args::parse};
 pub(crate) const EXAMPLES: &str = "\
 Examples:
   allowit claude -- -p \"Find a weather API and call it\"
-  allowit claude -- --sandbox --max-payment 1 -p \"List services\"";
+  allowit claude -- --sandbox --max-amount 1 -p \"List services\"";
 
 /// Run Claude Code with the AllowIt MCP server. Needs a Claude subscription
 /// sign-in; API-key settings are removed

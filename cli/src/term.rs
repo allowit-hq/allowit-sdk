@@ -163,6 +163,12 @@ impl Out {
             }
         }
     }
+    /// A generated ID on stderr, which a retry needs. `-q` keeps it.
+    pub(crate) fn generated_id(&mut self, id: &str) {
+        let quiet = std::mem::replace(&mut self.quiet, false);
+        self.progress(id);
+        self.quiet = quiet;
+    }
     /// Extra diagnostics on stderr with `-v`.
     pub(crate) fn detail(&mut self, text: impl AsRef<str>) {
         if self.verbose {

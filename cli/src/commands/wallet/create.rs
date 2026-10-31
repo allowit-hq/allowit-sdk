@@ -12,7 +12,8 @@ pub(crate) const EXAMPLES: &str = "\
 Examples:
   allowit wallet create --kind common --asset XLM --policy policy.rs --owner owner --agent agent
   allowit wallet create --kind simple --asset USDC --policy policy.rs --owner GOWNER… --agent agent --x402
-  allowit wallet create --kind common --asset XLM --policy policy.rs --owner owner --agent agent --sign-with-key owner";
+  allowit wallet create --kind common --asset XLM --policy policy.rs --owner owner --agent agent --sign-with-key owner
+  allowit --rail solana:devnet wallet create --asset USDC --policy policy.json --owner owner --agent agent --fund USDC:10";
 
 #[derive(Clone, Copy, Debug, clap::ValueEnum)]
 pub(crate) enum Kind {
@@ -42,11 +43,13 @@ pub(crate) struct Args {
     /// Let the agent pay x402 resources from the wallet
     #[arg(long)]
     pub x402: bool,
-    /// The initial deposit, where the rail's vault takes it at creation. An
-    /// adapter limit of the native Solana vault, outside the approved
-    /// command surface, so it is hidden.
-    #[arg(long, value_name = "AMOUNT", hide = true)]
+    /// The initial deposit, for a vault that takes it at creation (Solana)
+    #[arg(long, value_name = "AMOUNT")]
     pub fund: Option<String>,
+    /// Creation request ID [default: derived from the inputs, so a retry
+    /// reuses it]. A new ID replaces an expired unsigned preparation
+    #[arg(long, value_name = "ID")]
+    pub request_id: Option<String>,
     #[command(flatten)]
     pub signing: SigningArgs,
 }
@@ -63,7 +66,8 @@ pub(crate) fn run(args: Args, cx: &mut Ctx) -> Result<i32> {
             Error::usage("give --asset, or run allowit setup to choose the service asset")
         })?,
     };
-    let signing = args.signing.resolve(cx, rail.id)?;
+    let mut signing = args.signing.resolve(cx, rail.id)?;
+    signing.request_id = super::request_id(args.request_id)?;
     let vendor = cx.vendor()?;
     let fund = args
         .fund

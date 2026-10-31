@@ -1,8 +1,34 @@
 use crate::client::error::{Error, Result};
-use std::{env, net::IpAddr};
+use std::{cell::RefCell, collections::BTreeMap, env, net::IpAddr};
 use url::Url;
+thread_local! {
+    static OVERRIDES: RefCell<BTreeMap<String, String>> = const { RefCell::new(BTreeMap::new()) };
+}
+/// Reads one setting. A value from [`with_overrides`] wins over the process
+/// environment, so every crate that reads settings here sees the values a
+/// caller resolved, and the process environment never changes.
 pub fn env_value(name: &str) -> String {
-    env::var(name).unwrap_or_default()
+    override_value(name).unwrap_or_else(|| env::var(name).unwrap_or_default())
+}
+/// The value that [`with_overrides`] set for a setting, if any.
+pub fn override_value(name: &str) -> Option<String> {
+    OVERRIDES.with(|o| o.borrow().get(name).cloned())
+}
+/// Runs `f` with resolved settings in place of the named environment values
+/// on this thread. The previous values return when `f` ends or panics.
+pub fn with_overrides<T>(settings: &[(&str, String)], f: impl FnOnce() -> T) -> T {
+    struct Restore(BTreeMap<String, String>);
+    impl Drop for Restore {
+        fn drop(&mut self) {
+            OVERRIDES.with(|o| *o.borrow_mut() = std::mem::take(&mut self.0));
+        }
+    }
+    let mut next = OVERRIDES.with(|o| o.borrow().clone());
+    for (name, value) in settings {
+        next.insert((*name).to_owned(), value.clone());
+    }
+    let _restore = Restore(OVERRIDES.with(|o| o.replace(next)));
+    f()
 }
 pub fn parse_origin(raw: &str) -> Result<String> {
     if raw.is_empty() {
@@ -57,6 +83,17 @@ pub fn parse_origin(raw: &str) -> Result<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn overrides_win_and_restore() {
+        let name = "ALLOWIT_CORE_OVERRIDE_FIXTURE";
+        assert_eq!(env_value(name), "");
+        with_overrides(&[(name, "a".into())], || {
+            assert_eq!(env_value(name), "a");
+            with_overrides(&[(name, "b".into())], || assert_eq!(env_value(name), "b"));
+            assert_eq!(env_value(name), "a");
+        });
+        assert_eq!(override_value(name), None);
+    }
     #[test]
     fn origins_are_strict() {
         assert_eq!(parse_origin("").unwrap(), "https://app.allowit.xyz");

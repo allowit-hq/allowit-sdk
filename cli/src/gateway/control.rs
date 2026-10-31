@@ -69,18 +69,17 @@ pub(crate) fn mutate(
     action: &str,
     input: Value,
     stdout: &mut String,
-    stderr: &mut String,
+    out: &mut crate::term::Out,
 ) -> Result<i32> {
     let mut request = args::context(&inv.common);
     request["action"] = json!(action);
     request["input"] = input;
     let id = operation_id(&inv.common, &request);
     request["operationId"] = json!(id);
-    *stderr += &format!(
-        "allowit: {} operation {id}; do not repeat an uncertain mutation with a new operation ID\n",
-        inv.group
-    );
-    crate::flush_stderr(stderr);
+    // The operation ID reaches the terminal before the request leaves.
+    out.generated_id(&id);
+    crate::flush_stderr(&mut out.stderr);
+    let stderr = &mut out.stderr;
     let value = Gateway::new(&inv.common)?.send("POST", route, Some(&request))?;
     if value.get("operationId").and_then(Value::as_str) != Some(id.as_str()) {
         return Err(Error::uncertain(

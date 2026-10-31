@@ -13,7 +13,7 @@ use serde_json::json;
 
 pub(crate) const EXAMPLES: &str = "\
 Examples:
-  allowit http POST https://api.example/v1/translate text=hello lang=fr --max-payment 0.02
+  allowit http POST https://api.example/v1/translate text=hello lang=fr --max-amount 0.02
   allowit http https://api.example/v1/weather city=Paris";
 
 /// Send a paid HTTP request with HTTPie syntax (METHOD URL NAME=VALUE...)

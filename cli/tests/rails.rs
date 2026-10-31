@@ -3,7 +3,7 @@
 //! a credential, a profile or the network that it does not need.
 mod common;
 
-use common::{Mock, Sandbox, code, stderr, stdout};
+use common::{Mock, Sandbox, code, read_request, reply, stderr, stdout};
 use serde_json::{Value, json};
 
 #[test]
@@ -724,14 +724,18 @@ fn tempo_bundle_serves_only_its_rail_and_vault() {
     let bundle = json!({"version":1,"profile":"tempo-native-v1","origin":"https://service.invalid","capability":format!("tempo-executor.{}","a".repeat(32)),"config":{"network":"tempo:testnet","chainId":42431,"rpcUrl":"https://rpc.invalid","factory":addr(11),"factoryCodeHash":format!("0x{}","0c".repeat(32)),"token":addr(13),"executor":addr(6),"authority":addr(7),"feeToken":addr(14)},"policy":{"id":policy_id,"profile":"tempo-native-v1","network":"tempo:testnet","chainId":42431,"owner":addr(5),"token":addr(13),"executor":addr(6),"authority":addr(7),"factory":addr(11),"vault":addr(16),"policyDigest":format!("0x{}","11".repeat(32)),"requirementsDigest":format!("0x{}","12".repeat(32)),"semanticRequired":true,"prompt":"Pay for approved research","dailyLimit":"5","actionLimit":"1","totalLimit":"20","expiresAt":"18446744073709551615","recipient":addr(0)}});
     let source = sandbox.private_file("executor.json", &bundle.to_string());
     sandbox.ok(&["rail", "use", "tempo:testnet"]);
-    let imported = sandbox.ok(&["keys", "import", "executor", source.to_str().unwrap()]);
-    assert!(imported.contains(&policy_id));
-    assert!(!imported.contains("tempo-executor."));
+    // keys import prints the key view, as JSON with --json.
+    let imported = sandbox.json(&["keys", "import", "executor", source.to_str().unwrap()]);
+    assert_eq!(imported["policy"], policy_id);
+    assert_eq!(imported["address"], addr(6));
+    assert_eq!(imported["rail"], "eip155:42431");
+    assert!(!imported.to_string().contains("tempo-executor."));
     let key = sandbox.json(&["keys", "show", "executor"]);
     assert_eq!(key["address"], addr(6));
     assert_eq!(key["secret"], false);
     let shown = sandbox.json(&["wallet", "show"]);
     assert_eq!(shown["vault"], addr(16));
+    assert_eq!(shown["network"], "eip155:42431");
     assert!(!shown.to_string().contains("tempo-executor."));
     let output = sandbox.run(&["--wallet", &addr(17), "wallet", "show"]);
     assert_eq!(code(&output), Some(3));
@@ -813,6 +817,57 @@ fn tempo_bundle_serves_only_its_rail_and_vault() {
             stderr(&output)
         );
     }
+    // A payment signs with the agent key that setup chose; without one it
+    // stops before the crate runs.
+    let pay = [
+        "exec",
+        "--op",
+        "transfer",
+        "--to",
+        recipient.as_str(),
+        "--amount",
+        "1000000",
+        "--request-id",
+        "tempo-pay-0002",
+    ];
+    let output = sandbox.run(&pay);
+    assert_eq!(code(&output), Some(3), "{}", stderr(&output));
+    assert!(
+        stderr(&output).contains("setup --agent"),
+        "{}",
+        stderr(&output)
+    );
+    sandbox.ok(&["keys", "generate", "agent"]);
+    sandbox.ok(&["setup", "--agent", "agent"]);
+    // --rpc-url reaches the crate over an invalid ambient RPC setting, and
+    // the crate's own progress lines never reach the terminal.
+    sandbox.set("ALLOWIT_TEMPO_RPC_URL", "not a url");
+    let mut overridden = vec!["--rpc-url", "http://127.0.0.1:1"];
+    overridden.extend(pay);
+    let output = sandbox.run(&overridden);
+    assert_ne!(code(&output), Some(0));
+    assert!(
+        !stderr(&output).contains("Invalid Tempo RPC URL"),
+        "{}",
+        stderr(&output)
+    );
+    assert!(
+        !stderr(&output).contains("evaluating the vault policy"),
+        "{}",
+        stderr(&output)
+    );
+    let mut build = pay.to_vec();
+    build[8] = "tempo-plan-0001";
+    build.push("--build-only");
+    let output = sandbox.run(&build);
+    assert!(
+        !stderr(&output).contains("requesting a wallet plan"),
+        "{}",
+        stderr(&output)
+    );
+    let mut long = pay.to_vec();
+    long.extend(["--wait", "11m"]);
+    assert_eq!(code(&sandbox.run(&long)), Some(2));
     // eval is not available on Tempo, and nothing is sent.
     let output = sandbox.run(&[
         "eval",
@@ -848,4 +903,71 @@ fn tempo_bundle_serves_only_its_rail_and_vault() {
         "{}",
         stderr(&output)
     );
+}
+
+#[test]
+fn solana_status_reads_the_request_when_the_policy_description_fails() {
+    let mut sandbox = Sandbox::new("solana-status");
+    let mock = Mock::new();
+    sandbox
+        .set("ALLOWIT_URL", &mock.url)
+        .set("ALLOWIT_TOKEN", format!("owner.policy.{}", "s".repeat(32)));
+    let listener = mock.listener.try_clone().unwrap();
+    let server = std::thread::spawn(move || {
+        let mut paths = vec![];
+        for stream in listener.incoming() {
+            let mut stream = stream.unwrap();
+            let (head, _) = read_request(&mut stream);
+            let path = head
+                .split_whitespace()
+                .nth(1)
+                .unwrap_or_default()
+                .to_owned();
+            if path.ends_with("/status") {
+                reply(
+                    &mut stream,
+                    200,
+                    &json!({"requestId":"pay-0001","outcome":"fail","status":"denied","kind":"transaction","reason":"over the cap"}),
+                );
+                paths.push(path);
+                return paths;
+            }
+            reply(&mut stream, 503, &json!({"error":"unavailable"}));
+            paths.push(path);
+        }
+        paths
+    });
+    let output = sandbox.run(&["--rail", "solana:devnet", "status", "pay-0001"]);
+    assert_eq!(code(&output), Some(20), "{}", stderr(&output));
+    let text = stdout(&output);
+    assert!(text.contains("denied"), "{text}");
+    // Text output is key-value data, without a prose note.
+    assert!(!text.contains("state: "), "{text}");
+    let paths = server.join().unwrap();
+    assert!(paths.iter().any(|p| p.ends_with("/skill")), "{paths:?}");
+}
+
+#[cfg(unix)]
+#[test]
+fn arguments_that_are_not_utf8_are_usage_errors() {
+    use std::os::unix::ffi::OsStrExt;
+    let sandbox = Sandbox::new("utf8");
+    let output = sandbox
+        .command()
+        .arg(std::ffi::OsStr::from_bytes(b"\xff"))
+        .output()
+        .unwrap();
+    assert_eq!(code(&output), Some(2), "{}", stderr(&output));
+    assert!(stderr(&output).contains("not valid UTF-8"));
+    let output = sandbox
+        .command()
+        .args([
+            std::ffi::OsStr::new("--json"),
+            std::ffi::OsStr::from_bytes(b"\xff"),
+        ])
+        .output()
+        .unwrap();
+    assert_eq!(code(&output), Some(2));
+    let error: Value = serde_json::from_str(stderr(&output).trim()).unwrap();
+    assert_eq!(error["error"]["code"], "usage");
 }

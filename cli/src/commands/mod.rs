@@ -56,7 +56,7 @@ Examples:
   allowit keys generate agent --fund
   allowit setup --agent agent
   allowit exec --op transfer --to GDEST… --amount XLM:5
-  allowit status pay-001 --wait 60s";
+  allowit status pay-0001 --wait 60s";
 
 const EXIT_CODES: &str = "\
 Exit codes:

@@ -15,6 +15,50 @@ fn file_name(path: &[String]) -> String {
     format!("{}.txt", parts.join("_"))
 }
 
+/// The request-ID rule of the engine: 8 to 100 of A-Z a-z 0-9 . _ : -.
+fn request_id_valid(id: &str) -> bool {
+    (8..=100).contains(&id.len())
+        && id
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b".-_:".contains(&b))
+}
+
+/// The request IDs in the example lines: `--request-id ID` and `status ID`.
+fn example_request_ids(text: &str) -> Vec<String> {
+    let mut ids = vec![];
+    for line in text
+        .lines()
+        .filter(|l| l.trim_start().starts_with("allowit "))
+    {
+        let words: Vec<&str> = line.split_whitespace().collect();
+        for pair in words.windows(2) {
+            let id_follows = pair[0] == "--request-id"
+                || (pair[0] == "status" && words.first() == Some(&"allowit"));
+            if id_follows && !pair[1].starts_with('-') && pair[1] != "ID" {
+                ids.push(pair[1].to_owned());
+            }
+        }
+    }
+    ids
+}
+
+#[test]
+fn example_ids_follow_the_request_id_rule() {
+    assert_eq!(
+        example_request_ids("  allowit status pay-001 --wait 60s"),
+        ["pay-001"]
+    );
+    assert!(!request_id_valid("pay-001"));
+    assert!(request_id_valid("pay-0001"));
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    for doc in ["src/commands/guide/guide.md", "README.md"] {
+        let text = std::fs::read_to_string(root.join(doc)).unwrap();
+        for id in example_request_ids(&text) {
+            assert!(request_id_valid(&id), "{doc}: example ID {id:?} is invalid");
+        }
+    }
+}
+
 #[test]
 fn every_help_node_matches_its_snapshot() {
     let update = std::env::var_os("ALLOWIT_UPDATE_SNAPSHOTS").is_some();
@@ -44,6 +88,12 @@ fn every_help_node_matches_its_snapshot() {
             if let Some(at) = text.find(heading) {
                 assert!(examples < at, "{shown}: examples after {heading:?}");
             }
+        }
+        for id in example_request_ids(&text) {
+            assert!(
+                request_id_valid(&id),
+                "{shown}: example ID {id:?} is invalid"
+            );
         }
         let name = file_name(path);
         let file = dir.join(&name);

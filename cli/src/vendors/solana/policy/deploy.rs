@@ -26,7 +26,17 @@ pub(super) fn run(
             "the deployment intent needs a valid request ID",
         ));
     }
-    let retry_preparation = env_value("ALLOWIT_RETRY_PREPARATION_OF");
+    let journal = FileJournal::new(local.directory.join("journal"));
+    // A replacement names a prior preparation only when this journal has one.
+    let retry_preparation = match &options.retry_of {
+        Some(prior) => {
+            native(journal.read::<serde_json::Value>(&format!("browser-deploy-{prior}")))?
+                .map(|_| prior.clone())
+                .unwrap_or_default()
+        }
+        None if options.legacy => env_value("ALLOWIT_RETRY_PREPARATION_OF"),
+        None => String::new(),
+    };
     let url = crate::vendors::solana::handoff::signing_url_with_retry(
         &env_value("ALLOWIT_URL"),
         &request_id,
@@ -41,7 +51,6 @@ pub(super) fn run(
         },
     )?;
     let fingerprint = crate::vendors::solana::handoff::intent_digest_from_url(&url)?;
-    let journal = FileJournal::new(local.directory.join("journal"));
     let intent =
         serde_json::json!({"requestId":request_id,"signingUrl":url,"intentDigest":fingerprint});
     native(journal.locked(|| {

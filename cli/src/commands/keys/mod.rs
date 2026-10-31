@@ -55,12 +55,5 @@ pub(crate) fn run(command: Command, cx: &mut Ctx) -> Result<i32> {
 
 /// The public view of a key.
 pub(crate) fn view(key: &crate::settings::keys::Key) -> serde_json::Value {
-    serde_json::json!({
-        "name": key.name,
-        "rail": key.rail,
-        "address": key.address,
-        "publicKey": key.public_key,
-        "curve": key.curve,
-        "secret": key.secret,
-    })
+    key.view()
 }

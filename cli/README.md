@@ -113,7 +113,7 @@ Mainnet rails serve `exec`, `status`, `wallet show`, `policy show` and `policy b
 | `INTEGER` | Base units of the wallet's installed asset. |
 | `CODE:max` | The whole balance, for `wallet withdraw` only. |
 
-`--token-out` takes `ASSET:MIN`, where MIN may be zero. Each rail supplies its decimals: 7 on Stellar, 9 for SOL and 6 for USDC on Solana, 6 on Tempo. An amount with more decimal places than its token exits 2. An amount of a token other than the wallet's own exits 4. `call --max-amount` also takes a plain decimal of the paying asset, for example `0.05`.
+`--token-out` takes `ASSET:MIN`, where MIN may be zero. Each rail supplies its decimals: 7 on Stellar, 9 for SOL and 6 for USDC on Solana, 6 on Tempo. An amount with more decimal places than its token exits 2. An amount of a token other than the wallet's own exits 4. `call --max-amount` also takes a plain decimal of the paying asset, for example `0.05`. `curl`, `http`, `claude` and `codex` take the same `--max-amount`; `--max-payment` is its earlier name.
 
 Policy parameter keys are the canonical keys of the contracts params map: `transaction_cap`, `spent_cap`, `day_spent_cap` and `day_total_cap` take amounts, `call_cap` a count, `recipients` addresses, `tokens` assets, `expiry` an RFC 3339 time or a duration such as `30d`, and `operations` operation names. A list value replaces the earlier list.
 
@@ -129,15 +129,15 @@ The configuration directory is `$XDG_CONFIG_HOME/allowit` (default `~/.config/al
 - `requests/` is the request journal. `exec` and `eval` record each request before it leaves the process, so `status ID` finds its rail and wallet and `history` lists it. A request ID never names two different requests.
 - `stellar-journal/` holds the Stellar operation journal for recovery.
 
-Data goes to stdout. Progress, links, hints, prompts and new request IDs go to stderr; progress and new request IDs leave at once, so an interrupted command keeps its request ID. Text is the default, also when stdout is a pipe: a result prints one `key value` line per field, with dotted paths such as `config.rail` for nested fields. `--json` selects JSON. The unsigned output of `--build-only` and the hidden aliases of earlier releases always print JSON. Policy source and JSON documents are syntax-highlighted only when stdout is a terminal, and never with `--json`, `NO_COLOR`, `TERM=dumb`, `--no-color` or a pipe. `NO_DNA` selects compact JSON and no prompts. In JSON mode an error is one object on stderr: `{"error":{"code","exit","message","request_id"}}`. A destructive verb asks for confirmation on a terminal and needs `--yes` otherwise.
+Data goes to stdout. Progress, links, hints, prompts and new request IDs go to stderr; progress and new request IDs leave at once, so an interrupted command keeps its request ID. `-q` drops progress but keeps a generated request ID. Text is the default, also when stdout is a pipe: a result prints one `key value` line per field, with dotted paths such as `config.rail` for nested fields. `--json` selects JSON. The unsigned output of `--build-only` and the hidden aliases of earlier releases always print JSON. Policy source and JSON documents are syntax-highlighted only when stdout is a terminal, and never with `--json`, `NO_COLOR`, `TERM=dumb`, `--no-color` or a pipe. `NO_DNA` selects compact JSON and no prompts. In JSON mode an error is one object on stderr: `{"error":{"code","exit","message","request_id"}}`. A destructive verb asks for confirmation on a terminal and needs `--yes` otherwise.
 
 | Exit | Meaning |
 | --- | --- |
 | 0 | ok |
-| 1 | internal error |
-| 2 | usage error or invalid input |
+| 1 | internal error, including a panic |
+| 2 | usage error or invalid input, including an argument that is not UTF-8 |
 | 3 | configuration, authentication or not available on this rail |
-| 4 | rejected by the contract (paused, wrong asset) |
+| 4 | rejected by the contract (paused, not approved, wrong asset) |
 | 5 | uncertain or stale: retry with the same request ID |
 | 6 | replayed |
 | 10 | owner signature needed |
@@ -158,7 +158,7 @@ allowit exec --op transfer --to GDEST… --amount XLM:5 --request-id pay-0001
 allowit status pay-0001 --wait 60s
 ```
 
-`exec` builds the typed request from its flags: a native transfer for an XLM wallet, or a SEP-41 `transfer` of the installed asset. The wallet library decodes the request before it leaves the process. The agent key from `setup --agent` signs each engine request and the prepared operation. A transfer of another asset exits 4. `--build-only` prints the typed request and sends nothing.
+`exec` builds the typed request from its flags: a native transfer for an XLM wallet, or a SEP-41 `transfer` of the installed asset. The wallet library decodes the request before it leaves the process. The agent key from `setup --agent` signs each engine request and the prepared operation. A transfer of another asset exits 4. `--build-only` prints the typed request and sends nothing; a signer outside the CLI submits it, because `tx send` is not available on any rail yet.
 
 The CLI journals each operation before it sends it. After exit 5, run the same `exec` again or read the result with `status`; the CLI never prepares replacement bytes for a request ID. A terminal status requires a verified chain receipt. A rotated agent key can recover an original receipt without signing again. Policy wallet signing revalidates the prepared operation through Stellar RPC before the agent signs: pass `--rpc-url URL` or set `rpc_url` for the rail in `config.toml`. The RPC receives only public observations and unsigned simulation bytes. Classic execution and signed status recovery need no RPC.
 
@@ -166,7 +166,11 @@ The hidden `wallet configure` and `wallet approve` commands keep the Stellar tes
 
 ## Solana vaults
 
-The Solana adapter runs the native vault lifecycle of `allowit-native` on devnet and testnet. `policy new` generates and saves a policy under `.allowit/` in the working directory and prints its Rust source. `keys import` stores an owner-issued executor bundle as public context. `wallet create` prints one browser link that binds the exact policy, public roles, network and initial deposit, and exits 10; a retry of the same creation is the same intent. The native vault takes its first deposit at creation, so Solana `wallet create` needs the hidden `--fund AMOUNT` and exits 3 without it. `--asset` and every named amount must resolve to the vault mint, which the imported policy context or `ALLOWIT_MINT` names; another token exits 4. Amounts in base units need no token name. The owner verbs sign with `--sign-with-key`. `exec`, `eval` and `status` use the engine harness through `ALLOWIT_TOKEN`.
+The Solana adapter runs the native vault lifecycle of `allowit-native` on devnet and testnet. `policy new` generates and saves a policy and prints its Rust source. The vault files live in `vaults/solana-NETWORK/` in the config directory; `ALLOWIT_POLICY_DIR` names another folder. The hidden verbs of earlier releases keep `.allowit/` in the working directory. `keys import` stores an owner-issued executor bundle as public context. `wallet create` prints one browser link that binds the exact policy, public roles, network and initial deposit, and exits 10; a retry of the same creation is the same intent. After an unsigned preparation expires, `--request-id ID` with a new ID replaces it and keeps the original journal entry. The native vault takes its first deposit at creation, so Solana `wallet create` needs `--fund AMOUNT` and exits 3 without it. `--asset` and every named amount must resolve to the vault mint, which the imported policy context or `ALLOWIT_MINT` names; another token exits 4. Amounts in base units need no token name. The owner verbs sign with `--sign-with-key`. After an uncertain `wallet fund` or `wallet withdraw`, the next-step hint names `--request-id` and `--additional`. `exec`, `eval` and `status` use the engine harness through `ALLOWIT_TOKEN`; `status` still reads a request when the policy description is unavailable.
+
+## Tempo vaults
+
+The Tempo adapter runs `allowit-tempo` on Tempo testnet with the bundle in `ALLOWIT_TEMPO_BUNDLE`. The agent key from `setup --agent` signs `exec` and paid `call` payments; without one, `ALLOWIT_TEMPO_EXECUTOR_KEY_FILE` of earlier releases applies. `--rpc-url` or the rail's `rpc_url` replaces the bundle RPC. `exec --wait DUR` is the finality wait, at most 10m, and `status ID --wait DUR` polls until the request settles or fails. The adapter renders the crate's JSON results through the output module and does not print the crate's progress lines.
 
 ## Source layout
 

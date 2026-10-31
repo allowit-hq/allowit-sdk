@@ -45,6 +45,9 @@ pub(crate) struct RunOptions {
     pub additional: bool,
     /// Hidden verbs of earlier releases, whose hints name their settings.
     pub legacy: bool,
+    /// The creation request whose expired unsigned preparation this one
+    /// replaces.
+    pub retry_of: Option<String>,
 }
 impl RunOptions {
     /// The settings of the hidden verbs of earlier releases.
@@ -55,6 +58,7 @@ impl RunOptions {
                 .then(|| env_value("ALLOWIT_REQUEST_ID")),
             additional: env_value("ALLOWIT_ADDITIONAL_OWNER_OPERATION") == "1",
             legacy: true,
+            retry_of: None,
         }
     }
 }

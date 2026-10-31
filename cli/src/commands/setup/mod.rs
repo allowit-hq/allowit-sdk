@@ -118,7 +118,7 @@ pub(crate) fn run(args: Args, cx: &mut Ctx) -> Result<i32> {
             "setup",
             input,
             &mut reply,
-            &mut cx.out.stderr,
+            &mut cx.out,
         )?;
         result["registered"] = json!(code == 0);
         result["registration"] = serde_json::from_str(&reply).unwrap_or(Value::Null);

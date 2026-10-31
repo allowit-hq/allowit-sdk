@@ -25,6 +25,17 @@ pub(crate) struct Key {
 }
 
 impl Key {
+    /// The public view that the keys commands print.
+    pub(crate) fn view(&self) -> serde_json::Value {
+        serde_json::json!({
+            "name": self.name,
+            "rail": self.rail,
+            "address": self.address,
+            "publicKey": self.public_key,
+            "curve": self.curve,
+            "secret": self.secret,
+        })
+    }
     pub(crate) fn family(&self) -> Result<Family> {
         routing::family(&self.rail)
     }

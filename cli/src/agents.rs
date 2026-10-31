@@ -127,7 +127,7 @@ fn mcp_args(common: &Common) -> Vec<String> {
         }
     }
     if let Some(money) = &common.max_debit {
-        args.extend(["--max-payment".into(), money.amount.clone()]);
+        args.extend(["--max-amount".into(), money.amount.clone()]);
         args.extend(["--currency".into(), money.currency.clone()]);
     }
     args

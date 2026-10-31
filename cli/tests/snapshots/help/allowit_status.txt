@@ -4,9 +4,9 @@ fallback
 Usage: allowit status [OPTIONS] <ID>
 
 Examples:
-  allowit status pay-001
-  allowit status pay-001 --wait 60s
-  allowit status pay-001 --wallet CWALLET… --json
+  allowit status pay-0001
+  allowit status pay-0001 --wait 60s
+  allowit status pay-0001 --wallet CWALLET… --json
 
 Arguments:
   <ID>  The request ID that exec printed

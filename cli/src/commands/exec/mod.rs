@@ -12,7 +12,7 @@ use std::time::Duration;
 pub(crate) const EXAMPLES: &str = "\
 Examples:
   allowit exec --op transfer --to GDEST… --amount XLM:5
-  allowit exec --op transfer --to GDEST… --amount XLM:5 --request-id pay-001 --wait 2m
+  allowit exec --op transfer --to GDEST… --amount XLM:5 --request-id pay-0001 --wait 2m
   allowit exec --op transfer --to GDEST… --amount 50000000 --build-only";
 
 /// The request flags shared by `exec` and `eval`.
@@ -46,7 +46,7 @@ pub(crate) struct RequestArgs {
 pub(crate) struct Args {
     #[command(flatten)]
     pub request: RequestArgs,
-    /// Print the unsigned request and send nothing (sign it elsewhere, then tx send)
+    /// Print the unsigned request and send nothing, for a signer outside the CLI
     #[arg(long)]
     pub build_only: bool,
 }
@@ -122,7 +122,7 @@ pub(crate) fn submit(mode: Mode, a: RequestArgs, build_only: bool, cx: &mut Ctx)
         Some(id) => id,
         None => {
             let id = journal::new_id()?;
-            cx.out.progress(&id);
+            cx.out.generated_id(&id);
             id
         }
     };

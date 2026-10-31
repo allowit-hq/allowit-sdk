@@ -38,10 +38,17 @@ pub(super) fn run(session: &Session, out: &mut Out) -> Result<i32> {
             "confirmed"
         }
     });
+    // The current commands print the canonical CAIP-2 ID; the hidden verbs
+    // of earlier releases keep the native library's name.
+    let network = if options.legacy {
+        policy.network.clone()
+    } else {
+        crate::routing::normalize(&policy.network)?.to_owned()
+    };
     if out.json {
         out.json_value(&serde_json::json!({
             "policyId": policy.id,
-            "network": policy.network,
+            "network": network,
             "state": state,
             "operations": operations,
             "operation": operation,
@@ -53,7 +60,7 @@ pub(super) fn run(session: &Session, out: &mut Out) -> Result<i32> {
                 allowit_native::native::number(raw),
             )?))
         };
-        let mut view = serde_json::json!({"policyId": policy.id, "network": policy.network});
+        let mut view = serde_json::json!({"policyId": policy.id, "network": network});
         match &state {
             Some(s) => {
                 view["vault"] = serde_json::json!(s.binding.vault.to_string());

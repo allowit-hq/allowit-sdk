@@ -215,6 +215,11 @@ pub(crate) trait Rail {
             policy: None,
         })
     }
+    /// Settings that every current command on this rail runs with, in place
+    /// of environment values that the user did not set.
+    fn settings(&self, _: &mut Ctx) -> Result<Vec<(&'static str, String)>> {
+        Ok(vec![])
+    }
     /// Builds a policy source for this rail: the generated Rust source.
     fn policy_build(&self, _: &str) -> Result<String> {
         Err(self.na("policy build"))

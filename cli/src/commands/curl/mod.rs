@@ -13,7 +13,7 @@ use serde_json::json;
 
 pub(crate) const EXAMPLES: &str = "\
 Examples:
-  allowit curl https://api.example/v1/search -X POST -d '{\"q\":\"rust\"}' --max-payment 0.10
+  allowit curl https://api.example/v1/search -X POST -d '{\"q\":\"rust\"}' --max-amount 0.10
   allowit curl https://api.example/v1/data -o result.json";
 
 /// Send a paid HTTP request with curl syntax (-X, -H, -d, --data-raw, -o)

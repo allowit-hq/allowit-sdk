@@ -5,7 +5,8 @@
 //!   `wallet fund`, `wallet withdraw`, `wallet pause`, `wallet close`,
 //!   `policy new` and `policy params set`: the native vault lifecycle, test
 //!   networks only. Owner operations sign with `--sign-with-key`. A selected
-//!   wallet must be the vault of the policy in `ALLOWIT_POLICY_DIR`.
+//!   wallet must be the vault of the policy in `ALLOWIT_POLICY_DIR`, which
+//!   defaults to `vaults/solana-NETWORK` in the config directory.
 //! - `exec`, `eval`, `status`, `policy show`: the engine harness, through
 //!   `ALLOWIT_TOKEN`. The harness names no vault, so these refuse a selected
 //!   wallet.
@@ -98,6 +99,8 @@ impl Solana {
         options: &RunOptions,
         mut settings: Vec<(&'static str, String)>,
     ) -> Result<i32> {
+        // The private config directory holds the default vault folder.
+        cx.dir()?;
         if let Some(url) = cx.rpc_url(self.0)? {
             settings.push(("ALLOWIT_RPC_URL", url));
         }
@@ -112,6 +115,7 @@ impl Solana {
             request_id: s.and_then(|s| s.request_id.clone()),
             additional: s.is_some_and(|s| s.additional),
             legacy: false,
+            retry_of: None,
         })
     }
     /// The engine harness names a policy but no vault, so it cannot confirm a
@@ -295,6 +299,22 @@ impl Rail for Solana {
             },
         }
     }
+    /// The native vault files of the current commands live in the config
+    /// directory, one folder per rail, unless `ALLOWIT_POLICY_DIR` is set.
+    fn settings(&self, cx: &mut Ctx) -> Result<Vec<(&'static str, String)>> {
+        if config::env_present("ALLOWIT_POLICY_DIR") {
+            return Ok(vec![]);
+        }
+        // Input checks run before the config directory exists; native()
+        // creates it before a native operation writes there.
+        let base = cx.dir_path()?;
+        let base = base.canonicalize().unwrap_or(base);
+        let dir = base.join("vaults").join(self.0.name().replace(':', "-"));
+        Ok(vec![(
+            "ALLOWIT_POLICY_DIR",
+            dir.to_string_lossy().into_owned(),
+        )])
+    }
     fn keys_fund(&self, cx: &mut Ctx, key: &Key) -> Result<i32> {
         if !self.0.testnet {
             return Err(self.na("keys fund"));
@@ -404,16 +424,25 @@ impl Rail for Solana {
             ]))
             .unwrap_or_default(),
         );
-        let request_id = format!(
+        let derived = format!(
             "create-{}",
             digest[..8]
                 .iter()
                 .map(|b| format!("{b:02x}"))
                 .collect::<String>()
         );
-        cx.out.progress(&request_id);
+        // An explicit new ID replaces the derived preparation once it expired
+        // unsigned; the original journal entry stays.
+        let (request_id, retry_of) = match &w.signing.request_id {
+            Some(id) if *id != derived => (id.clone(), Some(derived)),
+            _ => (derived, None),
+        };
+        if w.signing.request_id.is_none() {
+            cx.out.generated_id(&request_id);
+        }
         let options = RunOptions {
             request_id: Some(request_id),
+            retry_of,
             ..RunOptions::default()
         };
         self.native(
@@ -571,9 +600,7 @@ impl Rail for Solana {
     }
     fn status(&self, cx: &mut Ctx, id: &str, wallet: Option<&str>, wait: Duration) -> Result<i32> {
         self.harness_wallet(wallet)?;
-        let json = cx.out.json;
-        let out = &mut cx.out;
-        harness::status(id, wait, json, &mut out.stdout, &mut out.stderr)
+        harness::status(id, wait, &mut cx.out)
     }
 }
 
@@ -591,21 +618,11 @@ impl Solana {
         }
         super::address::check_recipient(self.0.family, &r.to)?;
         let flags = self.harness_flags(r)?;
-        let json = cx.out.json;
-        let out = &mut cx.out;
         let command = match r.mode {
             Mode::Exec => "exec",
             Mode::Eval => "eval",
         };
-        harness::submit(
-            command,
-            &flags,
-            &r.request_id,
-            r.wait,
-            json,
-            &mut out.stdout,
-            &mut out.stderr,
-        )
+        harness::submit(command, &flags, &r.request_id, r.wait, &mut cx.out)
     }
 }
 

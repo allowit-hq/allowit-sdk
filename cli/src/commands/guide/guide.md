@@ -36,8 +36,8 @@ allowit policy show
 
 ```sh
 allowit eval --op transfer --to GDEST… --amount XLM:5
-allowit exec --op transfer --to GDEST… --amount XLM:5 --request-id pay-001
-allowit status pay-001 --wait 60s
+allowit exec --op transfer --to GDEST… --amount XLM:5 --request-id pay-0001
+allowit status pay-0001 --wait 60s
 ```
 
 `allowit rail show` lists the verbs that work on the rail; a verb that does

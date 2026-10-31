@@ -11,9 +11,9 @@ use std::time::Duration;
 
 pub(crate) const EXAMPLES: &str = "\
 Examples:
-  allowit status pay-001
-  allowit status pay-001 --wait 60s
-  allowit status pay-001 --wallet CWALLET… --json";
+  allowit status pay-0001
+  allowit status pay-0001 --wait 60s
+  allowit status pay-0001 --wallet CWALLET… --json";
 
 /// Read a request's state. The local journal supplies its rail and wallet;
 /// --rail and --wallet are the fallback
@@ -29,7 +29,7 @@ pub(crate) struct Args {
 pub(crate) fn run(args: Args, cx: &mut Ctx) -> Result<i32> {
     if !request_id_valid(&args.id) {
         return Err(Error::usage(
-            "ID is the request ID that exec or eval printed",
+            "ID must be the request ID that exec or eval printed: 8 to 100 characters from A-Z a-z 0-9 . _ : -",
         ));
     }
     cx.out.request_id = Some(args.id.clone());

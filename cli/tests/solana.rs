@@ -62,7 +62,9 @@ fn policy_new_is_offline_and_never_replaces_the_policy() {
     ]))
     .unwrap();
     policy.validate().unwrap();
-    let file = sandbox.work().join(".allowit/policy.json");
+    // The current commands keep the vault files in the config directory.
+    let file = sandbox.config().join("vaults/solana-testnet/policy.json");
+    assert!(!sandbox.work().join(".allowit").exists());
     let before = std::fs::read(&file).unwrap();
     assert_eq!(mode(&file), 0o600);
     let retry = sandbox.run(&[
@@ -126,7 +128,7 @@ fn keys_import_keeps_the_bundle_public_and_never_replaces_an_occupied_policy() {
         "9hSR6S7WPtxmTojgo6GG3k4yDPecgJY292j7xrsUGWBu"
     );
     assert_eq!(key["secret"], false);
-    let context = sandbox.work().join(".allowit/context.json");
+    let context = sandbox.config().join("vaults/solana-testnet/context.json");
     let saved = std::fs::read(&context).unwrap();
     let again = sandbox.run(&[
         "--rail",
@@ -165,7 +167,9 @@ fn keys_import_keeps_the_bundle_public_and_never_replaces_an_occupied_policy() {
     assert_eq!(code(&output), Some(0), "{}", stderr(&output));
     assert!(!stdout(&output).contains(&token));
     assert!(!stderr(&output).contains(&token));
-    let audit = audited.work().join(".allowit/journal/audit.json");
+    let audit = audited
+        .config()
+        .join("vaults/solana-testnet/journal/audit.json");
     assert_eq!(
         serde_json::from_slice::<Value>(&std::fs::read(&audit).unwrap()).unwrap()["token"],
         token
@@ -300,6 +304,29 @@ fn wallet_create_prints_the_bound_owner_link_without_an_owner_key_or_rpc() {
     assert_eq!(code(&again), Some(10), "{}", stderr(&again));
     let repeated: Value = serde_json::from_slice(&again.stdout).unwrap();
     assert_eq!(repeated["intentDigest"], value["intentDigest"]);
+    // A new ID replaces an expired unsigned preparation and binds the prior
+    // one; the original journal entry stays.
+    let mut replace = create.to_vec();
+    replace.extend(["--request-id", "create-retry-0001"]);
+    let output = sandbox.run(&replace);
+    assert_eq!(code(&output), Some(10), "{}", stderr(&output));
+    let replaced: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(replaced["requestId"], "create-retry-0001");
+    assert_ne!(replaced["intentDigest"], value["intentDigest"]);
+    let journal = sandbox.config().join("vaults/solana-devnet/journal");
+    let prior = format!(
+        "browser-deploy-{}.json",
+        value["requestId"].as_str().unwrap()
+    );
+    assert!(journal.join(&prior).exists(), "{prior}");
+    assert!(
+        journal
+            .join("browser-deploy-create-retry-0001.json")
+            .exists()
+    );
+    let mut short = create.to_vec();
+    short.extend(["--request-id", "short"]);
+    assert_eq!(code(&sandbox.run(&short)), Some(2));
     mock.assert_untouched();
     // --kind applies to Stellar wallets; local signing is not wired for creation.
     let mut kind = create.to_vec();

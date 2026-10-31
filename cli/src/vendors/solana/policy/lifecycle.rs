@@ -230,6 +230,13 @@ pub(super) fn run(session: &Session, name: &str, pos: &[String], out: &mut Out) 
         if audit_pending {
             out.progress("Native SQL audit is pending. Retain the original journal and request ID; retry the identical command or run allowit wallet show.");
         }
+    } else if let Some(hint) = next_step(
+        &result.id,
+        result.expired(),
+        result.extra.get("decisionCode") == Some(&serde_json::json!("EXPIRED_UNEXECUTED")),
+        audit_pending,
+    ) {
+        out.progress(hint);
     }
     if audit_pending {
         return Ok(5);
@@ -243,4 +250,41 @@ pub(super) fn run(session: &Session, name: &str, pos: &[String], out: &mut Out) 
     } else {
         0
     })
+}
+
+/// The next step after an unfinished vault operation, in the flags of the
+/// current commands.
+fn next_step(id: &str, expired: bool, unexecuted: bool, audit_pending: bool) -> Option<String> {
+    if expired {
+        Some(format!(
+            "next: request {id} stays uncertain; for a deliberate second operation pass a new --request-id and --additional"
+        ))
+    } else if unexecuted {
+        Some(format!(
+            "next: request {id} expired unexecuted; for a deliberate retry pass a new --request-id"
+        ))
+    } else if audit_pending {
+        Some(format!(
+            "next: rerun the same command with --request-id {id}, or run allowit wallet show"
+        ))
+    } else {
+        None
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn next_steps_name_the_current_flags() {
+        for (expired, unexecuted, pending) in [
+            (true, false, false),
+            (false, true, false),
+            (false, false, true),
+        ] {
+            let hint = super::next_step("fund-0001", expired, unexecuted, pending).unwrap();
+            assert!(hint.contains("--request-id"), "{hint}");
+            assert!(!hint.contains("ALLOWIT_"), "{hint}");
+        }
+        assert!(super::next_step("fund-0001", false, false, false).is_none());
+    }
 }

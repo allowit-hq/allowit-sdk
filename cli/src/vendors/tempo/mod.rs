@@ -1,27 +1,32 @@
 //! Tempo adapter over `allowit-tempo`, testnet only.
 //!
 //! - `keys import`: the owner-exported executor bundle.
-//! - `exec --op transfer`: one vault payment signed by the executor key;
-//!   `--build-only` prints the authority-signed wallet plan and sends nothing.
+//! - `exec --op transfer`: one vault payment signed by the agent key that
+//!   `setup --agent` chose; `--build-only` prints the authority-signed wallet
+//!   plan and sends nothing.
 //! - `status`, `wallet show`, `policy show`: the bundle and its engine.
 //! - `call URL`: one MPP-paid HTTPS GET. `--max-amount` takes a decimal of
 //!   the vault token or the vault token's `CODE:DECIMAL`.
 //!
 //! Every amount must name the bundle's installed token; another token exits 4.
 //! The bundle is `ALLOWIT_TEMPO_BUNDLE` (default `.allowit-tempo/executor.json`)
-//! and must belong to the selected rail. The hidden `tempo` group keeps the
-//! commands of earlier releases.
+//! and must belong to the selected rail. The crate always prints JSON here;
+//! the adapter renders it through the output module and passes the agent key,
+//! `--rpc-url` (or the rail's `rpc_url`) and `--wait` as the crate's
+//! settings. The hidden `tempo` group keeps the commands of earlier releases.
 use super::{
     Binding, CallRequest, Caps, ExecRequest, Mode, Rail,
     asset::{Amount, Asset, Token},
     require_op,
 };
 use crate::{
+    config::{self, env_value},
     ctx::Ctx,
     error::{Error, Result},
     routing::{RailInfo, normalize, selected},
     settings::keys,
 };
+use serde_json::Value;
 use std::{path::Path, time::Duration};
 
 pub(crate) struct Tempo(pub &'static RailInfo);
@@ -43,20 +48,49 @@ const TOKENS: &[Token] = &[
 const DECIMALS: u8 = 6;
 
 fn bundle_path() -> String {
-    match crate::config::env_value("ALLOWIT_TEMPO_BUNDLE") {
+    match env_value("ALLOWIT_TEMPO_BUNDLE") {
         v if v.is_empty() => ".allowit-tempo/executor.json".into(),
         v => v,
     }
 }
 
-/// Runs a Tempo crate command and maps its errors.
-fn run(
-    args: Vec<String>,
-    id: Option<&str>,
-    stdout: &mut String,
-    stderr: &mut String,
-) -> Result<i32> {
-    allowit_tempo::run_with_request_id(&args, id, stdout, stderr)
+/// The crate's finality wait bound, in seconds.
+const MAX_WAIT_SECONDS: u64 = 600;
+
+/// Runs `f` with stderr (file descriptor 2) sent to /dev/null. The crate
+/// writes its own progress lines straight to the process stderr; the adapter
+/// reports through the output module instead.
+#[cfg(unix)]
+fn without_crate_progress<T>(f: impl FnOnce() -> T) -> T {
+    use std::os::fd::AsRawFd;
+    struct Restore(i32);
+    impl Drop for Restore {
+        fn drop(&mut self) {
+            // SAFETY: the descriptor came from dup(2) and is closed once.
+            unsafe {
+                libc::dup2(self.0, 2);
+                libc::close(self.0);
+            }
+        }
+    }
+    let Ok(sink) = std::fs::OpenOptions::new().write(true).open("/dev/null") else {
+        return f();
+    };
+    // SAFETY: plain descriptor calls; a failed dup leaves stderr unchanged.
+    let saved = unsafe { libc::dup(2) };
+    if saved < 0 {
+        return f();
+    }
+    let _restore = Restore(saved);
+    // SAFETY: both descriptors are open for the duration of the call.
+    if unsafe { libc::dup2(sink.as_raw_fd(), 2) } < 0 {
+        return f();
+    }
+    f()
+}
+#[cfg(not(unix))]
+fn without_crate_progress<T>(f: impl FnOnce() -> T) -> T {
+    f()
 }
 
 impl Tempo {
@@ -140,11 +174,76 @@ impl Tempo {
         }
         self.parse_amount(text, super::asset::Use::Spend)
     }
-    fn json_flag(cx: &Ctx, mut args: Vec<String>) -> Vec<String> {
-        if cx.out.json {
-            args.push("--json".into());
+    /// The crate settings of one command: the RPC override, the finality
+    /// wait when given, and the agent key for a command that signs.
+    fn settings(
+        &self,
+        cx: &mut Ctx,
+        signs: bool,
+        wait: Option<Duration>,
+    ) -> Result<Vec<(&'static str, String)>> {
+        let mut settings = vec![];
+        if let Some(url) = cx.rpc_url(self.0)? {
+            settings.push(("ALLOWIT_TEMPO_RPC_URL", url));
         }
-        args
+        if let Some(wait) = wait {
+            let seconds = wait.as_secs() + u64::from(wait.subsec_nanos() > 0);
+            if seconds > MAX_WAIT_SECONDS {
+                return Err(Error::usage("--wait on Tempo is at most 10m"));
+            }
+            settings.push(("ALLOWIT_TEMPO_WAIT_SECONDS", seconds.to_string()));
+        }
+        if !signs {
+            return Ok(settings);
+        }
+        // The agent key that setup chose signs; without one, the key file
+        // of earlier releases.
+        if cx.settings()?.rail(self.0.id).agent.is_some()
+            || env_value("ALLOWIT_TEMPO_EXECUTOR_KEY_FILE").is_empty()
+        {
+            let agent = cx.agent(self.0)?;
+            let signer = cx.signer(&agent)?;
+            settings.push((
+                "ALLOWIT_TEMPO_EXECUTOR_KEY_FILE",
+                signer.to_string_lossy().into_owned(),
+            ));
+        }
+        Ok(settings)
+    }
+    /// Runs one crate command with `--json` and returns its exit code and
+    /// JSON result.
+    fn run(
+        &self,
+        cx: &mut Ctx,
+        mut args: Vec<String>,
+        id: Option<&str>,
+        settings: &[(&'static str, String)],
+    ) -> Result<(i32, Option<Value>)> {
+        args.push("--json".into());
+        let (mut stdout, mut stderr) = (String::new(), String::new());
+        crate::flush_stderr(&mut cx.out.stderr);
+        let code = config::with_settings(settings, || {
+            without_crate_progress(|| {
+                allowit_tempo::run_with_request_id(&args, id, &mut stdout, &mut stderr)
+            })
+        })?;
+        Ok((code, serde_json::from_str(&stdout).ok()))
+    }
+    /// Renders a crate result through the output module.
+    fn show(cx: &mut Ctx, code: i32, value: Option<Value>) -> Result<i32> {
+        match value {
+            Some(v) => cx.out.value(&v),
+            None if code == 0 => {
+                return Err(Error::uncertain("allowit-tempo returned no JSON result"));
+            }
+            None => {}
+        }
+        Ok(code)
+    }
+    /// The public policy with its canonical rail ID.
+    fn view(&self, mut policy: Value) -> Value {
+        policy["network"] = Value::String(self.0.id.into());
+        policy
     }
 }
 
@@ -160,7 +259,7 @@ impl Rail for Tempo {
             curve: "secp256k1",
             address_is_key: false,
             // Tempo testnet has no USDC; AlphaUSD is its TIP-20 USD token.
-            service_asset: "AlphaUSD",
+            service_asset: if self.0.testnet { "AlphaUSD" } else { "USDC" },
             ops: &["transfer"],
             param_keys: &[],
             signing: &[],
@@ -202,11 +301,20 @@ impl Rail for Tempo {
         if keys::exists(&dir, name) {
             return Err(Error::config(format!("key {name} already exists")));
         }
+        let policy = bundle["policy"]["id"]
+            .as_str()
+            .unwrap_or_default()
+            .to_owned();
         let args = vec!["import".into(), file.to_string_lossy().into_owned()];
-        let out = &mut cx.out;
-        let code = run(args, None, &mut out.stdout, &mut out.stderr)?;
-        keys::add(&dir, name, self.0.id, &executor)?;
-        Ok(code)
+        let (code, _) = self.run(cx, args, None, &[])?;
+        if code != 0 {
+            return Ok(code);
+        }
+        let key = keys::add(&dir, name, self.0.id, &executor)?;
+        let mut view = key.view();
+        view["policy"] = Value::String(policy);
+        cx.out.value(&view);
+        Ok(0)
     }
     fn wallet_show(&self, cx: &mut Ctx, wallet: Option<&str>) -> Result<i32> {
         self.testnet_only("wallet show")?;
@@ -215,7 +323,7 @@ impl Rail for Tempo {
             None => cx.wallet(self.0)?,
         };
         let policy = self.describe(selected.as_deref())?;
-        cx.out.value(&policy);
+        cx.out.value(&self.view(policy));
         Ok(0)
     }
     fn legacy(&self, cx: &mut Ctx, verb: &str, args: &[String]) -> Result<i32> {
@@ -231,7 +339,7 @@ impl Rail for Tempo {
             return Err(self.na("policy show --source"));
         }
         let policy = self.describe_selected(cx)?;
-        cx.out.value(&policy);
+        cx.out.value(&self.view(policy));
         Ok(0)
     }
     fn exec_binding(&self, _: &mut Ctx, wallet: Option<&str>) -> Result<Binding> {
@@ -261,17 +369,30 @@ impl Rail for Tempo {
         super::address::check_recipient(self.0.family, &r.to)?;
         let policy = self.describe(r.wallet.as_deref())?;
         let amount = self.decimal(&r.amount, &policy)?;
-        let verb = if r.build_only { "execute" } else { "pay" };
-        let args = Self::json_flag(cx, vec![verb.into(), r.to.clone(), amount]);
-        let out = &mut cx.out;
-        run(args, Some(&r.request_id), &mut out.stdout, &mut out.stderr)
+        // execute builds the wallet plan only; pay signs and waits.
+        let (verb, settings) = if r.build_only {
+            ("execute", self.settings(cx, false, None)?)
+        } else {
+            ("pay", self.settings(cx, true, Some(r.wait))?)
+        };
+        let args = vec![verb.into(), r.to.clone(), amount];
+        let (code, value) = self.run(cx, args, Some(&r.request_id), &settings)?;
+        Self::show(cx, code, value)
     }
-    fn status(&self, cx: &mut Ctx, id: &str, wallet: Option<&str>, _: Duration) -> Result<i32> {
+    fn status(&self, cx: &mut Ctx, id: &str, wallet: Option<&str>, wait: Duration) -> Result<i32> {
         self.testnet_only("status")?;
         self.describe(wallet)?;
-        let args = Self::json_flag(cx, vec!["status".into(), id.into()]);
-        let out = &mut cx.out;
-        run(args, None, &mut out.stdout, &mut out.stderr)
+        let settings = self.settings(cx, false, None)?;
+        let deadline = std::time::Instant::now() + wait;
+        loop {
+            let args = vec!["status".into(), id.into()];
+            let (code, value) = self.run(cx, args, None, &settings)?;
+            // Submitted (12) and unknown (5) states may still settle.
+            if !matches!(code, 5 | 12) || std::time::Instant::now() >= deadline {
+                return Self::show(cx, code, value);
+            }
+            std::thread::sleep(Duration::from_secs(2).min(wait));
+        }
     }
     fn call(&self, cx: &mut Ctx, c: &CallRequest) -> Result<Option<i32>> {
         if !c.target.starts_with("https://") || !self.0.testnet {
@@ -293,23 +414,21 @@ impl Rail for Tempo {
             Some(id) => id.clone(),
             None => {
                 let id = crate::settings::journal::new_id()?;
-                cx.out.progress(&id);
+                cx.out.generated_id(&id);
                 id
             }
         };
-        let args = Self::json_flag(
-            cx,
-            vec![
-                "call".into(),
-                c.target.clone(),
-                "--id".into(),
-                id,
-                "--max-amount".into(),
-                exact,
-            ],
-        );
-        let out = &mut cx.out;
-        run(args, None, &mut out.stdout, &mut out.stderr).map(Some)
+        let settings = self.settings(cx, true, None)?;
+        let args = vec![
+            "call".into(),
+            c.target.clone(),
+            "--id".into(),
+            id,
+            "--max-amount".into(),
+            exact,
+        ];
+        let (code, value) = self.run(cx, args, None, &settings)?;
+        Self::show(cx, code, value).map(Some)
     }
 }
 

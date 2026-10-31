@@ -4,7 +4,7 @@ Usage: allowit exec [OPTIONS] --op <OP> --to <ADDR> --amount <AMOUNT>
 
 Examples:
   allowit exec --op transfer --to GDEST… --amount XLM:5
-  allowit exec --op transfer --to GDEST… --amount XLM:5 --request-id pay-001 --wait 2m
+  allowit exec --op transfer --to GDEST… --amount XLM:5 --request-id pay-0001 --wait 2m
   allowit exec --op transfer --to GDEST… --amount 50000000 --build-only
 
 Options:
@@ -15,8 +15,8 @@ Options:
       --args <JSON>            Call arguments as a JSON object, for custom operations
       --request-id <ID>        Request ID; a retry reuses it [default: a new ID, printed on stderr]
       --wait <DUR>             Wait up to DUR for a final result [default: 60s]
-      --build-only             Print the unsigned request and send nothing (sign it elsewhere, then
-                               tx send)
+      --build-only             Print the unsigned request and send nothing, for a signer outside the
+                               CLI
   -h, --help                   Print help
 
 Global options:

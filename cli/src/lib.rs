@@ -28,22 +28,61 @@ pub fn command_paths() -> Vec<Vec<String>> {
     commands::paths()
 }
 
-/// Runs the command line (without the program name) and returns the exit code.
-pub fn run(args: Vec<String>) -> i32 {
-    let mut argv = vec!["allowit".to_owned()];
-    argv.extend(args);
-    // Before parsing, so that parse errors honor them too.
+/// Runs the command line (without the program name) from raw OS arguments.
+/// An argument that is not UTF-8 is a usage error (exit 2).
+pub fn run_os(args: Vec<std::ffi::OsString>) -> i32 {
+    let text: Vec<String> = args
+        .iter()
+        .map(|a| a.to_string_lossy().into_owned())
+        .collect();
+    match args.iter().position(|a| a.to_str().is_none()) {
+        Some(at) => {
+            let message = format!("argument {} is not valid UTF-8", at + 1);
+            usage_error(
+                json_requested(&text),
+                &message,
+                &format!("error: {message}\n"),
+            );
+            Exit::Usage.code()
+        }
+        None => run(text),
+    }
+}
+
+/// True when the arguments before `--` ask for JSON output.
+fn json_requested(argv: &[String]) -> bool {
     let flags: Vec<&str> = argv
         .iter()
         .take_while(|a| a.as_str() != "--")
         .map(String::as_str)
         .collect();
-    let json = flags.contains(&"--json")
+    flags.contains(&"--json")
         || flags
             .windows(2)
             .any(|w| w[0] == "--output" && w[1] == "json")
-        || flags.contains(&"--output=json");
-    let no_color = flags.contains(&"--no-color");
+        || flags.contains(&"--output=json")
+}
+
+/// Writes a usage error to stderr: one JSON object, or the text.
+fn usage_error(json: bool, first_line: &str, text: &str) {
+    if json {
+        let value = json!({"error":{"code":Exit::Usage.name(),"exit":Exit::Usage.code(),"message":first_line,"request_id":Value::Null}});
+        let _ = writeln!(std::io::stderr(), "{value}");
+    } else {
+        let _ = std::io::stderr().write_all(text.as_bytes());
+    }
+}
+
+/// Runs the command line (without the program name) and returns the exit code.
+pub fn run(args: Vec<String>) -> i32 {
+    let mut argv = vec!["allowit".to_owned()];
+    argv.extend(args);
+    // Before parsing, so that parse errors honor them too.
+    let json = json_requested(&argv);
+    let no_color = argv
+        .iter()
+        .take_while(|a| a.as_str() != "--")
+        .any(|a| a == "--no-color");
     match commands::parse(&argv, term::color_allowed(no_color, true)) {
         commands::Parsed::Print(text) => {
             let _ = std::io::stdout().write_all(text.as_bytes());
@@ -62,18 +101,13 @@ pub fn run(args: Vec<String>) -> i32 {
                     );
                 }
             }
-            if json {
-                let text = strip_ansi(&message);
-                let first = text
-                    .lines()
-                    .find(|l| !l.trim().is_empty())
-                    .unwrap_or("usage error")
-                    .trim_start_matches("error: ");
-                let value = json!({"error":{"code":Exit::Usage.name(),"exit":code,"message":first,"request_id":Value::Null}});
-                let _ = writeln!(std::io::stderr(), "{value}");
-            } else {
-                let _ = std::io::stderr().write_all(message.as_bytes());
-            }
+            let text = strip_ansi(&message);
+            let first = text
+                .lines()
+                .find(|l| !l.trim().is_empty())
+                .unwrap_or("usage error")
+                .trim_start_matches("error: ");
+            usage_error(json, first, &message);
             code
         }
         commands::Parsed::Run(cli) => execute(*cli),
@@ -120,14 +154,33 @@ fn execute(cli: commands::Cli) -> i32 {
     {
         cx.out.detail(format!("rail {n} config {}", dir.display()));
     }
-    let result = routing::with_network(network, || commands::dispatch(command, &mut cx));
+    let settings = match &network {
+        Some(n) if !commands::is_legacy(&command) => {
+            match routing::info(n)
+                .map(vendors::rail)
+                .and_then(|v| v.settings(&mut cx))
+            {
+                Ok(settings) => settings,
+                Err(e) => return finish(cx.out, Err(e)),
+            }
+        }
+        _ => vec![],
+    };
+    let result = routing::with_network(network, || {
+        config::with_settings(&settings, || commands::dispatch(command, &mut cx))
+    });
     finish(cx.out, result)
 }
 
 fn finish(mut out: Out, result: error::Result<i32>) -> i32 {
     let code = match result {
         Ok(code) => code,
-        Err(e) => {
+        Err(mut e) => {
+            if e.code != Exit::Usage.code()
+                && let Some(exit) = exit::contract_exit(&e.message)
+            {
+                e.code = exit.code();
+            }
             render_error(&mut out, &e);
             e.code
         }

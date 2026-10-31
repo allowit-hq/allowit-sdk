@@ -20,7 +20,8 @@ pub(crate) struct Invocation {
 
 /// Parses `GROUP ARGS...` for the paid-service commands. Their service flags
 /// (`--policy`, `--sandbox`, `--account`, `--request-id`, `--rail` with
-/// `--rpc`, `--max-payment`, `--currency`) may appear among the arguments.
+/// `--rpc`, `--max-amount`, `--currency`) may appear among the arguments.
+/// `--max-payment` and `--budget` are earlier names of `--max-amount`.
 pub(crate) fn parse(args: &[String]) -> Result<Invocation> {
     let mut common = Common::default();
     let mut rest = Vec::new();
@@ -52,6 +53,7 @@ pub(crate) fn parse(args: &[String]) -> Result<Invocation> {
                 | "--operation-id"
                 | "--rail"
                 | "--rpc"
+                | "--max-amount"
                 | "--max-payment"
                 | "--budget"
                 | "--currency"
@@ -93,6 +95,11 @@ pub(crate) fn parse(args: &[String]) -> Result<Invocation> {
                         return Err(Error::usage("--currency requires a stablecoin symbol"));
                     }
                     if let Some(money) = &mut common.max_debit {
+                        if money.currency != "USDC" && money.currency != value {
+                            return Err(Error::usage(
+                                "--max-amount names another currency than --currency",
+                            ));
+                        }
                         money.currency = value.clone();
                     }
                     set_once(&mut common.currency, value, name)?;
@@ -101,20 +108,47 @@ pub(crate) fn parse(args: &[String]) -> Result<Invocation> {
                     public_url(&value)?;
                     set_once(&mut common.rpc_url, value, name)?;
                 }
-                "--max-payment" | "--budget" => {
+                "--max-amount" | "--max-payment" | "--budget" => {
                     if common.max_debit.is_some() {
                         return Err(Error::usage("give one payment limit"));
                     }
-                    let amount = value.trim_start_matches('$');
+                    // CODE:DECIMAL names the currency, as `call --max-amount` does.
+                    let (code, amount) = match value.split_once(':') {
+                        Some((code, amount)) if name == "--max-amount" => (Some(code), amount),
+                        _ => (None, value.as_str()),
+                    };
+                    if let Some(code) = code {
+                        if code.is_empty()
+                            || code.len() > 32
+                            || !code
+                                .bytes()
+                                .all(|b| b.is_ascii_alphanumeric() || b"._-".contains(&b))
+                        {
+                            return Err(Error::usage(
+                                "--max-amount requires CODE:DECIMAL or a decimal",
+                            ));
+                        }
+                        if common.currency.as_deref().is_some_and(|c| c != code) {
+                            return Err(Error::usage(
+                                "--max-amount names another currency than --currency",
+                            ));
+                        }
+                    }
+                    let amount = amount.trim_start_matches('$');
                     if amount.is_empty()
                         || !amount.bytes().all(|b| b.is_ascii_digit() || b == b'.')
                         || amount.matches('.').count() > 1
                         || !amount.bytes().any(|b| b.is_ascii_digit())
                     {
-                        return Err(Error::usage("--max-payment requires a decimal USD amount"));
+                        return Err(Error::usage(
+                            "--max-amount requires CODE:DECIMAL or a decimal USD amount",
+                        ));
                     }
                     common.max_debit = Some(Money {
-                        currency: common.currency.clone().unwrap_or_else(|| "USDC".into()),
+                        currency: code
+                            .map(str::to_owned)
+                            .or_else(|| common.currency.clone())
+                            .unwrap_or_else(|| "USDC".into()),
                         amount: amount.into(),
                     });
                 }
