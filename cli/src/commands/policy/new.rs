@@ -7,7 +7,7 @@ use std::path::PathBuf;
 
 pub(crate) const EXAMPLES: &str = "\
 Examples:
-  allowit --rail solana:devnet policy new \"Spend up to 5 USDC per day\" -o policy.json
+  allowit --rail solana:devnet policy new \"Spend up to 5 tokens per day\" -o policy.json
   allowit policy new \"Spend up to 5 test tokens per day\"";
 
 /// Generate a policy from a prompt

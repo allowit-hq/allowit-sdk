@@ -14,7 +14,7 @@ pub mod owner;
 pub(crate) mod request;
 pub(crate) mod run;
 
-use super::{Caps, ExecRequest, Rail, asset::Token, require_op};
+use super::{Binding, Caps, ExecRequest, Rail, asset::Token, require_op};
 use crate::{
     config::env_value,
     ctx::Ctx,
@@ -178,6 +178,13 @@ impl Rail for Stellar {
             "transactionHash": body["hash"],
         }));
         Ok(0)
+    }
+    fn exec_binding(&self, cx: &mut Ctx, wallet: Option<&str>) -> Result<Binding> {
+        let bundle = self.profile(cx, wallet)?;
+        Ok(Binding {
+            policy: Some(format!("{}@{}", bundle.policy_id, bundle.module_digest)),
+            wallet: Some(bundle.wallet),
+        })
     }
     fn policy_build(&self, source: &str) -> Result<String> {
         allowit_sdk::compile_stellar_policy(source)

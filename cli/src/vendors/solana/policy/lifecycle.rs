@@ -6,14 +6,7 @@
 //! `--request-id`; the hidden verbs of earlier releases read their settings.
 use super::*;
 
-pub(super) fn run(
-    session: &Session,
-    name: &str,
-    pos: &[String],
-    json: bool,
-    stdout: &mut String,
-    stderr: &mut String,
-) -> Result<i32> {
+pub(super) fn run(session: &Session, name: &str, pos: &[String], out: &mut Out) -> Result<i32> {
     let Session {
         local,
         policy,
@@ -157,7 +150,9 @@ pub(super) fn run(
                     Ok(current) => result = current,
                     Err(_) => {
                         result.status = "uncertain".into();
-                        stderr.push_str("Recovery observation could not be saved; retain the original journal and request ID.\n");
+                        if run_options.legacy {
+                            out.progress("Recovery observation could not be saved; retain the original journal and request ID.");
+                        }
                     }
                 }
                 break;
@@ -195,44 +190,48 @@ pub(super) fn run(
         save_text(&local.directory.join("SKILL.md"), &skill)?;
         output["skill"] = serde_json::json!(skill);
     }
-    if json {
-        stdout.push_str(&format!("{output}\n"));
+    if out.json {
+        out.json_value(&output);
     } else {
-        stdout.push_str(&format!(
-            "Policy {}\n{name}: {}\nRequest: {}\n{}\n",
-            policy.id,
-            if replayed {
-                format!("replayed ({})", result.status)
-            } else {
-                result.status.clone()
-            },
-            result.id,
-            result.transaction_url
-        ));
-        if let Some(skill) = output["skill"].as_str() {
-            stdout.push('\n');
-            stdout.push_str(skill);
+        let mut view = serde_json::json!({
+            "policyId": policy.id,
+            "operation": name,
+            "status": result.status,
+            "requestId": result.id,
+            "transactionUrl": result.transaction_url,
+        });
+        for key in [
+            "replayed",
+            "broadcastWithheld",
+            "auditStatus",
+            "decisionCode",
+            "blockhashExpired",
+            "error",
+            "skill",
+        ] {
+            if let Some(value) = output.get(key) {
+                view[key] = value.clone();
+            }
         }
+        out.value(&view);
     }
-    if result.expired() {
-        stderr.push_str(if run_options.legacy {
-            "The original operation remains uncertain and cannot be broadcast again. For an explicitly additional fund/withdraw, set both a fresh ALLOWIT_REQUEST_ID and ALLOWIT_ADDITIONAL_OWNER_OPERATION=1; retain the old proof.\n"
-        } else {
-            "The original operation remains uncertain and cannot be broadcast again. For an explicitly additional wallet fund or withdraw, rerun it with a new --request-id and --additional; retain the old proof.\n"
-        });
-    }
-    if result.extra.get("decisionCode") == Some(&serde_json::json!("EXPIRED_UNEXECUTED")) {
-        stderr.push_str(if run_options.legacy {
-            "This request expired without execution. For a deliberate retry, set a new ALLOWIT_REQUEST_ID; keep the original journal.\n"
-        } else {
-            "This request expired without execution. For a deliberate retry, give a new --request-id; keep the original journal.\n"
-        });
+    // The hidden verbs of earlier releases keep their recovery hints; the
+    // result fields carry the same state for the current commands.
+    if run_options.legacy {
+        if result.expired() {
+            out.progress("The original operation remains uncertain and cannot be broadcast again. For an explicitly additional fund/withdraw, set both a fresh ALLOWIT_REQUEST_ID and ALLOWIT_ADDITIONAL_OWNER_OPERATION=1; retain the old proof.");
+        }
+        if result.extra.get("decisionCode") == Some(&serde_json::json!("EXPIRED_UNEXECUTED")) {
+            out.progress("This request expired without execution. For a deliberate retry, set a new ALLOWIT_REQUEST_ID; keep the original journal.");
+        }
+        if audit_pending && broadcast_withheld {
+            out.progress("Broadcast was withheld. Retry the identical execute command with this request ID to report and broadcast the saved proof; policy status only observes and reports.");
+        }
+        if audit_pending {
+            out.progress("Native SQL audit is pending. Retain the original journal and request ID; retry the identical command or run allowit wallet show.");
+        }
     }
     if audit_pending {
-        if broadcast_withheld {
-            stderr.push_str("Broadcast was withheld. Retry the identical execute command with this request ID to report and broadcast the saved proof; policy status only observes and reports.\n");
-        }
-        stderr.push_str("Native SQL audit is pending. Retain the original journal and request ID; retry the identical command or run allowit wallet show.\n");
         return Ok(5);
     }
     Ok(if result.status == "failed" {

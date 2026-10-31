@@ -116,8 +116,8 @@ pub(crate) fn submit(mode: Mode, a: RequestArgs, build_only: bool, cx: &mut Ctx)
             "--request-id must be 8 to 100 characters from A-Z a-z 0-9 . _ : -",
         ));
     }
-    let wallet = cx.wallet(rail)?;
-    vendor.exec_wallet(wallet.as_deref())?;
+    let selected = cx.wallet(rail)?;
+    let binding = vendor.exec_binding(cx, selected.as_deref())?;
     let request_id = match a.request_id {
         Some(id) => id,
         None => {
@@ -137,7 +137,7 @@ pub(crate) fn submit(mode: Mode, a: RequestArgs, build_only: bool, cx: &mut Ctx)
         request_id: request_id.clone(),
         wait: a.wait,
         build_only,
-        wallet,
+        wallet: binding.wallet.clone(),
     };
     cx.out.detail(format!(
         "rail {} wallet {}",
@@ -152,7 +152,8 @@ pub(crate) fn submit(mode: Mode, a: RequestArgs, build_only: bool, cx: &mut Ctx)
                 request_id: request_id.clone(),
                 command: mode.name().into(),
                 rail: rail.id.into(),
-                wallet: request.wallet.clone(),
+                wallet: binding.wallet.clone(),
+                policy: binding.policy.clone(),
                 op: request.op.clone(),
                 to: request.to.clone(),
                 amount: request.amount.text.clone(),

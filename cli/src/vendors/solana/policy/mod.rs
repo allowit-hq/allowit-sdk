@@ -14,6 +14,7 @@ mod status;
 use crate::{
     config::env_value,
     error::{Error, Result},
+    term::Out,
     vendors::solana::audit::{AuditConfig, AuditedRpc, Reporter, execution_identity},
 };
 use allowit_native::{
@@ -221,19 +222,24 @@ struct Session<'a> {
     lifecycle: &'a PolicyLifecycle<'a>,
     options: &'a RunOptions,
 }
-pub(crate) fn run(
-    name: &str,
-    pos: &[String],
-    options: &RunOptions,
-    json: bool,
-    stdout: &mut String,
-    stderr: &mut String,
-) -> Result<i32> {
+/// The vault's token mint: the imported policy context's mint, else
+/// `ALLOWIT_MINT`. `None` when neither names one.
+pub(crate) fn configured_mint() -> Result<Option<String>> {
+    let directory = absolute(&configured("ALLOWIT_POLICY_DIR", ".allowit"))?;
+    let context: Option<Context> = read_optional(&directory.join("context.json"))?;
+    if let Some(c) = context {
+        return Ok(Some(c.mint.to_string()));
+    }
+    let mint = public_setting("ALLOWIT_MINT", None)?;
+    Ok(mint.map(|m| m.to_string()))
+}
+
+pub(crate) fn run(name: &str, pos: &[String], options: &RunOptions, out: &mut Out) -> Result<i32> {
     native(allowit_native::journal::require_supported_platform())?;
     let mut local = Local::load(name)?;
     match name {
-        "generate" => return generate::run(&local, pos, json, stdout),
-        "import" => return import::run(&local, pos, json, stdout),
+        "generate" => return generate::run(&local, pos, out),
+        "import" => return import::run(&local, pos, out),
         _ => {}
     }
     let policy: Policy = read_optional(&local.policy_file)?
@@ -267,7 +273,7 @@ pub(crate) fn run(
         ));
     }
     if name == "deploy" {
-        return deploy::run(&local, &policy, pos, options, json, stdout);
+        return deploy::run(&local, &policy, pos, options, out);
     }
     let owner_role = !matches!(name, "execute" | "status");
     let signer = if owner_role {
@@ -321,9 +327,9 @@ pub(crate) fn run(
         options,
     };
     if name == "status" {
-        return status::run(&session, json, stdout, stderr);
+        return status::run(&session, out);
     }
-    lifecycle::run(&session, name, pos, json, stdout, stderr)
+    lifecycle::run(&session, name, pos, out)
 }
 
 fn load_signer(name: &str) -> Result<LocalSigner> {

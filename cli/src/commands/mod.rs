@@ -41,6 +41,15 @@ use std::{path::PathBuf, time::Duration};
 const TEMPLATE: &str =
     "{about-with-newline}\n{usage-heading} {usage}\n\n{before-help}{all-args}{after-help}";
 
+/// The help template of a node with examples. The examples are literal
+/// template text, which clap never wraps, so a long example stays one line
+/// that copies whole.
+fn examples_template(examples: &str) -> String {
+    format!(
+        "{{about-with-newline}}\n{{usage-heading}} {{usage}}\n\n{examples}\n\n{{all-args}}{{after-help}}"
+    )
+}
+
 const ROOT_EXAMPLES: &str = "\
 Examples:
   allowit rail use stellar:testnet
@@ -116,6 +125,12 @@ pub(crate) struct Global {
     /// RPC URL override for the selected rail
     #[arg(long, global = true, value_name = "URL")]
     pub rpc_url: Option<String>,
+    /// True when `--rail` is on the command line, not from `ALLOWIT_RAIL`.
+    #[arg(skip)]
+    pub rail_flag: bool,
+    /// True when `--wallet` is on the command line, not from `ALLOWIT_WALLET`.
+    #[arg(skip)]
+    pub wallet_flag: bool,
 }
 
 impl Global {
@@ -268,7 +283,11 @@ pub(crate) fn parse_wait(s: &str) -> std::result::Result<Duration, String> {
 pub(crate) fn command() -> clap::Command {
     fn layout(cmd: clap::Command) -> clap::Command {
         let groups = cmd.get_subcommands().count() > 0;
-        let cmd = cmd.help_template(TEMPLATE).mut_subcommands(layout);
+        let template = match cmd.get_before_help() {
+            Some(examples) => examples_template(&examples.to_string()),
+            None => TEMPLATE.to_owned(),
+        };
+        let cmd = cmd.help_template(template).mut_subcommands(layout);
         // A bare group prints its help and changes nothing.
         if groups && cmd.get_name() != "params" && cmd.get_name() != "allowit" {
             cmd.subcommand_required(true).arg_required_else_help(true)
@@ -293,13 +312,22 @@ pub(crate) fn parse(argv: &[String], color: bool) -> Parsed {
         clap::ColorChoice::Never
     });
     match cmd.try_get_matches_from_mut(argv) {
-        Ok(mut matches) => match Cli::from_arg_matches_mut(&mut matches) {
-            Ok(cli) => match cli.command {
-                None => Parsed::Print(cmd.render_help().to_string()),
-                Some(_) => Parsed::Run(Box::new(cli)),
-            },
-            Err(e) => Parsed::Error(e),
-        },
+        Ok(mut matches) => {
+            let from_flag =
+                |id: &str| matches.value_source(id) == Some(clap::parser::ValueSource::CommandLine);
+            let (rail_flag, wallet_flag) = (from_flag("rail"), from_flag("wallet"));
+            match Cli::from_arg_matches_mut(&mut matches) {
+                Ok(mut cli) => {
+                    cli.global.rail_flag = rail_flag;
+                    cli.global.wallet_flag = wallet_flag;
+                    match cli.command {
+                        None => Parsed::Print(cmd.render_help().to_string()),
+                        Some(_) => Parsed::Run(Box::new(cli)),
+                    }
+                }
+                Err(e) => Parsed::Error(e),
+            }
+        }
         Err(e) => match e.kind() {
             clap::error::ErrorKind::DisplayHelp
             | clap::error::ErrorKind::DisplayVersion
@@ -414,6 +442,13 @@ pub(crate) fn dispatch(command: Command, cx: &mut Ctx) -> Result<i32> {
     }
 }
 
+/// True for the hidden rail commands of earlier releases: the `tempo` group
+/// and the native Solana `policy` verbs. They select a rail only explicitly.
+pub(crate) fn is_legacy(command: &Command) -> bool {
+    matches!(command, Command::Legacy(legacy::Command::Tempo { .. }))
+        || matches!(command, Command::Policy(p) if policy::is_legacy(p))
+}
+
 /// True for commands that read no rail, wallet or credential.
 pub(crate) fn is_local(command: &Command) -> bool {
     matches!(
@@ -433,6 +468,25 @@ mod tests {
     #[test]
     fn the_command_tree_is_consistent() {
         command().debug_assert();
+    }
+    #[test]
+    fn examples_never_wrap_at_any_width() {
+        fn walk(cmd: &mut clap::Command, path: &str) {
+            if let Some(examples) = cmd.get_before_help().map(|e| e.to_string()) {
+                let help = cmd.clone().term_width(40).render_help().to_string();
+                assert!(
+                    help.contains(&format!("\n{examples}\n")),
+                    "{path}: the examples changed in\n{help}"
+                );
+            }
+            for sub in cmd.get_subcommands_mut() {
+                let name = format!("{path} {}", sub.get_name());
+                walk(sub, &name);
+            }
+        }
+        let mut root = command();
+        root.build();
+        walk(&mut root, "allowit");
     }
     #[test]
     fn no_local_argument_reuses_a_global_argument_id() {
@@ -486,6 +540,8 @@ mod tests {
             unreachable!()
         };
         assert_eq!(cli.global.rail.as_deref(), Some("stellar:testnet"));
+        assert!(cli.global.rail_flag);
+        assert!(!cli.global.wallet_flag);
     }
     #[test]
     fn waits_parse_and_are_bounded() {

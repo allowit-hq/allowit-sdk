@@ -70,11 +70,16 @@ pub(crate) fn parse(rail: &dyn Rail, pair: &str) -> Result<Param> {
     let mut amount = None;
     match key {
         "transaction_cap" | "spent_cap" | "day_spent_cap" | "day_total_cap" => {
-            amount = Some(rail.parse_amount(value, Use::Limit)?);
+            // The caps are nonnegative; only a transaction cap must be positive.
+            let parsed = rail.parse_amount(value, Use::Limit)?;
+            if key == "transaction_cap" && parsed.units() == Some(0) {
+                return Err(Error::usage("transaction_cap must be positive"));
+            }
+            amount = Some(parsed);
         }
         "call_cap" => {
             value
-                .parse::<u32>()
+                .parse::<u64>()
                 .map_err(|_| Error::usage("call_cap is a whole number of calls"))?;
         }
         "recipients" => {
@@ -148,6 +153,9 @@ mod tests {
             Some(100_000_000)
         );
         parse(r, "call_cap=20").unwrap();
+        parse(r, "call_cap=5000000000").unwrap();
+        parse(r, "day_total_cap=XLM:0").unwrap();
+        parse(r, "spent_cap=0").unwrap();
         parse(r, "expiry=30d").unwrap();
         parse(r, "expiry=2026-12-31T00:00:00Z").unwrap();
         parse(r, "operations=transfer,swap").unwrap();
@@ -161,6 +169,9 @@ mod tests {
             "daily_limit=XLM:5",
             "transaction_cap",
             "call_cap=-1",
+            "call_cap=18446744073709551616",
+            "transaction_cap=XLM:0",
+            "transaction_cap=0",
             "expiry=soon",
             "expiry=é",
             "expiry=1é",

@@ -41,14 +41,11 @@ pub(crate) fn check_account(family: Family, s: &str) -> Result<()> {
     }
 }
 
-/// A policy wallet: a Stellar C contract (or a G account for the classic
-/// multisignature route), a Solana vault address or a Tempo 0x vault.
+/// A policy wallet: a Stellar C contract, a Solana vault address or a Tempo
+/// 0x vault.
 pub(crate) fn check_wallet(family: Family, s: &str) -> Result<()> {
     let (ok, expected) = match family {
-        Family::Stellar => (
-            stellar_contract(s) || stellar_account(s),
-            "a C… contract strkey",
-        ),
+        Family::Stellar => (stellar_contract(s), "a C… contract strkey"),
         Family::Solana => (solana(s), "a base58 vault address"),
         Family::Tempo => (evm(s), "a 0x vault address"),
     };
@@ -127,6 +124,7 @@ mod tests {
         let C = contract.as_str();
         check_account(Family::Stellar, G).unwrap();
         check_wallet(Family::Stellar, C).unwrap();
+        assert_eq!(check_wallet(Family::Stellar, G).unwrap_err().code, 2);
         check_recipient(Family::Stellar, C).unwrap();
         assert!(check_account(Family::Stellar, C).is_err());
         assert!(check_account(Family::Stellar, &G.replace('A', "B")).is_err());

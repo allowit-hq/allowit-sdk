@@ -19,8 +19,8 @@ Commands:
   policy      Write, check, build, test, show and deploy policies
   exec        Submit an agent request: the policy checks it and the rail settles it
   eval        Ask the policy whether a request would pass. Never signs or spends
-  status      Read a request's state. The local journal supplies its rail and wallet; --wallet is
-              the fallback
+  status      Read a request's state. The local journal supplies its rail and wallet; --rail and
+              --wallet are the fallback
   history     List recent requests from the local journal
   tx          Submit transactions that were signed outside the CLI
   skills      Search and inspect the paid-service catalog

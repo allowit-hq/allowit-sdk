@@ -67,8 +67,9 @@ pub(crate) enum Command {
 }
 
 pub(crate) fn run(command: Command, cx: &mut Ctx) -> Result<i32> {
-    let rail = match cx.rail_opt()? {
-        Some(rail) => rail,
+    // Only --rail or ALLOWIT_RAIL selects the rail; `rail use` does not.
+    let rail = match cx.global.rail.clone() {
+        Some(rail) => routing::info(&rail)?,
         None => routing::info("solana:testnet")?,
     };
     let (name, pos): (&str, Vec<String>) = match command {

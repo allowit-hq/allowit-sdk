@@ -242,12 +242,38 @@ fn wallet_create_prints_the_bound_owner_link_without_an_owner_key_or_rpc() {
         .set("ALLOWIT_OWNER_KEYPAIR", "/must-never-be-opened")
         .set("ALLOWIT_RPC_URL", &mock.url);
     let owner = Key([1; 32]).to_string();
+    let mint = Key([4; 32]).to_string();
+    // The rail's USDC is not the configured mint: a named asset or amount
+    // never creates a vault for another token.
+    for (asset, fund) in [("USDC", "1000000"), (mint.as_str(), "USDC:1")] {
+        let output = sandbox.run(&[
+            "wallet",
+            "create",
+            "--asset",
+            asset,
+            "--policy",
+            policy.to_str().unwrap(),
+            "--owner",
+            &owner,
+            "--agent",
+            "agent",
+            "--fund",
+            fund,
+        ]);
+        assert_eq!(
+            code(&output),
+            Some(4),
+            "{asset} {fund}: {}",
+            stderr(&output)
+        );
+        assert!(stderr(&output).contains(&mint), "{}", stderr(&output));
+    }
     let create = [
         "--json",
         "wallet",
         "create",
         "--asset",
-        "USDC",
+        &mint,
         "--policy",
         policy.to_str().unwrap(),
         "--owner",
@@ -255,7 +281,7 @@ fn wallet_create_prints_the_bound_owner_link_without_an_owner_key_or_rpc() {
         "--agent",
         "agent",
         "--fund",
-        "USDC:1",
+        "1000000",
     ];
     let output = sandbox.run(&create);
     assert_eq!(code(&output), Some(10), "{}", stderr(&output));
@@ -345,15 +371,15 @@ fn vault_operations_refuse_a_selected_wallet_of_another_vault() {
     let mock = Mock::new();
     for args in [
         vec!["wallet", "show"],
-        vec!["wallet", "fund", "USDC:1", "--sign-with-key", "owner"],
-        vec!["wallet", "withdraw", "USDC:1", "--sign-with-key", "owner"],
+        vec!["wallet", "fund", "1000000", "--sign-with-key", "owner"],
+        vec!["wallet", "withdraw", "1000000", "--sign-with-key", "owner"],
         vec!["wallet", "pause", "--sign-with-key", "owner"],
         vec!["wallet", "close", "--sign-with-key", "owner", "--yes"],
         vec![
             "policy",
             "params",
             "set",
-            "day_spent_cap=USDC:3",
+            "day_spent_cap=3000000",
             "--sign-with-key",
             "owner",
         ],
@@ -374,6 +400,17 @@ fn vault_operations_refuse_a_selected_wallet_of_another_vault() {
         assert_eq!(code(&sandbox.run(&used)), Some(3), "{args:?}");
         sandbox.ok(&["wallet", "use", &vault]);
     }
+    // The imported context names the vault mint; the rail's USDC is another.
+    let output = sandbox.run(&[
+        "--rpc-url",
+        &mock.url,
+        "wallet",
+        "fund",
+        "USDC:1",
+        "--sign-with-key",
+        "owner",
+    ]);
+    assert_eq!(code(&output), Some(4), "{}", stderr(&output));
     mock.assert_untouched();
     // The matching wallet passes the check and reaches the RPC.
     let listener = mock.listener;

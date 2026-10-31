@@ -16,8 +16,7 @@ pub(super) fn run(
     policy: &Policy,
     pos: &[String],
     options: &RunOptions,
-    json: bool,
-    stdout: &mut String,
+    out: &mut Out,
 ) -> Result<i32> {
     let owner = public_setting("ALLOWIT_OWNER", local.context.as_ref().map(|c| c.owner))?
         .ok_or_else(|| Error::config("Set ALLOWIT_OWNER to the owner public key; browser deployment never loads an owner key"))?;
@@ -55,15 +54,12 @@ pub(super) fn run(
         }
         journal.write(&format!("browser-deploy-{request_id}"), &intent)
     }))?;
-    if json {
-        *stdout += &crate::output::json(
-            &serde_json::json!({"state":"awaiting_owner_signature","executed":false,"requestId":request_id,"signingUrl":url,"intentDigest":fingerprint}),
-        );
-    } else {
-        *stdout += &format!(
-            "Intent: {}\nOpen this link to review and sign the deployment in your wallet:\n{url}\n",
-            &fingerprint[..16]
-        );
-    }
+    out.value(&serde_json::json!({
+        "state": "awaiting_owner_signature",
+        "executed": false,
+        "requestId": request_id,
+        "signingUrl": url,
+        "intentDigest": fingerprint,
+    }));
     Ok(10)
 }

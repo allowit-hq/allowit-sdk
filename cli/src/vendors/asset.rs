@@ -66,7 +66,7 @@ pub(crate) enum Use {
     Withdraw,
     /// `--token-out ASSET:MIN`: an asset is required and MIN may be zero.
     Minimum,
-    /// A policy parameter value.
+    /// A policy parameter value: a nonnegative amount.
     Limit,
 }
 
@@ -149,7 +149,7 @@ pub(crate) fn parse(family: Family, tokens: &[Token], text: &str, usage: Use) ->
         let units: u128 = text
             .parse()
             .map_err(|_| Error::usage(format!("{} is too large", quoted(text))))?;
-        if units == 0 {
+        if units == 0 && usage != Use::Limit {
             return Err(Error::usage("the amount must be positive"));
         }
         return Ok(Amount {
@@ -183,7 +183,7 @@ pub(crate) fn parse(family: Family, tokens: &[Token], text: &str, usage: Use) ->
         Quantity::Max
     } else {
         let units = decimal_units(quantity, decimals)?;
-        if units == 0 && usage != Use::Minimum {
+        if units == 0 && !matches!(usage, Use::Minimum | Use::Limit) {
             return Err(Error::usage("the amount must be positive"));
         }
         Quantity::Units(units)
@@ -360,6 +360,19 @@ mod tests {
         let max = parse(Family::Stellar, STELLAR, "XLM:max", Use::Withdraw).unwrap();
         assert_eq!(max.quantity, Quantity::Max);
         assert!(parse(Family::Stellar, STELLAR, "XLM:max", Use::Spend).is_err());
+        assert_eq!(
+            parse(Family::Stellar, STELLAR, "XLM:0", Use::Limit)
+                .unwrap()
+                .units(),
+            Some(0)
+        );
+        assert_eq!(
+            parse(Family::Stellar, STELLAR, "0", Use::Limit)
+                .unwrap()
+                .units(),
+            Some(0)
+        );
+        assert!(parse(Family::Stellar, STELLAR, "0", Use::Spend).is_err());
         let min = parse(Family::Stellar, STELLAR, "USDC:0", Use::Minimum).unwrap();
         assert_eq!(min.units(), Some(0));
         assert!(parse(Family::Stellar, STELLAR, "10", Use::Minimum).is_err());

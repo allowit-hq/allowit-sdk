@@ -4,12 +4,8 @@ Usage: allowit wallet create [OPTIONS] --policy <FILE> --owner <KEY|ADDR> --agen
 
 Examples:
   allowit wallet create --kind common --asset XLM --policy policy.rs --owner owner --agent agent
-  allowit wallet create --kind simple --asset USDC --policy policy.rs --owner GOWNER… --agent agent
-  --x402
-  allowit wallet create --kind common --asset XLM --policy policy.rs --owner owner --agent agent
-  --sign-with-key owner
-  allowit --rail solana:devnet wallet create --asset USDC --policy policy.json --owner owner --agent
-  agent --fund USDC:10
+  allowit wallet create --kind simple --asset USDC --policy policy.rs --owner GOWNER… --agent agent --x402
+  allowit wallet create --kind common --asset XLM --policy policy.rs --owner owner --agent agent --sign-with-key owner
 
 Options:
       --kind <KIND>       Wallet kind (Stellar): simple, common or custom [possible values: simple,
@@ -19,7 +15,6 @@ Options:
       --owner <KEY|ADDR>  The owner: a key name or an address
       --agent <KEY>       The agent key
       --x402              Let the agent pay x402 resources from the wallet
-      --fund <AMOUNT>     The initial deposit, on rails that fund the wallet at creation (Solana)
   -h, --help              Print help
 
 Signing:

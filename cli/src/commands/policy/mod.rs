@@ -57,6 +57,11 @@ pub(crate) fn run(command: Command, cx: &mut Ctx) -> Result<i32> {
 }
 
 /// The verbs that read no rail, wallet or credential.
+/// True for the hidden native Solana verbs of earlier releases.
+pub(crate) fn is_legacy(command: &Command) -> bool {
+    matches!(command, Command::Legacy(_))
+}
+
 pub(crate) fn is_local(command: &Command) -> bool {
     matches!(
         command,

@@ -15,7 +15,7 @@ pub(crate) mod harness;
 pub(crate) mod policy;
 
 use super::{
-    Caps, ExecRequest, Mode, Param, Rail, SignWith, Signing, WalletCreate,
+    Binding, Caps, ExecRequest, Mode, Param, Rail, SignWith, Signing, WalletCreate,
     asset::{Amount, Asset, Token},
     require_op, require_signing,
 };
@@ -101,11 +101,8 @@ impl Solana {
         if let Some(url) = cx.rpc_url(self.0)? {
             settings.push(("ALLOWIT_RPC_URL", url));
         }
-        let json = cx.out.json;
         let out = &mut cx.out;
-        config::with_settings(&settings, || {
-            policy::run(name, pos, options, json, &mut out.stdout, &mut out.stderr)
-        })
+        config::with_settings(&settings, || policy::run(name, pos, options, out))
     }
     /// The options of a vault operation: the selected wallet, which must be
     /// the vault of the loaded policy.
@@ -127,10 +124,6 @@ impl Solana {
                 self.0.id
             ))),
         }
-    }
-    /// The vault token: the rail's USDC.
-    fn vault_token(&self) -> Option<&'static Token> {
-        self.tokens().iter().find(|t| t.code == "USDC")
     }
     /// True when a named token is a token of the rail's table with the same
     /// mint. An explicit mint that the table cannot confirm is refused.
@@ -155,29 +148,36 @@ impl Solana {
         let path = cx.signer(key)?;
         Ok(("ALLOWIT_OWNER_KEYPAIR", path.to_string_lossy().into_owned()))
     }
-    /// A vault amount as a six-decimal display amount.
+    /// A vault amount as a six-decimal display amount. A named amount must
+    /// resolve to the vault's configured mint.
     fn vault_amount(&self, amount: &Amount) -> Result<String> {
-        let vault = self.vault_token();
-        match &amount.asset {
-            Asset::Installed => {}
-            Asset::Token { code, issuer }
-                if vault.is_some_and(|t| t.code == code && t.issuer == issuer.as_deref()) => {}
-            _ => {
-                return Err(Error {
-                    code: 4,
-                    message: format!(
-                        "the vault holds only its token; {} names another asset",
-                        amount.text
-                    ),
-                    status: None,
-                    config: false,
-                });
-            }
+        let mint = if matches!(amount.asset, Asset::Installed) {
+            None
+        } else {
+            policy::configured_mint()?
+        };
+        vault_amount(amount, mint.as_deref())
+    }
+    /// Refuses a `--asset` other than the vault's configured mint: the mint
+    /// itself, or a code of the rail's table with that mint.
+    fn vault_asset(&self, asset: &str) -> Result<()> {
+        let mint = policy::configured_mint()?.ok_or_else(no_mint)?;
+        let named = self
+            .tokens()
+            .iter()
+            .any(|t| !t.native && t.code == asset && t.issuer == Some(mint.as_str()));
+        if asset == mint || named {
+            Ok(())
+        } else {
+            Err(Error {
+                code: 4,
+                message: format!(
+                    "the vault holds mint {mint}; --asset {asset} names another asset"
+                ),
+                status: None,
+                config: false,
+            })
         }
-        let units = amount
-            .units()
-            .ok_or_else(|| Error::usage("an exact amount is required"))?;
-        Ok(super::asset::format_units(units, VAULT_DECIMALS))
     }
     fn harness_flags(&self, r: &ExecRequest) -> Result<Flags> {
         let code = match &r.amount.asset {
@@ -216,6 +216,41 @@ impl Solana {
         }
         Ok(flags)
     }
+}
+
+fn no_mint() -> Error {
+    Error::config(
+        "the vault mint is not configured; set ALLOWIT_MINT or import the executor bundle",
+    )
+}
+
+/// A vault amount for the vault holding `mint`, as a six-decimal display
+/// amount. Base units need no mint; a named token must have that mint.
+fn vault_amount(amount: &Amount, mint: Option<&str>) -> Result<String> {
+    match &amount.asset {
+        Asset::Installed => {}
+        Asset::Token {
+            issuer: Some(issuer),
+            ..
+        } if mint == Some(issuer.as_str()) => {}
+        Asset::Token { .. } if mint.is_none() => return Err(no_mint()),
+        _ => {
+            return Err(Error {
+                code: 4,
+                message: format!(
+                    "the vault holds mint {}; {} names another asset; give the amount in base units",
+                    mint.unwrap_or("-"),
+                    amount.text
+                ),
+                status: None,
+                config: false,
+            });
+        }
+    }
+    let units = amount
+        .units()
+        .ok_or_else(|| Error::usage("an exact amount is required"))?;
+    Ok(super::asset::format_units(units, VAULT_DECIMALS))
 }
 
 impl Rail for Solana {
@@ -349,12 +384,12 @@ impl Rail for Solana {
         if w.x402 {
             return Err(self.na("wallet create --x402"));
         }
-        if w.asset != "USDC" {
-            return Err(Error::usage("Solana vaults hold USDC"));
-        }
-        let fund = w.fund.as_ref().ok_or_else(|| {
-            Error::usage("Solana vaults are funded at creation; give --fund AMOUNT")
-        })?;
+        // The native vault takes its first deposit at creation.
+        let fund = w
+            .fund
+            .as_ref()
+            .ok_or_else(|| self.na("wallet create without --fund AMOUNT"))?;
+        self.vault_asset(&w.asset)?;
         let amount = self.vault_amount(fund)?;
         let policy = std::fs::canonicalize(&w.policy)
             .map_err(|_| Error::usage(format!("cannot read {}", w.policy.display())))?;
@@ -461,17 +496,13 @@ impl Rail for Solana {
             };
             settings.push(("ALLOWIT_POLICY_FILE", path.to_string_lossy().into_owned()));
         }
-        let code = self.native(
+        self.native(
             cx,
             "generate",
             &[prompt.to_owned()],
             &RunOptions::default(),
             settings,
-        )?;
-        if !cx.out.json {
-            cx.out.kind = crate::term::Kind::Rust;
-        }
-        Ok(code)
+        )
     }
     fn policy_show(&self, cx: &mut Ctx, source: bool) -> Result<i32> {
         let wallet = cx.wallet(self.0)?;
@@ -514,8 +545,12 @@ impl Rail for Solana {
     fn eval(&self, cx: &mut Ctx, r: &ExecRequest) -> Result<i32> {
         self.request(cx, r)
     }
-    fn exec_wallet(&self, wallet: Option<&str>) -> Result<()> {
-        self.harness_wallet(wallet)
+    fn exec_binding(&self, _: &mut Ctx, wallet: Option<&str>) -> Result<Binding> {
+        self.harness_wallet(wallet)?;
+        Ok(Binding {
+            wallet: None,
+            policy: Some(harness::policy()?),
+        })
     }
     fn legacy(&self, cx: &mut Ctx, verb: &str, args: &[String]) -> Result<i32> {
         let Some(name) = verb.strip_prefix("policy ") else {
@@ -532,9 +567,7 @@ impl Rail for Solana {
             )));
         }
         let options = RunOptions::from_environment(cx.wallet(self.0)?);
-        let json = cx.out.json;
-        let out = &mut cx.out;
-        policy::run(name, args, &options, json, &mut out.stdout, &mut out.stderr)
+        policy::run(name, args, &options, &mut cx.out)
     }
     fn status(&self, cx: &mut Ctx, id: &str, wallet: Option<&str>, wait: Duration) -> Result<i32> {
         self.harness_wallet(wallet)?;
@@ -590,47 +623,33 @@ mod tests {
                 }
             }
         }
-        let rail = Solana(crate::routing::info("solana:devnet").unwrap());
-        let usdc = parse(
-            crate::routing::Family::Solana,
-            DEVNET,
-            "USDC:2.5",
-            Use::Spend,
-        )
-        .unwrap();
-        assert_eq!(rail.vault_amount(&usdc).unwrap(), "2.5");
-        let base = parse(crate::routing::Family::Solana, DEVNET, "250000", Use::Spend).unwrap();
-        assert_eq!(rail.vault_amount(&base).unwrap(), "0.25");
-        let sol = parse(crate::routing::Family::Solana, DEVNET, "SOL:1", Use::Spend).unwrap();
-        assert_eq!(rail.vault_amount(&sol).unwrap_err().code, 4);
-        let mint = DEVNET[1].issuer.unwrap();
-        let explicit = parse(
-            crate::routing::Family::Solana,
-            DEVNET,
-            &format!("USDC:{mint}:1"),
-            Use::Spend,
-        )
-        .unwrap();
-        assert_eq!(rail.vault_amount(&explicit).unwrap(), "1");
-        // The testnet table has no USDC mint, so an explicit mint cannot be
-        // confirmed as the vault token.
-        let testnet = Solana(crate::routing::info("solana:testnet").unwrap());
-        let other = parse(
-            crate::routing::Family::Solana,
-            TESTNET,
-            &format!("USDC:{}:5", MAINNET[1].issuer.unwrap()),
-            Use::Spend,
-        )
-        .unwrap();
-        assert_eq!(testnet.vault_amount(&other).unwrap_err().code, 4);
-        let plain = parse(
-            crate::routing::Family::Solana,
-            TESTNET,
-            "USDC:5",
-            Use::Spend,
-        )
-        .unwrap();
-        assert_eq!(testnet.vault_amount(&plain).unwrap(), "5");
+        let p = |tokens: &[Token], text: &str| {
+            parse(crate::routing::Family::Solana, tokens, text, Use::Spend).unwrap()
+        };
+        let usdc_mint = DEVNET[1].issuer.unwrap();
+        let usdc = p(DEVNET, "USDC:2.5");
+        assert_eq!(vault_amount(&usdc, Some(usdc_mint)).unwrap(), "2.5");
+        let base = p(DEVNET, "250000");
+        assert_eq!(vault_amount(&base, None).unwrap(), "0.25");
+        assert_eq!(vault_amount(&base, Some("other")).unwrap(), "0.25");
+        let sol = p(DEVNET, "SOL:1");
+        assert_eq!(vault_amount(&sol, Some(usdc_mint)).unwrap_err().code, 4);
+        let explicit = p(DEVNET, &format!("USDC:{usdc_mint}:1"));
+        assert_eq!(vault_amount(&explicit, Some(usdc_mint)).unwrap(), "1");
+        // A vault configured for another mint refuses the rail's USDC.
+        let test_mint = "GgBaCs3NCBuZN12kCJgAW63ydqohFkHEdfdEXBPzLHq";
+        assert_eq!(vault_amount(&usdc, Some(test_mint)).unwrap_err().code, 4);
+        assert_eq!(
+            vault_amount(&explicit, Some(test_mint)).unwrap_err().code,
+            4
+        );
+        // Without a configured mint, a named amount cannot be confirmed.
+        assert_eq!(vault_amount(&usdc, None).unwrap_err().code, 3);
+        // The testnet table has no USDC mint: a named amount never matches.
+        let plain = p(TESTNET, "USDC:5");
+        assert_eq!(vault_amount(&plain, Some(test_mint)).unwrap_err().code, 4);
+        let other = p(TESTNET, &format!("USDC:{}:5", MAINNET[1].issuer.unwrap()));
+        assert_eq!(vault_amount(&other, Some(test_mint)).unwrap_err().code, 4);
     }
 
     #[test]

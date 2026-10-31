@@ -77,7 +77,7 @@ A rail has one canonical CAIP-2 identifier. Input also accepts the aliases below
 | `eip155:42431` | `tempo:testnet` |
 | `eip155:4217` | `tempo:mainnet` |
 
-There is no default rail. A command that needs one exits 3 with the hint `allowit rail use RAIL`. Each rail keeps its own default wallet, agent key and RPC override, so a Stellar C… wallet never becomes active on Solana. Addresses must match the rail: G… accounts and C… contracts on Stellar, base58 on Solana, 0x… on Tempo.
+There is no default rail. A command that needs one exits 3 with the hint `allowit rail use RAIL`. Each rail keeps its own default wallet, agent key and RPC override, so a Stellar C… wallet never becomes active on Solana. Addresses must match the rail: G… accounts and C… contracts on Stellar, base58 on Solana, 0x… on Tempo. A Stellar wallet selection is a C… contract; the classic route of a wallet profile needs no selection.
 
 `allowit rail show RAIL` lists the key curve, the token table, the `exec --op` values, the `policy params set` keys, the signing modes and the verbs that work on that rail. A verb that has no backend on a rail exits 3 with `VERB is not available on RAIL yet`.
 
@@ -85,7 +85,7 @@ There is no default rail. A command that needs one exits 3 with the hint `allowi
 | --- | --- | --- | --- |
 | `keys fund` | Friendbot | RPC airdrop | not available |
 | `keys import` of a bundle | not available | executor bundle | executor bundle |
-| `wallet create` | not available | link signing, `--fund` | not available |
+| `wallet create` | not available | link signing with the first deposit | not available |
 | `wallet show`, `policy show` | public wallet profile | native vault, engine harness | executor bundle |
 | `wallet fund`, `withdraw`, `pause`, `close` | not available | `--sign-with-key` | not available |
 | `wallet update`, `resume`, `tx send` | not available | not available | not available |
@@ -99,7 +99,7 @@ There is no default rail. A command that needs one exits 3 with the hint `allowi
 | `call URL` | not available | not available | MPP |
 | `call SERVICE`, `skills`, `curl`, `http`, `mcp`, `claude`, `codex` | not available | not available | not available |
 
-A selected wallet (`--wallet`, `ALLOWIT_WALLET` or `wallet use`) must be the wallet that the Stellar profile, the Tempo bundle or the Solana policy context in `ALLOWIT_POLICY_DIR` names; another wallet exits 3. The Solana engine harness names a policy but no vault, so Solana `exec`, `eval`, `status` and `policy show` exit 3 while a wallet is selected. `status ID` uses the rail and wallet in the request journal and refuses a different `--rail` or `--wallet`.
+A selected wallet (`--wallet`, `ALLOWIT_WALLET` or `wallet use`) must be the wallet that the Stellar profile, the Tempo bundle or the Solana policy context in `ALLOWIT_POLICY_DIR` names; another wallet exits 3. The Solana engine harness names a policy but no vault, so Solana `exec`, `eval`, `status` and `policy show` exit 3 while a wallet is selected. The request journal binds each request ID to its rail, the wallet and policy that the rail resolved, and the request itself; a retry under another wallet or policy exits 2. `status ID` uses the rail and wallet in the journal and reads only under the recorded policy. It refuses a different `--rail` or `--wallet` flag; `ALLOWIT_RAIL`, `ALLOWIT_WALLET` and the `use` defaults yield to the journal.
 
 Mainnet rails serve `exec`, `status`, `wallet show`, `policy show` and `policy build` on Stellar, and `exec`, `eval`, `status` and `policy show` on Solana. Tempo mainnet serves no verb yet. `swap`, `deposit`, `redeem` and `custom` operations need new contract entrypoints on every rail; they exit 3. The paid-service commands keep their request builders in `src/gateway/`, but the engine serves no paid-service route, so they exit 3 on every rail.
 
@@ -166,7 +166,7 @@ The hidden `wallet configure` and `wallet approve` commands keep the Stellar tes
 
 ## Solana vaults
 
-The Solana adapter runs the native vault lifecycle of `allowit-native` on devnet and testnet. `policy new` generates and saves a policy under `.allowit/` in the working directory and prints its Rust source. `keys import` stores an owner-issued executor bundle as public context. `wallet create` prints one browser link that binds the exact policy, public roles, network and initial deposit, and exits 10; a retry of the same creation is the same intent. The owner verbs sign with `--sign-with-key`. `exec`, `eval` and `status` use the engine harness through `ALLOWIT_TOKEN`.
+The Solana adapter runs the native vault lifecycle of `allowit-native` on devnet and testnet. `policy new` generates and saves a policy under `.allowit/` in the working directory and prints its Rust source. `keys import` stores an owner-issued executor bundle as public context. `wallet create` prints one browser link that binds the exact policy, public roles, network and initial deposit, and exits 10; a retry of the same creation is the same intent. The native vault takes its first deposit at creation, so Solana `wallet create` needs the hidden `--fund AMOUNT` and exits 3 without it. `--asset` and every named amount must resolve to the vault mint, which the imported policy context or `ALLOWIT_MINT` names; another token exits 4. Amounts in base units need no token name. The owner verbs sign with `--sign-with-key`. `exec`, `eval` and `status` use the engine harness through `ALLOWIT_TOKEN`.
 
 ## Source layout
 

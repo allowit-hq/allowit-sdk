@@ -14,6 +14,9 @@ pub(crate) struct Entry {
     pub rail: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub wallet: Option<String>,
+    /// The policy that the rail resolved for the request.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub policy: Option<String>,
     pub op: String,
     pub to: String,
     pub amount: String,
@@ -51,6 +54,7 @@ pub(crate) fn record(dir: &Path, entry: &Entry) -> Result<()> {
         if old.command != entry.command
             || old.rail != entry.rail
             || old.wallet != entry.wallet
+            || old.policy != entry.policy
             || old.op != entry.op
             || old.to != entry.to
             || old.amount != entry.amount
@@ -114,6 +118,7 @@ mod tests {
             command: "exec".into(),
             rail: "stellar:testnet".into(),
             wallet: Some("CWALLET".into()),
+            policy: Some("policy-1@digest".into()),
             op: "transfer".into(),
             to: "GDEST".into(),
             amount: "XLM:5".into(),
@@ -132,6 +137,9 @@ mod tests {
         let mut other = entry("pay-0001", 10);
         other.amount = "XLM:6".into();
         assert_eq!(record(&dir, &other).unwrap_err().code, 2);
+        let mut moved = entry("pay-0001", 10);
+        moved.policy = Some("policy-2@digest".into());
+        assert_eq!(record(&dir, &moved).unwrap_err().code, 2);
         finish(&dir, "pay-0001", 0).unwrap();
         let all = entries(&dir).unwrap();
         assert_eq!(all[0].request_id, "pay-0002");

@@ -12,7 +12,7 @@
 //! and must belong to the selected rail. The hidden `tempo` group keeps the
 //! commands of earlier releases.
 use super::{
-    CallRequest, Caps, ExecRequest, Mode, Rail,
+    Binding, CallRequest, Caps, ExecRequest, Mode, Rail,
     asset::{Amount, Asset, Token},
     require_op,
 };
@@ -234,6 +234,19 @@ impl Rail for Tempo {
         cx.out.value(&policy);
         Ok(0)
     }
+    fn exec_binding(&self, _: &mut Ctx, wallet: Option<&str>) -> Result<Binding> {
+        let policy = self.describe(wallet)?;
+        let text = |key: &str| {
+            policy[key]
+                .as_str()
+                .map(str::to_owned)
+                .ok_or_else(|| Error::config(format!("the Tempo bundle names no {key}")))
+        };
+        Ok(Binding {
+            wallet: Some(text("vault")?),
+            policy: Some(format!("{}@{}", text("id")?, text("policyDigest")?)),
+        })
+    }
     fn exec(&self, cx: &mut Ctx, r: &ExecRequest) -> Result<i32> {
         self.testnet_only("exec")?;
         require_op(self, &r.op)?;
@@ -303,11 +316,13 @@ impl Rail for Tempo {
 /// The hidden `tempo` group of earlier releases. With a selected rail, the
 /// bundle must belong to it.
 pub(crate) fn legacy(args: &[String], stdout: &mut String, stderr: &mut String) -> Result<i32> {
-    if let Some(selected) = selected()
-        && !args
-            .first()
-            .is_some_and(|s| matches!(s.as_str(), "help" | "-h" | "--help"))
+    // Help anywhere in the words prints the group usage.
+    if args.first().is_some_and(|s| s == "help")
+        || args.iter().any(|s| matches!(s.as_str(), "-h" | "--help"))
     {
+        return allowit_tempo::run(&["help".to_owned()], stdout, stderr);
+    }
+    if let Some(selected) = selected() {
         let path = if args.first().is_some_and(|s| s == "import") {
             args.iter()
                 .skip(1)

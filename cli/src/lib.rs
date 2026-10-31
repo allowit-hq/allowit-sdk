@@ -103,6 +103,14 @@ fn execute(cli: commands::Cli) -> i32 {
     // cannot change their output.
     let network = if commands::is_local(&command) {
         None
+    } else if commands::is_legacy(&command) {
+        // The hidden commands of earlier releases select a rail only with
+        // --rail or ALLOWIT_RAIL, never with `rail use`.
+        cx.global
+            .rail
+            .as_deref()
+            .and_then(|r| routing::info(r).ok())
+            .map(|r| r.id.to_owned())
     } else {
         cx.rail_opt().ok().flatten().map(|r| r.id.to_owned())
     };
@@ -128,7 +136,7 @@ fn finish(mut out: Out, result: error::Result<i32>) -> i32 {
     let stdout = if out.raw {
         stdout
     } else {
-        redact(safe_json_output(stdout))
+        redact(safe_output(stdout))
     };
     let stdout = out.rendered_stdout(stdout);
     let _ = std::io::stdout().write_all(stdout.as_bytes());
@@ -151,25 +159,35 @@ fn render_error(out: &mut Out, e: &Error) {
     }
 }
 
-fn safe_json_output(stdout: String) -> String {
-    if serde_json::from_str::<Value>(&stdout).is_ok() {
-        // Escape display controls within JSON without changing its value.
-        stdout
-            .chars()
-            .map(|c| {
-                if ('\u{7f}'..'\u{a0}').contains(&c)
-                    || ('\u{202a}'..='\u{202e}').contains(&c)
-                    || ('\u{2066}'..='\u{2069}').contains(&c)
-                {
-                    format!("\\u{:04x}", c as u32)
-                } else {
-                    c.to_string()
-                }
-            })
-            .collect()
-    } else {
-        stdout
+/// True for characters that can change the terminal or reorder text:
+/// C0 controls other than newline and tab, DEL, C1 controls and the bidi
+/// embedding, override and isolate characters.
+fn display_control(c: char) -> bool {
+    (c.is_control() && c != '\n' && c != '\t')
+        || ('\u{202a}'..='\u{202e}').contains(&c)
+        || ('\u{2066}'..='\u{2069}').contains(&c)
+}
+
+/// Escapes display controls in stdout. JSON keeps its value: a control
+/// inside a string becomes a `\uXXXX` escape. Text shows each control as
+/// `\u{XX}`.
+fn safe_output(stdout: String) -> String {
+    let json = serde_json::from_str::<Value>(&stdout).is_ok();
+    if !stdout.chars().any(display_control) {
+        return stdout;
     }
+    stdout
+        .chars()
+        .map(|c| {
+            if !display_control(c) {
+                c.to_string()
+            } else if json {
+                format!("\\u{:04x}", c as u32)
+            } else {
+                format!("\\u{{{:x}}}", c as u32)
+            }
+        })
+        .collect()
 }
 
 /// Removes the engine tokens from any output.
@@ -189,13 +207,24 @@ pub(crate) fn flush_stderr(stderr: &mut String) {
 mod display_tests {
     #[test]
     fn json_display_controls_are_escaped() {
-        let original = serde_json::json!({"prompt":"source\u{202e} text\u{0085}"});
-        let encoded = super::safe_json_output(original.to_string());
+        let original = serde_json::json!({"prompt":"source\u{202e} text\u{0085}\u{1b}]52;x"});
+        let encoded = super::safe_output(serde_json::to_string_pretty(&original).unwrap());
         assert!(!encoded.contains('\u{202e}'));
         assert!(!encoded.contains('\u{0085}'));
+        assert!(!encoded.contains('\u{1b}'));
         assert_eq!(
             serde_json::from_str::<serde_json::Value>(&encoded).unwrap(),
             original
         );
+    }
+    #[test]
+    fn text_display_controls_are_escaped() {
+        let text = "name  agent\u{1b}]52;c;aGk=\u{7}\nnote  a\u{202e}b\tc\r\n".to_owned();
+        let shown = super::safe_output(text);
+        assert_eq!(
+            shown,
+            "name  agent\\u{1b}]52;c;aGk=\\u{7}\nnote  a\\u{202e}b\tc\\u{d}\n"
+        );
+        assert_eq!(super::safe_output("plain\n".into()), "plain\n");
     }
 }

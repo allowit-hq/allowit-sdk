@@ -765,8 +765,9 @@ fn replacement_agent_key_recovers_original_receipt_and_exact_journal_without_sig
 fn status_uses_the_journaled_rail_and_refuses_another() {
     let (c, r, s, now) = fixture();
     let mock = Mock::new();
-    let sandbox = setup(&c, 2, &mock);
+    let mut sandbox = setup(&c, 2, &mock);
     let listener = mock.listener;
+    let config = c.clone();
     let server = std::thread::spawn(move || {
         let (mut conn, _) = listener.accept().unwrap();
         read(&mut conn);
@@ -774,16 +775,39 @@ fn status_uses_the_journaled_rail_and_refuses_another() {
         let (mut conn, _) = listener.accept().unwrap();
         let (head, _) = read(&mut conn);
         assert!(head.starts_with("POST /api/native/execute/status "));
-        let prepared = sdk::prepare(&c, &r, &s, now, expires(now)).unwrap();
+        let prepared = sdk::prepare(&config, &r, &s, now, expires(now)).unwrap();
         ok(&mut conn, response(&prepared, None, "prepared"));
     });
     assert_eq!(code(&exec(&sandbox)), Some(4));
-    // Another current rail does not change where status looks.
+    // Another current rail does not change where status looks: neither
+    // `rail use` nor ALLOWIT_RAIL conflicts with the journal.
     sandbox.ok(&["rail", "use", "solana:devnet"]);
+    sandbox.set("ALLOWIT_RAIL", "solana:devnet");
     let shown = status(&sandbox);
     assert_eq!(code(&shown), Some(12), "{}", stderr(&shown));
     let refused = sandbox.run(&["--rail", "solana:devnet", "status", ID]);
     assert_eq!(code(&refused), Some(2));
     assert!(stderr(&refused).contains("belongs to stellar:testnet"));
     server.join().unwrap();
+    // The journal binds the request ID to the resolved wallet and policy:
+    // after the installed profile changes, the same ID neither sends a new
+    // request nor reads another policy's state.
+    let mut moved = profile(&c);
+    moved["policyId"] = json!("another-policy");
+    std::fs::write(sandbox.work().join("profile.json"), moved.to_string()).unwrap();
+    sandbox.set("ALLOWIT_RAIL", "stellar:testnet");
+    let retry = exec(&sandbox);
+    assert_eq!(code(&retry), Some(2), "{}", stderr(&retry));
+    assert!(
+        stderr(&retry).contains("already names a different request"),
+        "{}",
+        stderr(&retry)
+    );
+    let shown = status(&sandbox);
+    assert_eq!(code(&shown), Some(3), "{}", stderr(&shown));
+    assert!(
+        stderr(&shown).contains("was sent under policy"),
+        "{}",
+        stderr(&shown)
+    );
 }

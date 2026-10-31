@@ -164,7 +164,12 @@ fn global_flags_in_any_position_leave_compiler_output_unchanged() {
             serde_json::from_str::<serde_json::Value>(&stdout).is_err(),
             "{args:?}: {stdout}"
         );
+        // A summary, not the flattened IR or source.
+        assert!(!stdout.contains("policy.ir."), "{args:?}: {stdout}");
+        assert!(stdout.lines().count() < 120, "{args:?}: {stdout}");
     }
+    let functions = String::from_utf8(allowit(&["policy", "functions"], &[]).stdout).unwrap();
+    assert!(functions.starts_with("NAME "), "{functions}");
     // A missing file is a usage error with nothing on stdout.
     let output = allowit(&["policy", "check", "--json"], &[]);
     assert_eq!(output.status.code(), Some(2));

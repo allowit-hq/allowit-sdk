@@ -84,7 +84,7 @@ impl Out {
     /// A structured result as text: one `key  value` line per scalar, with
     /// dotted paths for nested fields (`config.rail`, `steps.0.name`). Lists
     /// of scalars join with commas; a multi-line string follows its key,
-    /// indented.
+    /// indented. Null and empty values print as `-`.
     pub(crate) fn text(&mut self, value: &Value) {
         let mut rows = vec![];
         flatten(String::new(), value, &mut rows);
@@ -93,8 +93,7 @@ impl Out {
             .filter(|(_, v)| !v.contains('\n'))
             .map(|(k, _)| k.chars().count())
             .max()
-            .unwrap_or(0)
-            .min(32);
+            .unwrap_or(0);
         for (key, text) in rows {
             if key.is_empty() {
                 self.line(text);
@@ -197,6 +196,7 @@ impl Out {
 
 fn scalar(value: &Value) -> String {
     match value {
+        Value::String(s) if s.is_empty() => "-".into(),
         Value::String(s) => s.clone(),
         Value::Null => "-".into(),
         other => other.to_string(),
@@ -291,6 +291,7 @@ mod tests {
             "keys": ["a", "b"],
             "steps": [{"name": "fund"}],
             "none": null,
+            "empty": "",
             "source": "fn a() {}\nfn b() {}",
         }));
         let text = out.stdout.clone();
@@ -303,11 +304,24 @@ mod tests {
             ("keys", "a, b"),
             ("steps.0.name", "fund"),
             ("none", "-"),
+            ("empty", "-"),
         ] {
             let line = format!("{key:12}  {value}\n");
             assert!(text.contains(&line), "{line:?} in\n{text}");
         }
         assert!(text.contains("source\n  fn a() {}\n  fn b() {}\n"));
+        let mut out = plain(false);
+        let long = "credentials.ALLOWIT_ACCOUNT_TOKEN";
+        out.value(&json!({"credentials": {"ALLOWIT_ACCOUNT_TOKEN": "set"}, "rail": "x"}));
+        assert!(
+            out.stdout.contains(&format!("{long}  set\n")),
+            "{}",
+            out.stdout
+        );
+        assert!(
+            out.stdout
+                .contains(&format!("{:w$}  x\n", "rail", w = long.len()))
+        );
         let mut out = plain(false);
         out.value(&json!([{"a": 1}, {"a": 2}]));
         assert_eq!(out.stdout, "0.a  1\n1.a  2\n");

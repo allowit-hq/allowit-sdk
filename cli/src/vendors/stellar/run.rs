@@ -32,7 +32,7 @@ pub(crate) struct Bundle {
     pub policy_id: String,
     source_hash: String,
     ir_hash: String,
-    module_digest: String,
+    pub module_digest: String,
     pub wallet: String,
     route: WalletRoute,
     pub config: WalletConfig,

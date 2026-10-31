@@ -9,7 +9,7 @@
 //! ```
 use super::*;
 
-pub(super) fn run(local: &Local, pos: &[String], json: bool, stdout: &mut String) -> Result<i32> {
+pub(super) fn run(local: &Local, pos: &[String], out: &mut Out) -> Result<i32> {
     let bundle: Bundle = read_optional(Path::new(&pos[0]))?
         .ok_or_else(|| Error::config("Cannot read executor bundle"))?;
     native(bundle.policy.validate())?;
@@ -41,13 +41,6 @@ pub(super) fn run(local: &Local, pos: &[String], json: bool, stdout: &mut String
         if let Some(audit)=&bundle.audit {journal.write("audit",audit)?;}
         local.save_policy(&bundle.policy).map_err(to_native)
     }))?;
-    if json {
-        stdout.push_str(&format!(
-            "{}\n",
-            serde_json::json!({"policyId":bundle.policy.id,"owner":c.owner,"imported":true})
-        ));
-    } else {
-        stdout.push_str(&format!("Imported policy {}. Configure only ALLOWIT_EXECUTOR_KEYPAIR on the executor device; never the owner key.\n",bundle.policy.id));
-    }
+    out.value(&serde_json::json!({"policyId":bundle.policy.id,"owner":c.owner.to_string(),"imported":true}));
     Ok(0)
 }

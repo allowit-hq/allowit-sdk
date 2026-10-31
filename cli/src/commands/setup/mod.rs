@@ -110,7 +110,9 @@ pub(crate) fn run(args: Args, cx: &mut Ctx) -> Result<i32> {
             },
         };
         let mut reply = String::new();
-        control::mutate(
+        // A denied, failed, pending or uncertain registration keeps its exit
+        // code; only a completed one counts as registered.
+        let code = control::mutate(
             &inv,
             "/api/gateway/setup",
             "setup",
@@ -118,8 +120,10 @@ pub(crate) fn run(args: Args, cx: &mut Ctx) -> Result<i32> {
             &mut reply,
             &mut cx.out.stderr,
         )?;
-        result["registered"] = json!(true);
+        result["registered"] = json!(code == 0);
         result["registration"] = serde_json::from_str(&reply).unwrap_or(Value::Null);
+        cx.out.value(&result);
+        return Ok(code);
     }
     cx.out.value(&result);
     Ok(0)

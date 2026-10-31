@@ -12,8 +12,7 @@ pub(crate) const EXAMPLES: &str = "\
 Examples:
   allowit wallet create --kind common --asset XLM --policy policy.rs --owner owner --agent agent
   allowit wallet create --kind simple --asset USDC --policy policy.rs --owner GOWNER… --agent agent --x402
-  allowit wallet create --kind common --asset XLM --policy policy.rs --owner owner --agent agent --sign-with-key owner
-  allowit --rail solana:devnet wallet create --asset USDC --policy policy.json --owner owner --agent agent --fund USDC:10";
+  allowit wallet create --kind common --asset XLM --policy policy.rs --owner owner --agent agent --sign-with-key owner";
 
 #[derive(Clone, Copy, Debug, clap::ValueEnum)]
 pub(crate) enum Kind {
@@ -43,8 +42,10 @@ pub(crate) struct Args {
     /// Let the agent pay x402 resources from the wallet
     #[arg(long)]
     pub x402: bool,
-    /// The initial deposit, on rails that fund the wallet at creation (Solana)
-    #[arg(long, value_name = "AMOUNT")]
+    /// The initial deposit, where the rail's vault takes it at creation. An
+    /// adapter limit of the native Solana vault, outside the approved
+    /// command surface, so it is hidden.
+    #[arg(long, value_name = "AMOUNT", hide = true)]
     pub fund: Option<String>,
     #[command(flatten)]
     pub signing: SigningArgs,

@@ -16,7 +16,7 @@ Examples:
   allowit status pay-001 --wallet CWALLET… --json";
 
 /// Read a request's state. The local journal supplies its rail and wallet;
-/// --wallet is the fallback
+/// --rail and --wallet are the fallback
 #[derive(clap::Args, Debug)]
 pub(crate) struct Args {
     /// The request ID that exec printed
@@ -38,7 +38,9 @@ pub(crate) fn run(args: Args, cx: &mut Ctx) -> Result<i32> {
     let rail = match &entry {
         Some(e) => {
             let recorded = routing::info(&e.rail)?;
-            if let Some(flag) = &cx.global.rail
+            // Only an explicit flag conflicts; ALLOWIT_RAIL and `rail use`
+            // yield to the journal.
+            if let Some(flag) = cx.global.rail.as_ref().filter(|_| cx.global.rail_flag)
                 && routing::normalize(flag)? != recorded.id
             {
                 return Err(Error::usage(format!(
@@ -50,27 +52,38 @@ pub(crate) fn run(args: Args, cx: &mut Ctx) -> Result<i32> {
         }
         None => cx.rail()?,
     };
-    // The journal's wallet comes first; a different --wallet is refused, as
-    // a different --rail is.
-    let wallet = match entry.as_ref().and_then(|e| e.wallet.clone()) {
-        Some(recorded) => {
-            if let Some(flag) = &cx.global.wallet
-                && flag != &recorded
+    // The journal's wallet comes first; a different --wallet flag is refused,
+    // as a different --rail flag is.
+    let wallet = match &entry {
+        Some(e) => {
+            if let Some(flag) = cx.global.wallet.as_ref().filter(|_| cx.global.wallet_flag)
+                && Some(flag) != e.wallet.as_ref()
             {
-                return Err(Error::usage(format!(
-                    "request {} belongs to wallet {recorded}",
-                    args.id
-                )));
+                return Err(Error::usage(match &e.wallet {
+                    Some(recorded) => format!("request {} belongs to wallet {recorded}", args.id),
+                    None => format!("request {} names no wallet; drop --wallet", args.id),
+                }));
             }
-            Some(recorded)
+            // The rail resolved this wallet; its status check confirms it
+            // against the installed profile.
+            e.wallet.clone()
         }
+        // A selection is checked as `--wallet` is.
         None => cx.wallet(rail)?,
     };
-    if let Some(w) = &wallet {
-        vendors::address::check_wallet(rail.family, w)?;
-    }
     let vendor = vendors::rail(rail);
     let code = routing::with_network(Some(rail.id.into()), || {
+        // A request reads only under the policy that sent it.
+        if let Some(recorded) = entry.as_ref().and_then(|e| e.policy.as_deref()) {
+            let binding = vendor.exec_binding(cx, wallet.as_deref())?;
+            if binding.policy.as_deref() != Some(recorded) {
+                return Err(Error::config(format!(
+                    "request {} was sent under policy {recorded}; the installed profile names {}",
+                    args.id,
+                    binding.policy.as_deref().unwrap_or("none")
+                )));
+            }
+        }
         vendor.status(cx, &args.id, wallet.as_deref(), args.wait)
     })?;
     if entry.is_some() {

@@ -109,6 +109,15 @@ pub(crate) struct ExecRequest {
     pub wallet: Option<String>,
 }
 
+/// What an agent request runs under: the wallet and the policy that the rail
+/// resolves from the selection and its installed profile. The journal binds a
+/// request ID to it, so a retry cannot run under another wallet or policy.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub(crate) struct Binding {
+    pub wallet: Option<String>,
+    pub policy: Option<String>,
+}
+
 /// How an owner transaction is signed.
 pub(crate) enum SignWith {
     /// Print the owner signing link (the default).
@@ -196,10 +205,15 @@ pub(crate) trait Rail {
     fn na(&self, verb: &str) -> Error {
         not_available(verb, self.info().id)
     }
-    /// Refuses a selected wallet that the agent request path cannot confirm.
-    /// Runs before a request ID is spent.
-    fn exec_wallet(&self, _: Option<&str>) -> Result<()> {
-        Ok(())
+    /// Resolves the wallet and policy that an agent request runs under, from
+    /// the selected wallet (if any) and the rail's installed profile. Refuses
+    /// a selection that the request path cannot confirm. Runs before a
+    /// request ID is spent; `status` also runs it to check the journal.
+    fn exec_binding(&self, _: &mut Ctx, wallet: Option<&str>) -> Result<Binding> {
+        Ok(Binding {
+            wallet: wallet.map(str::to_owned),
+            policy: None,
+        })
     }
     /// Builds a policy source for this rail: the generated Rust source.
     fn policy_build(&self, _: &str) -> Result<String> {

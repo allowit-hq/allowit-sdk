@@ -212,7 +212,44 @@ fn faucet_funding_goes_through_the_rail_vendor() {
     for rail in ["stellar:pubnet", "tempo:testnet"] {
         let output = sandbox.run(&["--rail", rail, "keys", "fund", "agent"]);
         assert_eq!(code(&output), Some(3), "{rail}: {}", stderr(&output));
+        // generate --fund refuses before the key exists, so a retry is clean.
+        let output = sandbox.run(&["--rail", rail, "--json", "keys", "generate", "pk", "--fund"]);
+        assert_eq!(code(&output), Some(3), "{rail}: {}", stderr(&output));
+        assert!(output.stdout.is_empty(), "{rail}");
+        assert_ne!(
+            code(&sandbox.run(&["keys", "show", "pk"])),
+            Some(0),
+            "{rail}"
+        );
     }
+}
+
+#[test]
+fn setup_keeps_the_exit_code_of_a_registration_that_did_not_complete() {
+    let mut sandbox = Sandbox::new("setup-denied");
+    let mock = Mock::new();
+    sandbox.ok(&["rail", "use", "stellar:testnet"]);
+    sandbox.ok(&["keys", "generate", "agent"]);
+    sandbox
+        .set("ALLOWIT_ACCOUNT_TOKEN", "account-capability-0123456789")
+        .set("ALLOWIT_URL", &mock.url);
+    let listener = mock.listener;
+    let server = std::thread::spawn(move || {
+        let (mut conn, _) = listener.accept().unwrap();
+        let (head, request) = common::read_request(&mut conn);
+        assert!(head.starts_with("POST /api/gateway/setup "), "{head}");
+        common::reply(
+            &mut conn,
+            200,
+            &json!({"operationId": request["operationId"], "state": "denied"}),
+        );
+    });
+    let output = sandbox.run(&["--json", "setup", "--agent", "agent"]);
+    server.join().unwrap();
+    assert_eq!(code(&output), Some(20), "{}", stderr(&output));
+    let value: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(value["registered"], false);
+    assert_eq!(value["registration"]["state"], "denied");
 }
 
 #[test]
@@ -492,15 +529,20 @@ fn public_stellar_profile_shows_without_agent_key_or_engine() {
         fixture["policy"]["code"].as_str().unwrap().trim_end()
     );
     assert!(!source.contains('\x1b'));
-    let selected = sandbox.json(&[
+    // A wallet selection is a C… contract. The classic route's G account
+    // needs no selection and cannot be selected.
+    let classic = profile["wallet"].as_str().unwrap();
+    assert!(classic.starts_with('G'));
+    let output = sandbox.run(&[
         "--rail",
         "stellar:testnet",
         "--wallet",
-        profile["wallet"].as_str().unwrap(),
+        classic,
         "wallet",
         "show",
     ]);
-    assert_eq!(selected["wallet"], profile["wallet"]);
+    assert_eq!(code(&output), Some(2), "{}", stderr(&output));
+    assert!(stderr(&output).contains("C… contract strkey"));
 }
 
 #[test]
@@ -512,7 +554,8 @@ fn rail_conflict_and_secret_material_in_a_public_profile_fail_before_transport()
     assert_eq!(code(&output), Some(3));
     assert!(stderr(&output).contains("belongs to stellar:testnet"));
     assert!(output.stdout.is_empty());
-    let other = allowit_stellar_wallet::account_for_seed(&[8; 32]);
+    let native = allowit_stellar_wallet::asset_from_identity("XLM", None).unwrap();
+    let other = allowit_stellar_wallet::sac_address("stellar:testnet", &native).unwrap();
     let output = sandbox.run(&[
         "--rail",
         "stellar:testnet",
@@ -521,7 +564,7 @@ fn rail_conflict_and_secret_material_in_a_public_profile_fail_before_transport()
         "wallet",
         "show",
     ]);
-    assert_eq!(code(&output), Some(3));
+    assert_eq!(code(&output), Some(3), "{}", stderr(&output));
     assert!(stderr(&output).contains("the wallet profile is for"));
     profile["signingSeed"] = json!("must-remain-local");
     std::fs::write(
@@ -785,4 +828,24 @@ fn tempo_bundle_serves_only_its_rail_and_vault() {
     let output = sandbox.run(&["tempo", "status", "not-a-request"]);
     assert_ne!(code(&output), Some(0));
     assert!(!stderr(&output).contains("Unknown Tempo command"));
+    // Help on a subverb prints the group usage.
+    for args in [["tempo", "call", "--help"], ["tempo", "pay", "-h"]] {
+        let output = sandbox.run(&args);
+        assert_eq!(code(&output), Some(0), "{args:?}: {}", stderr(&output));
+        assert!(!output.stdout.is_empty(), "{args:?}");
+    }
+    // `rail use` never selects the rail of the hidden group; only --rail does.
+    sandbox.ok(&["rail", "use", "stellar:testnet"]);
+    let output = sandbox.run(&["tempo", "status", "not-a-request"]);
+    assert!(
+        !stderr(&output).contains("selected rail differs"),
+        "{}",
+        stderr(&output)
+    );
+    let output = sandbox.run(&["--rail", "stellar:testnet", "tempo", "status", "x"]);
+    assert!(
+        stderr(&output).contains("selected rail differs"),
+        "{}",
+        stderr(&output)
+    );
 }

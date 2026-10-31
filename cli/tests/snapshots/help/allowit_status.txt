@@ -1,4 +1,5 @@
-Read a request's state. The local journal supplies its rail and wallet; --wallet is the fallback
+Read a request's state. The local journal supplies its rail and wallet; --rail and --wallet are the
+fallback
 
 Usage: allowit status [OPTIONS] <ID>
 

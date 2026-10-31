@@ -3,8 +3,7 @@ Print the owner approval link for an installed classic Stellar policy
 Usage: allowit wallet approve [OPTIONS] [FLAGS]...
 
 Examples:
-  allowit --rail stellar:testnet wallet approve --policy-file policy.json --owner GOWNER…
-  --request-id approve-0001
+  allowit --rail stellar:testnet wallet approve --policy-file policy.json --owner GOWNER… --request-id approve-0001
 
 Arguments:
   [FLAGS]...  --policy-file FILE --owner G… --request-id ID
