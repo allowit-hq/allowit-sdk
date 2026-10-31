@@ -5,12 +5,12 @@ description: Compile, inspect and evaluate Allowit Rust policies with structured
 
 # Allowit policies
 
-This is the Rust SDK developer skill. Use this repository's `cargo run --locked --bin allowit --` commands. The same `allowit` binary also has the agent action commands `show/eval/exec/status`; generated consumer skills target those commands. Compile the exact policy source before evaluating it. A valid compilation does not approve a transaction.
+This is the Rust SDK developer skill. Use this repository's `cargo run --locked --bin allowit --` commands. The same `allowit` binary also has the agent commands `eval`, `exec` and `status`; `allowit guide` prints their order of use. Compile the exact policy source before evaluating it. A valid compilation does not approve a transaction.
 
 1. Read the original owner instructions and the immutable policy source. Preserve the original instructions across revisions and forks; never replace them with your own summary.
 2. Put the complete available request context in a JSON file. Supply `amount_units`, `allocation_units`, `spent_units`, `action`, `merchant`, `recipient`, `token`, `network`, `now`, `original_intent` and `runtime_context`. Amounts use exact integer micro-USDC. Runtime context is an object, at most 16 KiB/depth8/128 entries. Original intent is at most 16 KiB. Include source/provenance information for claims.
-3. Run `cargo run --locked --bin allowit -- compile POLICY.rs` and inspect its exact source, limits and workflow. Use `cargo run --locked --bin allowit -- registry` for supported functions and their help.
-4. Run `cargo run --locked --bin allowit -- evaluate POLICY.rs CONTEXT.json oracle` or submit the equivalent JSON request to the authenticated engine. Inspect `decision.outcome` and `decision.code`; CLI process success alone is not approval.
+3. Run `cargo run --locked --bin allowit -- policy check POLICY.rs` and inspect its exact source, limits and workflow. Use `cargo run --locked --bin allowit -- policy functions` for supported functions and their help.
+4. Run `cargo run --locked --bin allowit -- policy test POLICY.rs --context CONTEXT.json` or submit the equivalent JSON request to the authenticated engine. Inspect `decision.outcome` and `decision.code`; CLI process success alone is not approval.
 5. A `pass` permits only the exact bound request within the host's authenticated mandate. It is not evidence that funds moved. The executing rail must enforce that mandate again and return an actual transaction result.
 
 ## Runtime JSON
@@ -131,17 +131,6 @@ Consumers need a build containing this helper; older evaluators fail closed on t
 Generate a single `execute` entrypoint and call standard system functions for standard enforcement. Do not duplicate standard checks in generated helper functions. The native Solana profile exposes its compiled `policy_api.rs` separately from the policy source; its daily ceiling and UTC rollover are system enforcement, not custom generated logic.
 
 
-## PaySH agent execution
+## Agent requests
 
-Use the owner-issued policy ID, backend URL and scoped capability from the generated consumer skill. Discover enabled services with `allowit paysh services`. The backend catalog describes available services and prices; it does not provide popularity or reputation unless the provider includes those fields.
-
-```sh
-allowit paysh call POLICY_ID OPERATION_ID SERVICE_ID INPUT_JSON
-allowit paysh status POLICY_ID OPERATION_ID
-```
-
-Set `ALLOWIT_URL` and `ALLOWIT_PAYSH_TOKEN` from the owner handoff in a private environment. Keep the capability out of logs and tracked files. Do not load the owner's wallet key or the backend evaluator or sponsor keys. The backend authenticates the provider challenge, reads native balances and bounded direct-pool quotes, evaluates the original task with Jev, and prepares scoped signed `execute(request)` transactions. A unique operation ID identifies the request; it does not authorize it.
-
-The policy wallet pays the approved service fee first within each successful execution. A separate backend sponsor pays network fees and account rent. A swap may require one execution before the payment execution. Direct-pool swaps still pay the pool's liquidity fee. Testnet uses a custom test token, not mainnet USDC.
-
-Keep the same operation ID after an uncertain response and read `status`; do not create a replacement purchase or assume payment means delivery. Exit 0 means the API response was delivered. Exit 12 means pending, 5 means unknown, and 20 means failed. Missing semantic evidence, provider compatibility or native enforcement fails closed.
+Run `allowit guide` for the agent commands in order: select the rail, set up the agent key, check with `eval`, spend with `exec`, and read the result with `status`. Keep the same `--request-id` after an uncertain result (exit 5) and read `status`; never create a replacement request. Exit 12 means pending and 20 means denied by the policy. `allowit rail show` lists what works on the selected rail. The paid-service commands (`skills`, `call SERVICE`, `curl`, `http`, `mcp`) exit 3 until the engine serves their routes.

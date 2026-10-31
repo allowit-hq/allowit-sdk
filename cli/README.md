@@ -1,106 +1,180 @@
 # Allowit CLI
 
-*The `allowit` command: local agent keys, wallet setup, owner approvals, signed requests and the policy compiler tools.*
+*The `allowit` command: rails, local keys, policy wallets, agent requests and the policy compiler tools.*
 
-This crate (`allowit-cli`, library `allowit_cli`) builds the `allowit` binary. It orchestrates a request from the agent's side: it picks the rail, prepares and signs the operation with a key that never leaves the machine, validates receipts and recovers uncertain submissions. Backend requests and wallets come from [`allowit-sdk-engine`](../engine/), which has no terminal I/O. Errors, configuration and private storage are the `client` module of [`allowit-sdk`](../core/), which also holds the compiler and evaluator. Rail crates live in their rail repositories and depend on the same core.
+This crate (`allowit-cli`, library `allowit_cli`) builds the `allowit` binary. It acts for the agent and the owner. It selects the rail, signs with keys that stay on the machine, validates receipts and recovers uncertain submissions. Backend requests come from [`allowit-sdk-engine`](../engine/), which has no terminal I/O. Errors, configuration and private storage are the `client` module of [`allowit-sdk`](../core/), which also holds the compiler and evaluator. Rail crates live in their rail repositories and depend on the same core.
 
 ```sh
-cargo run --locked --bin allowit -- help
+cargo run --locked --bin allowit -- --help
 cargo build --locked --release --bin allowit
 ```
 
 Release builds use the workspace release profile (`lto`, `opt-level = "s"`, `panic = "abort"`, `strip`).
 
-`--network` accepts x402 CAIP-2 identifiers. Explicit networks must match the selected wallet and policy deployment.
-Solana addresses alone do not distinguish its clusters. EVM addresses alone do not identify a chain.
+## Commands
 
-Source layout:
+```
+allowit setup --agent NAME [--force]
+allowit whoami
 
-- `src/main.rs` is the binary. `src/lib.rs` runs a command with process-local environment and standard streams.
-- `src/commands/<command>/` holds one top-level CLI command. Each subcommand has its own file. The
-  policy compiler commands (`compile`, `check`, `workflow`, `evaluate`, `stellar-native`, `registry`,
-  `json`, `lsp`) share the helpers in `src/commands/compiler/` and run the SDK locally. They skip
-  network selection, read no environment and print the SDK output without redaction or display
-  escaping. A global flag before one of these command names is a usage error (exit 2).
-- `src/vendors/<name>/` holds each vendor connection: `paysh`, `solana`, `stellar` and `tempo`.
-  Command code reaches a rail only through these modules.
-- `src/gateway/` holds the input, operation and help helpers that the backend commands share. The
-  backend transport is the engine gateway. `src/action/` holds the pipeline that `show`, `eval`, `exec`
-  and `status` share.
-- [`templates/policy/`](templates/policy/) is the copy-paste policy crate, and
-  [`skills/allowit/`](skills/allowit/SKILL.md) is the agent skill.
+allowit keys generate NAME [--fund]          ed25519 on Stellar and Solana, secp256k1 on Tempo
+allowit keys add NAME --public-key ADDR
+allowit keys import NAME FILE|-              a private key, or a Solana or Tempo executor bundle
+allowit keys ls | show NAME | fund NAME | export NAME | rm NAME
 
-Global flags can come before the command name, for example `allowit --json show POLICY` or
-`allowit --json policy status`.
+allowit rail ls | show [RAIL] | use RAIL
+allowit config show [--reveal] | path
 
-Generate an agent key locally:
+allowit wallet create --kind simple|common|custom --asset ASSET --policy FILE --owner KEY|ADDR --agent KEY [--x402]
+allowit wallet ls | show | use ADDR
+allowit wallet fund AMOUNT [--from KEY]
+allowit wallet withdraw AMOUNT [--to ADDR]
+allowit wallet update [--owner KEY|ADDR] [--agent KEY] [--x402 on|off]
+allowit wallet pause | resume | close
 
-```sh
-allowit wallet generate --network solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1 --output /private/path/agent.json
-allowit wallet show --network solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1 /private/path/agent.json
+allowit policy new "PROMPT" [-o FILE]
+allowit policy show [--source]
+allowit policy check FILE
+allowit policy build FILE [-o OUT]
+allowit policy test FILE --context CTX.json [--mode oracle|contract]
+allowit policy deploy FILE [--x402 on|off]
+allowit policy params [show]
+allowit policy params set KEY=VALUE...
+allowit policy functions [NAME]
+
+allowit exec --op OP --to ADDR --amount AMOUNT [--token-out ASSET:MIN] [--args JSON]
+             [--request-id ID] [--wait DUR] [--build-only]
+allowit eval  (the exec flags; never signs)
+allowit status ID [--wait DUR]
+allowit history [--limit N]
+allowit tx send FILE|-
+
+allowit skills search QUERY | show ID | ls
+allowit call SERVICE|URL [--input JSON] [--max-amount AMOUNT]
+allowit curl ARGS... | http ARGS...
+allowit mcp | claude [-- ARGS] | codex [-- ARGS]
+
+allowit lsp | completion --shell SHELL | guide | version | help [CMD]
 ```
 
-The parent directory must be private (0700). Existing files are never replaced. The private file is 0600.
-Solana files use the native JSON keypair format. Tempo uses 32-byte hex. Stellar uses a StrKey secret seed.
-Generation and inspection return only the network, address, public key and key type.
-The server receives public registration metadata and operation signatures. It never receives these private files.
-Private keys stay with the CLI user. Server validation and the server's independent authority remain separate.
+Every node has `--help` with examples first. A bare group prints its help and changes nothing. An unknown command exits 2 and lists the commands at that level. `allowit guide` prints the agent guide.
 
-`policy deploy AMOUNT` prints a browser signing URL and exits 10. Set `ALLOWIT_OWNER`,
-`ALLOWIT_REQUEST_ID` and the public deployment, mint, executor and authority settings.
-The fragment binds the exact policy, public wallet roles, network and amount. Keep the request ID for recovery.
-The browser checks its pinned Devnet deployment and requires the matching owner wallet to review and sign.
+Owner verbs (`wallet create`, `fund`, `withdraw`, `update`, `pause`, `resume`, `close`, `policy deploy` and `policy params set`) share three signing flags: `--sign-with-link` (the default) prints the owner signing link on stderr, `--sign-with-key NAME` signs with a local key, and `--build-only` prints the unsigned transaction for `tx send`. `--wait DUR` waits for the owner.
 
-Native Stellar Testnet uses two owner continuations:
+Earlier command names stay as hidden aliases: `compile`, `check` and `workflow` (`policy check`), `evaluate` (`policy test`), `stellar-native` (`policy build` on Stellar), `registry` (`policy functions`), the `tempo` group, the Solana `policy generate|import|fund|execute|status|revoke|withdraw|close|tune|tune-action` verbs, and the Stellar `wallet configure` and `wallet approve` links. `wget` and `fetch` are aliases of `curl` and `http`. `json` is the hidden editor wire protocol.
+
+## Rails
+
+A rail has one canonical CAIP-2 identifier. Input also accepts the aliases below. Output always prints the identifier.
+
+| Identifier | Aliases |
+| --- | --- |
+| `stellar:testnet` | `stellar:testnet` |
+| `stellar:pubnet` | `stellar:mainnet`, `stellar:pubnet` |
+| `solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1` | `solana:devnet` |
+| `solana:4uhcVJyU9pJkvQyS88uRDiswHXSCkY3z` | `solana:testnet` |
+| `solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp` | `solana:mainnet` |
+| `eip155:42431` | `tempo:testnet` |
+| `eip155:4217` | `tempo:mainnet` |
+
+There is no default rail. A command that needs one exits 3 with the hint `allowit rail use RAIL`. Each rail keeps its own default wallet, agent key and RPC override, so a Stellar C… wallet never becomes active on Solana. Addresses must match the rail: G… accounts and C… contracts on Stellar, base58 on Solana, 0x… on Tempo.
+
+`allowit rail show RAIL` lists the key curve, the token table, the `exec --op` values, the `policy params set` keys, the signing modes and the verbs that work on that rail. A verb that has no backend on a rail exits 3 with `VERB is not available on RAIL yet`.
+
+| Verb | Stellar testnet | Solana devnet and testnet | Tempo testnet |
+| --- | --- | --- | --- |
+| `keys fund` | Friendbot | RPC airdrop | not available |
+| `keys import` of a bundle | not available | executor bundle | executor bundle |
+| `wallet create` | not available | link signing, `--fund` | not available |
+| `wallet show`, `policy show` | public wallet profile | native vault, engine harness | executor bundle |
+| `wallet fund`, `withdraw`, `pause`, `close` | not available | `--sign-with-key` | not available |
+| `wallet update`, `resume`, `tx send` | not available | not available | not available |
+| `policy new` | not available | native generation | not available |
+| `policy params set` | not available | `day_total_cap`, `transaction_cap` | not available |
+| `policy deploy` | not available | not available | not available |
+| `exec --op transfer` | engine endpoints, `--build-only` | engine harness | vault payment, `--build-only` |
+| `eval` | not available | engine harness | not available |
+| `status` | engine endpoints | engine harness | executor bundle |
+| `call URL` | not available | not available | MPP |
+| `call SERVICE`, `skills`, `curl`, `http`, `mcp`, `claude`, `codex` | not available | not available | not available |
+
+Mainnet rails serve `exec`, `status`, `wallet show` and `policy show` on Stellar, and `exec`, `eval`, `status` and `policy show` on Solana. Tempo mainnet serves no verb yet. `swap`, `deposit`, `redeem` and `custom` operations need new contract entrypoints on every rail; they exit 3. The paid-service commands keep their request builders in `src/gateway/`, but the engine serves no paid-service route, so they exit 3 on every rail.
+
+## Amounts
+
+| Form | Meaning |
+| --- | --- |
+| `CODE:DECIMAL` | Display units of a token from the rail's table, for example `USDC:10`. `XLM` and `native` name the same asset. |
+| `CODE:ISSUER:DECIMAL` | ISSUER is a Stellar G… issuer, a Solana mint or a Tempo 0x… token. |
+| `C…:DECIMAL` | A Stellar Asset Contract. |
+| `INTEGER` | Base units of the wallet's installed asset. |
+| `CODE:max` | The whole balance, for `wallet withdraw` only. |
+
+`--token-out` takes `ASSET:MIN`, where MIN may be zero. Each rail supplies its decimals: 7 on Stellar, 9 for SOL and 6 for USDC on Solana, 6 on Tempo. An amount with more decimal places than its token exits 2.
+
+Policy parameter keys are the canonical keys of the contracts params map: `transaction_cap`, `spent_cap`, `day_spent_cap` and `day_total_cap` take amounts, `call_cap` a count, `recipients` addresses, `tokens` assets, `expiry` an RFC 3339 time or a duration such as `30d`, and `operations` operation names. A list value replaces the earlier list.
+
+## Flags, configuration and output
+
+Global flags work in any position: `--rail RAIL` (aliases `-n`, `--network`; env `ALLOWIT_RAIL`), `--wallet ADDR` (env `ALLOWIT_WALLET`), `--output text|json` (alias `--json`), `-y/--yes`, `-q`, `-v`, `--no-color`, `--config-dir DIR` (env `ALLOWIT_CONFIG_DIR`) and `--rpc-url URL`. A flag wins over the environment, and the environment wins over the configuration that `rail use` and `wallet use` write. Local commands such as `policy check`, `policy test`, `policy functions`, `lsp`, `completion`, `guide` and `version` read no rail, wallet or credential.
+
+The configuration directory is `$XDG_CONFIG_HOME/allowit` (default `~/.config/allowit`):
+
+- `config.toml` holds the current rail and, per rail, the default wallet, known wallets, the agent key, an RPC override (`rpc_url`) and the paid-service asset that `setup` chose (USDC; AlphaUSD on Tempo).
+- `keys/NAME.toml` holds public key metadata: rail, address, public key and curve.
+- `secrets/NAME` holds a private key in the rail's signer format: a Stellar S… seed, a Solana key-pair JSON array or a Tempo 32-byte hex key. The file is mode 0600 in a 0700 directory. No flag accepts a secret; `keys export` prints one.
+- `requests/` is the request journal. `exec` and `eval` record each request before it leaves the process, so `status ID` finds its rail and wallet and `history` lists it. A request ID never names two different requests.
+- `stellar-journal/` holds the Stellar operation journal for recovery.
+
+Data goes to stdout. Progress, links, hints, prompts and new request IDs go to stderr. Text is the default, also when stdout is a pipe; `--json` selects JSON. Policy source and JSON documents are syntax-highlighted only when stdout is a terminal, and never with `--json`, `NO_COLOR`, `TERM=dumb`, `--no-color` or a pipe. `NO_DNA` selects compact JSON and no prompts. In JSON mode an error is one object on stderr: `{"error":{"code","exit","message","request_id"}}`. A destructive verb asks for confirmation on a terminal and needs `--yes` otherwise.
+
+| Exit | Meaning |
+| --- | --- |
+| 0 | ok |
+| 1 | internal error |
+| 2 | usage error or invalid input |
+| 3 | configuration, authentication or not available on this rail |
+| 4 | rejected by the contract (paused, wrong asset) |
+| 5 | uncertain or stale: retry with the same request ID |
+| 6 | replayed |
+| 10 | owner signature needed |
+| 11 | waiting for owner input |
+| 12 | pending |
+| 20 | denied by the policy |
+| 130 | interrupted |
+
+## Stellar agent requests
+
+The owner exports the public wallet profile from the browser. Set `ALLOWIT_STELLAR_BUNDLE` to that file until the CLI resolves the wallet from chain state. The profile names the wallet, its owner, agent and server roles, the installed asset and the engine endpoints. It never holds signing material; a profile with a signing seed fails before transport.
 
 ```sh
-allowit wallet configure --network stellar:testnet --owner G_OWNER --agent G_AGENT --engine G_ENGINE --request-id stellar-setup-001
-allowit wallet approve --network stellar:testnet --policy-file public-policy.json --owner G_OWNER --request-id stellar-approval-001
+allowit rail use stellar:testnet
+allowit keys import agent agent.key
+allowit setup --agent agent
+allowit exec --op transfer --to GDEST… --amount XLM:5 --request-id pay-0001
+allowit status pay-0001 --wait 60s
 ```
 
-`configure` prepares three native signer-setting operations for a fresh funded master-key account.
-The account needs enough native balance for two additional signer reserves and the transaction fee.
-The owner keeps administration authority. The agent and configured engine jointly authorize low- and
-medium-threshold operations. The browser checks the configured engine identity and current account
-before Freighter signs. It saves the exact signed XDR before submission. Recovery checks its original
-hash and can resend only those saved bytes.
-Repeating a setup request after its signing deadline returns the original link as recovery-only.
-It never prepares replacement bytes under that request ID. Use a new request ID for an unsigned setup.
+`exec` builds the typed request from its flags: a native transfer for an XLM wallet, or a SEP-41 `transfer` of the installed asset. The wallet library decodes the request before it leaves the process. The agent key from `setup --agent` signs each engine request and the prepared operation. A transfer of another asset exits 4. `--build-only` prints the typed request and sends nothing.
 
-`approve` requires a policy already stored under the owner and a service-configured native installation.
-The private owner-workspace preparation workflow supplies the policy JSON. Save the matching policy
-object from `micro/policies` or `micro/generate`, not the response envelope, bare Rust source or executor bundle.
-It binds the complete source, revision and public wallet binding. The browser compares those terms to
-the stored policy before the existing owner message-signing flow. This approval moves no funds.
-Native multisig checks signature thresholds; the engine enforces the approved policy off chain.
-Public installation registration remains service configuration. Neither command sends an agent secret.
-Generate the agent signer locally with `wallet generate`; use only its public address in setup.
-After approval, export the public agent bundle in the browser. Set `ALLOWIT_STELLAR_BUNDLE` to that
-file and `ALLOWIT_STELLAR_SIGNER` to the matching local signer file. `exec` and `status` read the key
-locally. They send signed request proofs and public metadata. Do not set the legacy `ALLOWIT_TOKEN`
-with these two variables.
-The validated public bundle selects the Stellar network automatically. An explicit conflicting
-`--network` fails before transport. `show POLICY` reads public wallet metadata without a signer or
-server connection. `--source` includes the exact public source. Stellar `exec` requires a typed
-`--request-file`. `status POLICY REQUEST_ID` recovers the original execution. Unsupported policy
-lifecycle commands fail without using another rail.
-Public `show` requires the public bundle. A legacy secret-bearing token is used only by `exec` and `status`.
+The CLI journals each operation before it sends it. After exit 5, run the same `exec` again or read the result with `status`; the CLI never prepares replacement bytes for a request ID. A terminal status requires a verified chain receipt. A rotated agent key can recover an original receipt without signing again. Policy wallet signing revalidates the prepared operation through Stellar RPC before the agent signs: pass `--rpc-url URL` or set `rpc_url` for the rail in `config.toml`. The RPC receives only public observations and unsigned simulation bytes. Classic execution and signed status recovery need no RPC.
 
-For an existing Stellar policy, `policy deploy --network stellar:testnet` forwards to the approval
-continuation. Set `ALLOWIT_STELLAR_POLICY_FILE`, `ALLOWIT_OWNER` and `ALLOWIT_REQUEST_ID`. Omit the
-Solana funding amount. Both Stellar continuations print a public browser URL and exit 10.
-A printed URL is a pending signing intent, not a finalized transaction.
-Owner setup and approval journals belong to the current working directory. Keep that directory for recovery.
+The hidden `wallet configure` and `wallet approve` commands keep the Stellar testnet owner links of earlier releases. `configure` prepares the signer-setting operations for a fresh funded classic account. `approve` binds the complete source, revision and public wallet binding of an installed classic policy and moves no funds. Both print a browser URL and exit 10. Their journals belong to the current working directory.
 
-The backend's public executor configuration must match the CLI-generated agent public key before deployment.
-A mismatched server executor, authority, token or deployment fails before signing. The CLI does not install another key silently.
-The owner's approval binds a vault to that agent and the server's separate authority. Existing transaction verification
-checks the requested effects before the local agent adds its signature.
-Tests check secret exclusion from network registration values and local custody. They are not a formal security proof.
+## Solana vaults
 
-An expired unsigned browser setup needs a new `ALLOWIT_REQUEST_ID` and explicit
-`ALLOWIT_RETRY_PREPARATION_OF` naming the original preparation. The browser checks authoritative expiry
-and replacement permission. A signed uncertain transaction is never replaced through this option.
+The Solana adapter runs the native vault lifecycle of `allowit-native` on devnet and testnet. `policy new` generates and saves a policy under `.allowit/` in the working directory and prints its Rust source. `keys import` stores an owner-issued executor bundle as public context. `wallet create` prints one browser link that binds the exact policy, public roles, network and initial deposit, and exits 10; a retry of the same creation is the same intent. The owner verbs sign with `--sign-with-key`. `exec`, `eval` and `status` use the engine harness through `ALLOWIT_TOKEN`.
+
+## Source layout
+
+- `src/main.rs` is the binary. `src/lib.rs` parses the command line, runs one command and writes its output once.
+- `src/commands/<group>/` holds one command group and one file per verb. Each verb file holds its clap arguments, its examples and its `run`. A command reaches a chain only through `vendors::rail`.
+- `src/vendors/mod.rs` defines the `Rail` trait. `src/vendors/<rail>/` holds the Stellar, Solana and Tempo adapters. Every verb has a default that exits 3; an adapter overrides only the verbs whose backend works and lists them in its capabilities. `src/vendors/asset.rs` parses amounts and `src/vendors/address.rs` checks address formats.
+- `src/ctx.rs` resolves flags, environment and configuration. `src/settings/` holds `config.toml`, the key store and the request journal. `src/term.rs` holds output and highlighting. `src/exit.rs` holds the exit codes.
+- `src/gateway/` holds the paid-service request builders that `call`, `curl`, `http`, `skills` and `mcp` share. `Rail::gateway` gates them.
+- [`templates/policy/`](templates/policy/) is the copy-paste policy crate, and [`skills/allowit/`](skills/allowit/SKILL.md) is the agent skill.
+
+Help snapshots for every command live in `tests/snapshots/help/`. After an intended help change, run `ALLOWIT_UPDATE_SNAPSHOTS=1 cargo test -p allowit-cli --test help`.
 
 ## Owner operations
 
@@ -186,7 +260,7 @@ same logical operation ID. Existing signed bytes retain verification, status loo
 new signing approval. Preflight is an observation; execution applies the current native policy and
 engine behavior. Common and Custom use native spent values. Simple requires durable service accounting and exact source evaluation before the server signs.
 
-For new policy wallet signing, the command-line client reads the local `ALLOWIT_STELLAR_RPC_URL` setting.
+For new policy wallet signing, the command-line client reads `--rpc-url` or the rail's `rpc_url` setting.
 It uses the Stellar vendor's `rpc::revalidate_prepared` against that RPC before signing the existing
 gateway intent. The URL comes from local configuration, not the gateway bundle. The RPC receives
 only public native observations and unsigned simulation bytes; it receives no token, seed or gateway
