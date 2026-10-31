@@ -1,0 +1,44 @@
+Create a policy wallet with a policy, an owner and an agent
+
+Usage: allowit wallet create [OPTIONS] --policy <FILE> --owner <KEY|ADDR> --agent <KEY>
+
+Examples:
+  allowit wallet create --kind common --asset XLM --policy policy.rs --owner owner --agent agent
+  allowit wallet create --kind simple --asset USDC --policy policy.rs --owner GOWNER… --agent agent
+  --x402
+  allowit wallet create --kind common --asset XLM --policy policy.rs --owner owner --agent agent
+  --sign-with-key owner
+  allowit --rail solana:devnet wallet create --asset USDC --policy policy.json --owner owner --agent
+  agent --fund USDC:10
+
+Options:
+      --kind <KIND>       Wallet kind (Stellar): simple, common or custom [possible values: simple,
+                          common, custom]
+      --asset <ASSET>     The wallet asset [default: the asset that setup chose, USDC]
+      --policy <FILE>     The policy source file
+      --owner <KEY|ADDR>  The owner: a key name or an address
+      --agent <KEY>       The agent key
+      --x402              Let the agent pay x402 resources from the wallet
+      --fund <AMOUNT>     The initial deposit, on rails that fund the wallet at creation (Solana)
+  -h, --help              Print help
+
+Signing:
+      --sign-with-link       Print the owner signing link on stderr (the default)
+      --sign-with-key <KEY>  Sign with a local key (testnet and development)
+      --build-only           Write the unsigned transaction to stdout for `allowit tx send`
+      --wait <DUR>           Wait up to DUR for the owner to sign
+
+Global options:
+  -n, --rail <RAIL>       Rail as CAIP-2 or alias: stellar:testnet, solana:devnet, tempo:testnet
+                          [env: ALLOWIT_RAIL] [alias: --network]
+      --wallet <ADDR>     Policy wallet address: C… on Stellar, a vault on Solana, 0x… on Tempo
+                          [env: ALLOWIT_WALLET]
+      --output <FORMAT>   Output format [possible values: text, json]
+      --json              Same as --output json
+  -y, --yes               Confirm destructive actions without a prompt
+  -q, --quiet             Print no progress on stderr
+  -v, --verbose           Print the resolved rail, wallet and config directory on stderr
+      --no-color          Disable color (NO_COLOR also disables it)
+      --config-dir <DIR>  Config directory [default: $XDG_CONFIG_HOME/allowit or ~/.config/allowit]
+                          [env: ALLOWIT_CONFIG_DIR]
+      --rpc-url <URL>     RPC URL override for the selected rail

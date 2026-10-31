@@ -1,0 +1,40 @@
+Write, check, build, test, show and deploy policies
+
+Usage: allowit policy [OPTIONS] <COMMAND>
+
+Examples:
+  allowit policy check policy.rs
+  allowit policy test policy.rs --context context.json
+  allowit policy show --source
+  allowit policy params set transaction_cap=XLM:10 --sign-with-key owner
+
+Commands:
+  new        Generate a policy from a prompt
+  show       Show the wallet's installed policy
+  check      Compile a policy locally: validated IR, hashes, requirements, the owner's workflow
+             steps and the recommended Stellar engines
+  build      Build a policy for the selected rail. On Stellar this is the Rust source of a custom
+             policy wallet
+  test       Evaluate a policy locally for one request context
+  deploy     Replace the wallet's policy. The owner signs
+  params     Show or change the policy parameters
+  functions  List the policy functions with their signatures and help, or show one
+  help       Print this message or the help of the given subcommand(s)
+
+Options:
+  -h, --help  Print help
+
+Global options:
+  -n, --rail <RAIL>       Rail as CAIP-2 or alias: stellar:testnet, solana:devnet, tempo:testnet
+                          [env: ALLOWIT_RAIL] [alias: --network]
+      --wallet <ADDR>     Policy wallet address: C… on Stellar, a vault on Solana, 0x… on Tempo
+                          [env: ALLOWIT_WALLET]
+      --output <FORMAT>   Output format [possible values: text, json]
+      --json              Same as --output json
+  -y, --yes               Confirm destructive actions without a prompt
+  -q, --quiet             Print no progress on stderr
+  -v, --verbose           Print the resolved rail, wallet and config directory on stderr
+      --no-color          Disable color (NO_COLOR also disables it)
+      --config-dir <DIR>  Config directory [default: $XDG_CONFIG_HOME/allowit or ~/.config/allowit]
+                          [env: ALLOWIT_CONFIG_DIR]
+      --rpc-url <URL>     RPC URL override for the selected rail

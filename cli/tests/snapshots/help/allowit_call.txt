@@ -1,0 +1,32 @@
+Call a paid service by catalog ID or URL
+
+Usage: allowit call [OPTIONS] <TARGET>
+
+Examples:
+  allowit skills search weather
+  allowit call SERVICE_ID --input '{"city":"Paris"}' --max-amount USDC:0.05
+  allowit --rail tempo:testnet call https://api.example/v1/data --max-amount 0.05
+
+Arguments:
+  <TARGET>  A catalog service ID or an HTTP(S) URL
+
+Options:
+      --input <JSON>         JSON input for the service
+      --max-amount <AMOUNT>  The most this call may cost: CODE:DECIMAL or a USDC decimal
+      --request-id <ID>      Operation ID; a retry reuses it
+  -h, --help                 Print help
+
+Global options:
+  -n, --rail <RAIL>       Rail as CAIP-2 or alias: stellar:testnet, solana:devnet, tempo:testnet
+                          [env: ALLOWIT_RAIL] [alias: --network]
+      --wallet <ADDR>     Policy wallet address: C… on Stellar, a vault on Solana, 0x… on Tempo
+                          [env: ALLOWIT_WALLET]
+      --output <FORMAT>   Output format [possible values: text, json]
+      --json              Same as --output json
+  -y, --yes               Confirm destructive actions without a prompt
+  -q, --quiet             Print no progress on stderr
+  -v, --verbose           Print the resolved rail, wallet and config directory on stderr
+      --no-color          Disable color (NO_COLOR also disables it)
+      --config-dir <DIR>  Config directory [default: $XDG_CONFIG_HOME/allowit or ~/.config/allowit]
+                          [env: ALLOWIT_CONFIG_DIR]
+      --rpc-url <URL>     RPC URL override for the selected rail

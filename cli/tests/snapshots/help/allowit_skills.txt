@@ -1,0 +1,32 @@
+Search and inspect the paid-service catalog
+
+Usage: allowit skills [OPTIONS] <COMMAND>
+
+Examples:
+  allowit skills search weather
+  allowit skills show SERVICE_ID
+  allowit skills ls
+
+Commands:
+  search  Search the catalog
+  show    Show one catalog service and its endpoints
+  ls      List the catalog services [alias: list]
+  help    Print this message or the help of the given subcommand(s)
+
+Options:
+  -h, --help  Print help
+
+Global options:
+  -n, --rail <RAIL>       Rail as CAIP-2 or alias: stellar:testnet, solana:devnet, tempo:testnet
+                          [env: ALLOWIT_RAIL] [alias: --network]
+      --wallet <ADDR>     Policy wallet address: C… on Stellar, a vault on Solana, 0x… on Tempo
+                          [env: ALLOWIT_WALLET]
+      --output <FORMAT>   Output format [possible values: text, json]
+      --json              Same as --output json
+  -y, --yes               Confirm destructive actions without a prompt
+  -q, --quiet             Print no progress on stderr
+  -v, --verbose           Print the resolved rail, wallet and config directory on stderr
+      --no-color          Disable color (NO_COLOR also disables it)
+      --config-dir <DIR>  Config directory [default: $XDG_CONFIG_HOME/allowit or ~/.config/allowit]
+                          [env: ALLOWIT_CONFIG_DIR]
+      --rpc-url <URL>     RPC URL override for the selected rail
