@@ -7,8 +7,7 @@ pub use allowit_sdk::client::{config, error, output};
 
 pub mod paysh;
 
-// Preserve the transport version during extraction from the CLI package.
-const VERSION: &str = "0.3.0-dev";
+const VERSION: &str = env!("CARGO_PKG_VERSION");
 
 fn flush_stderr(stderr: &mut String) {
     use std::io::Write;

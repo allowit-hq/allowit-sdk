@@ -1122,7 +1122,7 @@ pub use allowit_sdk::client::{error, output};
 #[cfg(feature = "client")]
 pub mod config;
 #[cfg(feature = "client")]
-const VERSION: &str = "0.3.0-dev";
+const VERSION: &str = env!("CARGO_PKG_VERSION");
 #[cfg(feature = "client")]
 fn flush_stderr(stderr: &mut String) {
     use std::io::Write;
