@@ -100,7 +100,8 @@ pub(crate) fn load(dir: &Path, name: &str) -> Result<Key> {
     Ok(key)
 }
 
-pub(crate) fn list(dir: &Path) -> Result<Vec<Key>> {
+/// Every key, by name, and the metadata files that do not load.
+pub(crate) fn list(dir: &Path) -> Result<(Vec<Key>, Vec<PathBuf>)> {
     let mut names = vec![];
     match std::fs::read_dir(dir.join("keys")) {
         Ok(entries) => {
@@ -117,7 +118,14 @@ pub(crate) fn list(dir: &Path) -> Result<Vec<Key>> {
         Err(_) => return Err(Error::config("cannot read the keys directory")),
     }
     names.sort();
-    names.iter().map(|n| load(dir, n)).collect()
+    let (mut keys, mut invalid) = (vec![], vec![]);
+    for name in names {
+        match load(dir, &name) {
+            Ok(key) => keys.push(key),
+            Err(_) => invalid.push(metadata_path(dir, &name)),
+        }
+    }
+    Ok((keys, invalid))
 }
 
 fn save(dir: &Path, key: &Key) -> Result<()> {
@@ -322,6 +330,7 @@ mod tests {
         assert_eq!(
             list(&dir)
                 .unwrap()
+                .0
                 .iter()
                 .map(|k| k.name.as_str())
                 .collect::<Vec<_>>(),

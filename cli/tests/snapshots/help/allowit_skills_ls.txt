@@ -2,10 +2,6 @@ List the catalog services
 
 Usage: allowit skills ls [OPTIONS]
 
-Examples:
-  allowit skills ls
-  allowit skills ls --json
-
 Options:
   -h, --help  Print help
 

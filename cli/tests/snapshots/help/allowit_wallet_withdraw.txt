@@ -3,8 +3,8 @@ Move funds from the wallet to the owner
 Usage: allowit wallet withdraw [OPTIONS] <AMOUNT>
 
 Examples:
-  allowit wallet withdraw XLM:max --to owner --sign-with-key owner
   allowit --rail solana:devnet wallet withdraw USDC:5 --sign-with-key owner
+  allowit --rail solana:devnet wallet withdraw 5000000 --sign-with-key owner --request-id withdraw-0001
 
 Arguments:
   <AMOUNT>  The amount, or CODE:max for the whole balance
@@ -19,7 +19,7 @@ Options:
 Signing:
       --sign-with-link       Print the owner signing link on stderr (the default)
       --sign-with-key <KEY>  Sign with a local key (testnet and development)
-      --build-only           Write the unsigned transaction to stdout for `allowit tx send`
+      --build-only           Write the unsigned transaction to stdout
       --wait <DUR>           Wait up to DUR for the owner to sign
 
 Global options:

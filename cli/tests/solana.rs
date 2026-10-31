@@ -142,6 +142,26 @@ fn keys_import_keeps_the_bundle_public_and_never_replaces_an_occupied_policy() {
     assert_eq!(std::fs::read(&context).unwrap(), saved);
     let output = sandbox.run(&["keys", "show", "executor2"]);
     assert_eq!(code(&output), Some(3), "a failed import left a key");
+    // A bundle of another network writes nothing under the selected rail.
+    let other = isolated("solana-import-network");
+    let source = other.work().join("executor.json");
+    std::fs::write(
+        &source,
+        serde_json::to_vec(&executor_bundle("solana:devnet", 6)).unwrap(),
+    )
+    .unwrap();
+    let output = other.run(&[
+        "--rail",
+        "solana:testnet",
+        "keys",
+        "import",
+        "executor",
+        source.to_str().unwrap(),
+    ]);
+    assert_eq!(code(&output), Some(3));
+    assert!(String::from_utf8_lossy(&output.stderr).contains("belongs to solana:devnet"));
+    assert!(!other.config().join("vaults").exists());
+    assert_eq!(code(&other.run(&["keys", "show", "executor"])), Some(3));
     // The audit capability is stored privately and never printed.
     let audited = isolated("solana-audit");
     let token = format!("native-report.{}", "a".repeat(32));

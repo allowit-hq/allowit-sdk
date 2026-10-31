@@ -36,6 +36,11 @@ pub(crate) fn run(args: Args, cx: &mut Ctx) -> Result<i32> {
         .copied()
         .filter(|v| !caps.verbs.contains(v))
         .collect();
+    let signing: serde_json::Map<String, serde_json::Value> = caps
+        .signing
+        .iter()
+        .map(|(verb, modes)| ((*verb).to_owned(), serde_json::json!(modes)))
+        .collect();
     let value = serde_json::json!({
         "rail": info.id,
         "aliases": info.aliases,
@@ -44,7 +49,7 @@ pub(crate) fn run(args: Args, cx: &mut Ctx) -> Result<i32> {
         "curve": caps.curve,
         "ops": caps.ops,
         "paramKeys": caps.param_keys,
-        "signing": caps.signing,
+        "signing": signing,
         "available": caps.verbs,
         "notAvailable": unavailable,
         "tokens": tokens,
@@ -75,7 +80,18 @@ pub(crate) fn run(args: Args, cx: &mut Ctx) -> Result<i32> {
         vec!["tokens".into(), list(&codes)],
         vec!["ops".into(), list(caps.ops)],
         vec!["paramKeys".into(), list(caps.param_keys)],
-        vec!["signing".into(), list(caps.signing)],
+        vec![
+            "signing".into(),
+            if caps.signing.is_empty() {
+                "-".to_owned()
+            } else {
+                caps.signing
+                    .iter()
+                    .map(|(verb, modes)| format!("{verb} ({})", modes.join(", ")))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            },
+        ],
         vec!["available".into(), list(caps.verbs)],
         vec!["notAvailable".into(), list(&unavailable)],
         vec![

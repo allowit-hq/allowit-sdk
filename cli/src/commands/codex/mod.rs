@@ -1,11 +1,6 @@
 //! `allowit codex [-- ARGS]`: Codex with the paid-service MCP server.
 use crate::{ctx::Ctx, error::Result, gateway::args::parse};
 
-pub(crate) const EXAMPLES: &str = "\
-Examples:
-  allowit codex -- \"Buy one search result under 0.05 USDC\"
-  allowit codex -- --policy 3@POLICY_ADDRESS \"Find a weather API\"";
-
 /// Run Codex with the AllowIt MCP server. Needs a ChatGPT sign-in; API-key
 /// settings are removed
 #[derive(clap::Args, Debug)]

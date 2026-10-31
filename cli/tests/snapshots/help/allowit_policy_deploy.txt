@@ -2,10 +2,6 @@ Replace the wallet's policy. The owner signs
 
 Usage: allowit policy deploy [OPTIONS] <FILE>
 
-Examples:
-  allowit policy deploy policy-v2.rs
-  allowit policy deploy policy-v2.rs --sign-with-key owner
-
 Arguments:
   <FILE>  The policy source
 
@@ -16,7 +12,7 @@ Options:
 Signing:
       --sign-with-link       Print the owner signing link on stderr (the default)
       --sign-with-key <KEY>  Sign with a local key (testnet and development)
-      --build-only           Write the unsigned transaction to stdout for `allowit tx send`
+      --build-only           Write the unsigned transaction to stdout
       --wait <DUR>           Wait up to DUR for the owner to sign
 
 Global options:

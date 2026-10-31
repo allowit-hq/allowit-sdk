@@ -22,6 +22,12 @@ use std::io::Write;
 pub use vendors::solana::handoff;
 pub use vendors::stellar::{approval as stellar_approval, owner as stellar_owner};
 
+/// Points stderr back at the terminal before a panic report: a rail crate
+/// may run with its own progress output silenced.
+pub fn restore_stderr() {
+    vendors::restore_stderr();
+}
+
 /// Every command path, hidden aliases included, for the help snapshot tests.
 #[doc(hidden)]
 pub fn command_paths() -> Vec<Vec<String>> {
@@ -56,11 +62,13 @@ fn json_requested(argv: &[String]) -> bool {
         .take_while(|a| a.as_str() != "--")
         .map(String::as_str)
         .collect();
-    flags.contains(&"--json")
-        || flags
+    let output = |format: &str| {
+        flags
             .windows(2)
-            .any(|w| w[0] == "--output" && w[1] == "json")
-        || flags.contains(&"--output=json")
+            .any(|w| w[0] == "--output" && w[1] == format)
+            || flags.contains(&format!("--output={format}").as_str())
+    };
+    flags.contains(&"--json") || output("json") || (term::no_dna() && !output("text"))
 }
 
 /// Writes a usage error to stderr: one JSON object, or the text.
@@ -152,7 +160,8 @@ fn execute(cli: commands::Cli) -> i32 {
         && cx.global.verbose
         && let Ok(dir) = cx.dir()
     {
-        cx.out.detail(format!("rail {n} config {}", dir.display()));
+        cx.out.detail(format!("rail  {n}"));
+        cx.out.detail(format!("config  {}", dir.display()));
     }
     let settings = match &network {
         Some(n) if !commands::is_legacy(&command) => {

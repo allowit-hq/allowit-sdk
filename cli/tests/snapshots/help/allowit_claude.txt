@@ -3,10 +3,6 @@ are removed
 
 Usage: allowit claude [OPTIONS] [ARGS]...
 
-Examples:
-  allowit claude -- -p "Find a weather API and call it"
-  allowit claude -- --sandbox --max-amount 1 -p "List services"
-
 Arguments:
   [ARGS]...  Service flags, then Claude Code arguments
 

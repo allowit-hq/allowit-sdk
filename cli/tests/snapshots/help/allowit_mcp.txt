@@ -2,10 +2,6 @@ Run the MCP server for paid services on stdin and stdout
 
 Usage: allowit mcp [OPTIONS] [FLAGS]...
 
-Examples:
-  printf '%s\n' '{"jsonrpc":"2.0","id":1,"method":"tools/list"}' | allowit mcp
-  allowit mcp -- --sandbox
-
 Arguments:
   [FLAGS]...  Service flags: --sandbox, --policy VERSION@ADDR, --account NAME
 

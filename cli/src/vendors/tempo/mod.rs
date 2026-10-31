@@ -57,15 +57,37 @@ fn bundle_path() -> String {
 /// The crate's finality wait bound, in seconds.
 const MAX_WAIT_SECONDS: u64 = 600;
 
+/// The saved stderr while [`without_crate_progress`] sends it to /dev/null,
+/// or -1.
+#[cfg(unix)]
+static SAVED_STDERR: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(-1);
+
+/// Points file descriptor 2 back at the original stderr, so that a panic
+/// inside the crate still reports. The saved descriptor stays open for the
+/// pending [`without_crate_progress`] to close.
+#[cfg(unix)]
+pub(crate) fn restore_stderr() {
+    let saved = SAVED_STDERR.load(std::sync::atomic::Ordering::SeqCst);
+    if saved >= 0 {
+        // SAFETY: the descriptor stays open while it is published.
+        unsafe {
+            libc::dup2(saved, 2);
+        }
+    }
+}
+#[cfg(not(unix))]
+pub(crate) fn restore_stderr() {}
+
 /// Runs `f` with stderr (file descriptor 2) sent to /dev/null. The crate
 /// writes its own progress lines straight to the process stderr; the adapter
 /// reports through the output module instead.
 #[cfg(unix)]
 fn without_crate_progress<T>(f: impl FnOnce() -> T) -> T {
-    use std::os::fd::AsRawFd;
+    use std::{os::fd::AsRawFd, sync::atomic::Ordering};
     struct Restore(i32);
     impl Drop for Restore {
         fn drop(&mut self) {
+            SAVED_STDERR.store(-1, Ordering::SeqCst);
             // SAFETY: the descriptor came from dup(2) and is closed once.
             unsafe {
                 libc::dup2(self.0, 2);
@@ -82,6 +104,7 @@ fn without_crate_progress<T>(f: impl FnOnce() -> T) -> T {
         return f();
     }
     let _restore = Restore(saved);
+    SAVED_STDERR.store(saved, Ordering::SeqCst);
     // SAFETY: both descriptors are open for the duration of the call.
     if unsafe { libc::dup2(sink.as_raw_fd(), 2) } < 0 {
         return f();
@@ -473,6 +496,28 @@ pub(crate) fn legacy(args: &[String], stdout: &mut String, stderr: &mut String) 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A panic report while the crate's progress is silenced reaches the
+    /// original stderr.
+    #[cfg(unix)]
+    #[test]
+    fn a_panic_report_reaches_the_original_stderr() {
+        let identity = |fd: i32| {
+            // SAFETY: fstat writes into a zeroed stat buffer.
+            unsafe {
+                let mut st = std::mem::zeroed::<libc::stat>();
+                assert_eq!(libc::fstat(fd, &mut st), 0);
+                (st.st_dev, st.st_ino)
+            }
+        };
+        let before = identity(2);
+        without_crate_progress(|| {
+            restore_stderr();
+            assert_eq!(identity(2), before);
+        });
+        assert_eq!(identity(2), before);
+        assert_eq!(SAVED_STDERR.load(std::sync::atomic::Ordering::SeqCst), -1);
+    }
     #[test]
     fn tokens_are_tip20_addresses_with_six_decimals() {
         for t in TOKENS {

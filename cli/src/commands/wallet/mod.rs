@@ -18,10 +18,10 @@ use clap::Subcommand;
 
 pub(crate) const EXAMPLES: &str = "\
 Examples:
-  allowit wallet create --kind common --asset XLM --policy policy.rs --owner owner --agent agent
+  allowit --rail solana:devnet wallet create --asset USDC --policy policy.json --owner owner --agent agent --fund USDC:10
   allowit wallet use CWALLET…
-  allowit wallet fund XLM:200 --from owner
-  allowit wallet show";
+  allowit wallet show
+  allowit --rail solana:devnet wallet fund USDC:20 --sign-with-key owner";
 
 /// Create, select, fund and manage policy wallets
 #[derive(Subcommand, Debug)]
@@ -38,11 +38,9 @@ pub(crate) enum Command {
     Fund(fund::Args),
     #[command(before_help = withdraw::EXAMPLES)]
     Withdraw(withdraw::Args),
-    #[command(before_help = update::EXAMPLES)]
     Update(update::Args),
     #[command(before_help = pause::EXAMPLES)]
     Pause(pause::Args),
-    #[command(before_help = resume::EXAMPLES)]
     Resume(resume::Args),
     #[command(before_help = close::EXAMPLES)]
     Close(close::Args),

@@ -17,7 +17,7 @@ Examples:
   allowit policy check policy.rs
   allowit policy test policy.rs --context context.json
   allowit policy show --source
-  allowit policy params set transaction_cap=XLM:10 --sign-with-key owner";
+  allowit --rail solana:devnet policy params set transaction_cap=USDC:10 --sign-with-key owner";
 
 /// Write, check, build, test, show and deploy policies
 #[derive(Subcommand, Debug)]
@@ -32,7 +32,6 @@ pub(crate) enum Command {
     Build(build::Args),
     #[command(before_help = test::EXAMPLES)]
     Test(test::Args),
-    #[command(before_help = deploy::EXAMPLES)]
     Deploy(deploy::Args),
     #[command(before_help = params::EXAMPLES)]
     Params(params::Args),

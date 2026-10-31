@@ -134,8 +134,14 @@ pub(crate) struct Global {
 }
 
 impl Global {
+    /// JSON with `--json` or `--output json`; also with `NO_DNA` unless
+    /// `--output text` asks for text.
     pub(crate) fn json_output(&self) -> bool {
-        self.json || self.output == Some(Format::Json)
+        self.json
+            || match self.output {
+                Some(format) => format == Format::Json,
+                None => crate::term::no_dna(),
+            }
     }
 }
 
@@ -179,21 +185,18 @@ pub(crate) enum Command {
     Status(status::Args),
     #[command(before_help = history::EXAMPLES)]
     History(history::Args),
-    #[command(subcommand, before_help = tx::EXAMPLES)]
+    #[command(subcommand)]
     Tx(tx::Command),
-    #[command(subcommand, before_help = skills::EXAMPLES)]
+    #[command(subcommand)]
     Skills(skills::Command),
     #[command(before_help = call::EXAMPLES)]
     Call(call::Args),
-    #[command(alias = "wget", before_help = curl::EXAMPLES)]
+    #[command(alias = "wget")]
     Curl(curl::Args),
-    #[command(alias = "fetch", before_help = http::EXAMPLES)]
+    #[command(alias = "fetch")]
     Http(http::Args),
-    #[command(before_help = mcp::EXAMPLES)]
     Mcp(mcp::Args),
-    #[command(before_help = claude::EXAMPLES)]
     Claude(claude::Args),
-    #[command(before_help = codex::EXAMPLES)]
     Codex(codex::Args),
     #[command(before_help = lsp::EXAMPLES)]
     Lsp(lsp::Args),
@@ -219,7 +222,7 @@ pub(crate) struct SigningArgs {
     /// Sign with a local key (testnet and development)
     #[arg(long, value_name = "KEY", conflicts_with = "build_only")]
     pub sign_with_key: Option<String>,
-    /// Write the unsigned transaction to stdout for `allowit tx send`
+    /// Write the unsigned transaction to stdout
     #[arg(long)]
     pub build_only: bool,
     /// Wait up to DUR for the owner to sign
@@ -543,9 +546,22 @@ mod tests {
         assert!(cli.global.rail_flag);
         assert!(!cli.global.wallet_flag);
     }
+    /// Every command name in the tree.
+    fn command_names() -> Vec<String> {
+        fn walk(cmd: &clap::Command, out: &mut Vec<String>) {
+            for sub in cmd.get_subcommands() {
+                out.push(sub.get_name().to_owned());
+                walk(sub, out);
+            }
+        }
+        let mut names = vec![];
+        walk(&command(), &mut names);
+        names
+    }
+
     /// The words of one example line: `allowit ...`, after a leading
     /// `cat FILE |` and before a later `|` or `>`. Synopsis lines (with
-    /// `[`, `|`, `(`, `...` or ` = `) are not examples.
+    /// `[`, `(`, `...`, ` = ` or `| COMMAND`) are not examples.
     fn example_words(line: &str) -> Option<Vec<String>> {
         let mut line = line.trim();
         if line.starts_with("cat ")
@@ -576,6 +592,13 @@ mod tests {
         if any || !word.is_empty() {
             words.push(word);
         }
+        let names = command_names();
+        let alternatives = words
+            .windows(2)
+            .any(|w| w[0] == "|" && names.contains(&w[1]));
+        if alternatives {
+            return None;
+        }
         if let Some(at) = words.iter().position(|w| w == "|" || w == ">") {
             words.truncate(at);
         }
@@ -594,14 +617,61 @@ mod tests {
                     .all(|b| b.is_ascii_uppercase() || b.is_ascii_digit() || b == b'_'))
     }
 
-    /// Checks the values of one parsed example: request IDs, amounts,
-    /// parameters and waits must be valid on the example's rail, or on some
-    /// rail when it names none.
+    /// What one example needs from a rail: a verb that `rail show` lists,
+    /// the paid-service gateway, or nothing (a local command).
+    enum Needs {
+        Local,
+        Verb(&'static str),
+        Gateway(&'static str),
+    }
+
+    /// The commands that take the owner signing flags.
+    const OWNER_VERBS: &[&str] = &[
+        "wallet create",
+        "wallet fund",
+        "wallet withdraw",
+        "wallet update",
+        "wallet pause",
+        "wallet resume",
+        "wallet close",
+        "policy deploy",
+        "policy params set",
+    ];
+
+    /// The paid-service commands, which run through the engine gateway.
+    const GATEWAY: &[&str] = &["skills", "curl", "http", "mcp", "claude", "codex"];
+
+    /// What COMMAND (the command words) needs; FUND is true when the words
+    /// include `--fund`.
+    fn needs(command: &[&str], fund: bool) -> Needs {
+        use crate::vendors::VERBS;
+        let verb = |name: String| VERBS.iter().copied().find(|v| *v == name);
+        match command {
+            ["policy", "params", "set", ..] => Needs::Verb("policy params set"),
+            ["policy", "params", ..] => Needs::Verb("policy params"),
+            ["keys", "import", _, file, ..] if !file.ends_with(".json") => Needs::Local,
+            ["keys", "generate", ..] if fund => Needs::Verb("keys fund"),
+            ["call", target, ..] if target.starts_with("https://") => Needs::Verb("call"),
+            ["call", ..] => Needs::Gateway("call"),
+            [a, ..] if GATEWAY.contains(a) => {
+                Needs::Gateway(GATEWAY.iter().copied().find(|g| g == a).unwrap_or_default())
+            }
+            [a, b, ..] if verb(format!("{a} {b}")).is_some() => {
+                verb(format!("{a} {b}")).map_or(Needs::Local, Needs::Verb)
+            }
+            [a, ..] => verb((*a).to_owned()).map_or(Needs::Local, Needs::Verb),
+            [] => Needs::Local,
+        }
+    }
+
+    /// Checks one parsed example: it must parse, and one rail (the example's
+    /// `--rail`, or any rail when it names none) must serve its verb, its
+    /// signing mode, its `--op`, its parameter keys and its amounts.
     fn check_example(words: &[String]) -> std::result::Result<(), String> {
         use crate::{
             request::request_id_valid,
             routing,
-            vendors::{self, asset::Use},
+            vendors::{self, SignWith, Signing, asset::Use},
         };
         if let Parsed::Error(e) = parse(words, false) {
             return Err(e.to_string().lines().next().unwrap_or_default().to_owned());
@@ -618,27 +688,18 @@ mod tests {
                 .map(|w| w[1])
                 .collect()
         };
+        let has = |name: &str| words.contains(&name);
         let rails: Vec<_> = match flag("--rail").first() {
             Some(r) => vec![routing::info(r).map_err(|e| e.message)?],
             None => routing::RAILS.iter().collect(),
-        };
-        let amount = |text: &str, usage: Use| -> std::result::Result<(), String> {
-            if placeholder(text)
-                || rails
-                    .iter()
-                    .any(|r| vendors::rail(r).parse_amount(text, usage).is_ok())
-            {
-                Ok(())
-            } else {
-                Err(format!(
-                    "amount {text:?} is valid on no rail of the example"
-                ))
-            }
         };
         for id in flag("--request-id") {
             if !placeholder(id) && !request_id_valid(id) {
                 return Err(format!("request ID {id:?} breaks the request-ID rule"));
             }
+        }
+        for value in flag("--wait") {
+            parse_wait(value)?;
         }
         // The command words, without the global flags and their values.
         let mut command = vec![];
@@ -655,44 +716,106 @@ mod tests {
                 command.push(*w);
             }
         }
-        match command.as_slice() {
-            ["status", id, ..] if !placeholder(id) && !request_id_valid(id) => {
-                return Err(format!("request ID {id:?} breaks the request-ID rule"));
+        if let ["status", id, ..] = command.as_slice()
+            && !placeholder(id)
+            && !request_id_valid(id)
+        {
+            return Err(format!("request ID {id:?} breaks the request-ID rule"));
+        }
+        let needs = needs(&command, has("--fund"));
+        let on = |info: &'static routing::RailInfo| -> std::result::Result<(), String> {
+            let rail = vendors::rail(info);
+            let caps = rail.caps();
+            match needs {
+                Needs::Local => {}
+                Needs::Verb(verb) if !caps.verbs.contains(&verb) => {
+                    return Err(format!("{verb} is not available"));
+                }
+                Needs::Verb(verb) if OWNER_VERBS.contains(&verb) => {
+                    let with = if let Some(name) = flag("--sign-with-key").first() {
+                        SignWith::Key(crate::settings::keys::Key {
+                            name: (*name).to_owned(),
+                            rail: info.id.to_owned(),
+                            address: String::new(),
+                            public_key: None,
+                            curve: caps.curve.to_owned(),
+                            secret: true,
+                        })
+                    } else if has("--build-only") {
+                        SignWith::BuildOnly
+                    } else {
+                        SignWith::Link
+                    };
+                    let signing = Signing {
+                        with,
+                        wait: flag("--wait").first().map(|w| parse_wait(w).unwrap()),
+                        request_id: None,
+                        additional: false,
+                    };
+                    vendors::require_signing(rail.as_ref(), verb, &signing)
+                        .map_err(|e| e.message)?;
+                }
+                Needs::Verb(_) => {}
+                Needs::Gateway(verb) => rail.gateway(verb).map_err(|e| e.message)?,
             }
-            ["wallet", "fund", value, ..] => amount(value, Use::Spend)?,
-            ["wallet", "withdraw", value, ..] => amount(value, Use::Withdraw)?,
-            ["policy", "params", "set", pairs @ ..] => {
-                for pair in pairs {
-                    let ok = placeholder(pair)
-                        || rails.iter().any(|r| {
-                            policy::params_set_parse(vendors::rail(r).as_ref(), pair).is_ok()
-                        });
-                    if !ok {
-                        return Err(format!("parameter {pair:?} is valid on no rail"));
+            let amount = |text: &str, usage: Use| -> std::result::Result<(), String> {
+                if placeholder(text) {
+                    return Ok(());
+                }
+                rail.parse_amount(text, usage)
+                    .map(|_| ())
+                    .map_err(|e| format!("amount {text:?}: {}", e.message))
+            };
+            match command.as_slice() {
+                ["wallet", "fund", value, ..] => amount(value, Use::Spend)?,
+                ["wallet", "withdraw", value, ..] => amount(value, Use::Withdraw)?,
+                ["policy", "params", "set", pairs @ ..] => {
+                    for pair in pairs {
+                        if placeholder(pair) {
+                            continue;
+                        }
+                        let param =
+                            policy::params_set_parse(rail.as_ref(), pair).map_err(|e| e.message)?;
+                        if !caps.param_keys.contains(&param.key.as_str()) {
+                            return Err(format!(
+                                "policy params set {} is not available",
+                                param.key
+                            ));
+                        }
                     }
                 }
+                _ => {}
             }
-            _ => {}
-        }
-        for value in [flag("--amount"), flag("--fund")].concat() {
-            amount(value, Use::Spend)?;
-        }
-        for value in [
-            flag("--max-amount"),
-            flag("--max-payment"),
-            flag("--budget"),
-        ]
-        .concat()
-        {
-            let decimal = vendors::asset::decimal_units(value, 18).is_ok_and(|u| u > 0);
-            if !decimal {
+            if let ["exec" | "eval", ..] = command.as_slice() {
+                for op in flag("--op") {
+                    vendors::require_op(rail.as_ref(), op).map_err(|e| e.message)?;
+                }
+            }
+            for value in [flag("--amount"), flag("--fund")].concat() {
                 amount(value, Use::Spend)?;
             }
+            for value in [
+                flag("--max-amount"),
+                flag("--max-payment"),
+                flag("--budget"),
+            ]
+            .concat()
+            {
+                let decimal = vendors::asset::decimal_units(value, 18).is_ok_and(|u| u > 0);
+                if !decimal {
+                    amount(value, Use::Spend)?;
+                }
+            }
+            Ok(())
+        };
+        let mut errors = vec![];
+        for info in rails {
+            match on(info) {
+                Ok(()) => return Ok(()),
+                Err(e) => errors.push(format!("{}: {e}", info.id)),
+            }
         }
-        for value in flag("--wait") {
-            parse_wait(value)?;
-        }
-        Ok(())
+        Err(errors.join("; "))
     }
 
     #[test]
@@ -708,6 +831,17 @@ mod tests {
             "allowit status pay-0001 --wait 1d",
             "allowit exec --op transfer --amount XLM:5",
             "allowit keys generate",
+            "allowit wallet fund XLM:200 --from owner",
+            "allowit wallet pause",
+            "allowit --rail solana:devnet wallet pause --sign-with-key owner --wait 60s",
+            "allowit --rail solana:devnet wallet pause --build-only",
+            "allowit --rail solana:devnet policy params set call_cap=20 --sign-with-key owner",
+            "allowit eval --op transfer --to GDEST… --amount XLM:5",
+            "allowit tx send signed.json",
+            "allowit curl https://api.example/v1/data",
+            "allowit call SERVICE_ID",
+            "allowit --rail stellar:testnet call https://api.example/v1/data --max-amount 0.05",
+            "allowit --rail tempo:testnet keys generate agent --fund",
         ] {
             assert!(check_example(&words(bad)).is_err(), "{bad}");
         }
@@ -723,7 +857,17 @@ mod tests {
             words("allowit call S --input '{\"city\":\"Paris\"}'"),
             ["allowit", "call", "S", "--input", "{\"city\":\"Paris\"}"]
         );
+        for good in [
+            "allowit --rail solana:devnet wallet pause --sign-with-key owner",
+            "allowit --rail tempo:testnet call https://api.example/v1/data --max-amount 0.05",
+            "allowit keys import agent agent.key",
+            "allowit --rail stellar:testnet keys generate agent --fund",
+        ] {
+            assert_eq!(check_example(&words(good)), Ok(()), "{good}");
+        }
         assert!(example_words("allowit status ID [--wait DUR]").is_none());
+        assert!(example_words("allowit wallet pause | resume | close").is_none());
+        assert!(example_words("allowit mcp | claude").is_none());
     }
 
     /// Every example in help, the guide and the READMEs parses, and its
@@ -761,6 +905,57 @@ mod tests {
             }
         }
         assert!(checked > 120, "{checked} examples");
+        assert!(failures.is_empty(), "{}", failures.join("\n"));
+    }
+
+    /// A node that some rail serves lists examples; a node that no rail
+    /// serves lists none, since none of them could run.
+    #[test]
+    fn served_nodes_and_only_they_have_examples() {
+        fn served(cmd: &clap::Command, path: &[&str]) -> bool {
+            let children: Vec<_> = cmd
+                .get_subcommands()
+                .filter(|c| c.get_name() != "help")
+                .collect();
+            if !children.is_empty() {
+                return children
+                    .iter()
+                    .any(|c| served(c, &[path, &[c.get_name()]].concat()));
+            }
+            let needs = if path == ["call"] {
+                Needs::Verb("call")
+            } else {
+                needs(path, false)
+            };
+            crate::routing::RAILS.iter().any(|info| {
+                let rail = crate::vendors::rail(info);
+                match needs {
+                    Needs::Local => true,
+                    Needs::Verb(verb) => rail.caps().verbs.contains(&verb),
+                    Needs::Gateway(verb) => rail.gateway(verb).is_ok(),
+                }
+            })
+        }
+        fn walk(cmd: &clap::Command, path: Vec<&str>, failures: &mut Vec<String>) {
+            let examples = cmd
+                .get_before_help()
+                .is_some_and(|h| h.to_string().contains("Examples:\n  "));
+            if served(cmd, &path) != examples {
+                failures.push(format!(
+                    "allowit {}: served {}, examples {examples}",
+                    path.join(" "),
+                    !examples
+                ));
+            }
+            for sub in cmd.get_subcommands().filter(|c| c.get_name() != "help") {
+                let mut next = path.clone();
+                next.push(sub.get_name());
+                walk(sub, next, failures);
+            }
+        }
+        let root = command();
+        let mut failures = vec![];
+        walk(&root, vec![], &mut failures);
         assert!(failures.is_empty(), "{}", failures.join("\n"));
     }
 

@@ -2,11 +2,6 @@ Search and inspect the paid-service catalog
 
 Usage: allowit skills [OPTIONS] <COMMAND>
 
-Examples:
-  allowit skills search weather
-  allowit skills show SERVICE_ID
-  allowit skills ls
-
 Commands:
   search  Search the catalog
   show    Show one catalog service and its endpoints

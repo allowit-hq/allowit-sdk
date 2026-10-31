@@ -3,8 +3,7 @@ use crate::{commands::SigningArgs, ctx::Ctx, error::Result};
 
 pub(crate) const EXAMPLES: &str = "\
 Examples:
-  allowit --rail solana:devnet wallet close --sign-with-key owner --yes
-  allowit wallet close";
+  allowit --rail solana:devnet wallet close --sign-with-key owner --yes";
 
 /// Close the wallet and return its funds to the owner
 #[derive(clap::Args, Debug)]

@@ -2,10 +2,6 @@ Submit a signed transaction from --build-only output
 
 Usage: allowit tx send [OPTIONS] <FILE>
 
-Examples:
-  allowit tx send signed.json
-  cat signed.json | allowit tx send -
-
 Arguments:
   <FILE>  The signed transaction; - reads stdin
 

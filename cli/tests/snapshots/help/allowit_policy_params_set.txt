@@ -5,9 +5,8 @@ operations
 Usage: allowit policy params set [OPTIONS] <KEY=VALUE>...
 
 Examples:
-  allowit policy params set day_total_cap=XLM:50 --sign-with-key owner
-  allowit policy params set transaction_cap=USDC:10 call_cap=20
-  allowit policy params set recipients=GDEST…,GOTHER… expiry=30d
+  allowit --rail solana:devnet policy params set day_spent_cap=USDC:50 --sign-with-key owner
+  allowit --rail solana:devnet policy params set transaction_cap=USDC:10 day_spent_cap=USDC:100 --sign-with-key owner
 
 Arguments:
   <KEY=VALUE>...  KEY=VALUE pairs; a list value replaces the old list
@@ -18,7 +17,7 @@ Options:
 Signing:
       --sign-with-link       Print the owner signing link on stderr (the default)
       --sign-with-key <KEY>  Sign with a local key (testnet and development)
-      --build-only           Write the unsigned transaction to stdout for `allowit tx send`
+      --build-only           Write the unsigned transaction to stdout
       --wait <DUR>           Wait up to DUR for the owner to sign
 
 Global options:

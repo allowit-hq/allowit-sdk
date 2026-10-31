@@ -2,10 +2,6 @@ Replace the owner or the agent, or switch x402 payments
 
 Usage: allowit wallet update [OPTIONS]
 
-Examples:
-  allowit wallet update --agent new-agent --sign-with-key owner
-  allowit wallet update --x402 on
-
 Options:
       --owner <KEY|ADDR>  The new owner: a key name or an address
       --agent <KEY>       The new agent key
@@ -16,7 +12,7 @@ Options:
 Signing:
       --sign-with-link       Print the owner signing link on stderr (the default)
       --sign-with-key <KEY>  Sign with a local key (testnet and development)
-      --build-only           Write the unsigned transaction to stdout for `allowit tx send`
+      --build-only           Write the unsigned transaction to stdout
       --wait <DUR>           Wait up to DUR for the owner to sign
 
 Global options:

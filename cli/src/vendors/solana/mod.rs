@@ -222,6 +222,28 @@ impl Solana {
     }
 }
 
+/// Joins the JSON documents printed after START into one array when there
+/// are several.
+fn one_document(stdout: &mut String, start: usize, compact: bool) {
+    let values: Vec<serde_json::Value> = serde_json::Deserializer::from_str(&stdout[start..])
+        .into_iter()
+        .collect::<std::result::Result<_, _>>()
+        .unwrap_or_default();
+    if values.len() < 2 {
+        return;
+    }
+    let array = serde_json::Value::Array(values);
+    let text = if compact {
+        serde_json::to_string(&array)
+    } else {
+        serde_json::to_string_pretty(&array)
+    }
+    .unwrap_or_default();
+    stdout.truncate(start);
+    stdout.push_str(&text);
+    stdout.push('\n');
+}
+
 fn no_mint() -> Error {
     Error::config(
         "the vault mint is not configured; set ALLOWIT_MINT or import the executor bundle",
@@ -233,11 +255,12 @@ fn no_mint() -> Error {
 fn vault_amount(amount: &Amount, mint: Option<&str>) -> Result<String> {
     match &amount.asset {
         Asset::Installed => {}
+        // Without a configured mint no named asset can be confirmed.
+        _ if mint.is_none() => return Err(no_mint()),
         Asset::Token {
             issuer: Some(issuer),
             ..
         } if mint == Some(issuer.as_str()) => {}
-        Asset::Token { .. } if mint.is_none() => return Err(no_mint()),
         _ => {
             return Err(Error {
                 code: 4,
@@ -276,7 +299,20 @@ impl Rail for Solana {
             ops: &["transfer"],
             // SetDailyLimit counts transferred amounts without gas.
             param_keys: &["transaction_cap", "day_spent_cap"],
-            signing: &["key", "link"],
+            // The vault program takes its first deposit from a signing link;
+            // later owner operations sign with a local owner key.
+            signing: if self.0.testnet {
+                &[
+                    ("wallet create", &["link"]),
+                    ("wallet fund", &["key"]),
+                    ("wallet withdraw", &["key"]),
+                    ("wallet pause", &["key"]),
+                    ("wallet close", &["key"]),
+                    ("policy params set", &["key"]),
+                ]
+            } else {
+                &[]
+            },
             verbs: if self.0.testnet {
                 &[
                     "keys fund",
@@ -364,6 +400,15 @@ impl Rail for Solana {
         bundle: &serde_json::Value,
     ) -> Result<i32> {
         self.testnet_only("keys import")?;
+        // The bundle's network decides where its state belongs; nothing is
+        // written before it matches the selected rail.
+        let network = bundle["context"]["network"].as_str().unwrap_or_default();
+        if crate::routing::normalize(network).ok() != Some(self.0.id) {
+            return Err(Error::config(format!(
+                "the executor bundle belongs to {network}, not {}",
+                self.0.id
+            )));
+        }
         let executor = bundle["context"]["executor"]
             .as_str()
             .ok_or_else(|| Error::usage("the executor bundle names no executor"))?
@@ -385,19 +430,7 @@ impl Rail for Solana {
     }
     fn wallet_create(&self, cx: &mut Ctx, w: &WalletCreate) -> Result<i32> {
         self.testnet_only("wallet create")?;
-        if !matches!(w.signing.with, SignWith::Link) {
-            return Err(self.na(&format!(
-                "wallet create --{}",
-                if matches!(w.signing.with, SignWith::Key(_)) {
-                    "sign-with-key"
-                } else {
-                    "build-only"
-                }
-            )));
-        }
-        if w.signing.wait.is_some() {
-            return Err(self.na("wallet create --wait"));
-        }
+        require_signing(self, "wallet create", &w.signing)?;
         if w.kind.is_some() {
             return Err(Error::usage("--kind does not apply to Solana vaults"));
         }
@@ -554,14 +587,28 @@ impl Rail for Solana {
             operations.push((method, self.vault_amount(amount)?));
         }
         let options = self.vault_options(cx, Some(s))?;
-        let mut code = 0;
-        for (method, value) in operations {
-            code = self.native(cx, method, &[value], &options, vec![signer.clone()])?;
-            if code != 0 {
-                break;
+        // Each operation prints one result; several results become one JSON
+        // array, or text blocks separated by a blank line.
+        let start = cx.out.stdout.len();
+        let run = || -> Result<i32> {
+            let mut code = 0;
+            for (i, (method, value)) in operations.into_iter().enumerate() {
+                let before = cx.out.stdout.len();
+                code = self.native(cx, method, &[value], &options, vec![signer.clone()])?;
+                if i > 0 && !cx.out.json && cx.out.stdout.len() > before {
+                    cx.out.stdout.insert(before, '\n');
+                }
+                if code != 0 {
+                    break;
+                }
             }
+            Ok(code)
+        };
+        let result = run();
+        if cx.out.json {
+            one_document(&mut cx.out.stdout, start, cx.out.compact);
         }
-        Ok(code)
+        result
     }
     fn exec(&self, cx: &mut Ctx, r: &ExecRequest) -> Result<i32> {
         self.request(cx, r)
@@ -657,11 +704,28 @@ mod tests {
         );
         // Without a configured mint, a named amount cannot be confirmed.
         assert_eq!(vault_amount(&usdc, None).unwrap_err().code, 3);
+        assert_eq!(vault_amount(&sol, None).unwrap_err().code, 3);
+        assert_eq!(
+            vault_amount(&p(DEVNET, "native:1"), None).unwrap_err().code,
+            3
+        );
         // The testnet table has no USDC mint: a named amount never matches.
         let plain = p(TESTNET, "USDC:5");
         assert_eq!(vault_amount(&plain, Some(test_mint)).unwrap_err().code, 4);
         let other = p(TESTNET, &format!("USDC:{}:5", MAINNET[1].issuer.unwrap()));
         assert_eq!(vault_amount(&other, Some(test_mint)).unwrap_err().code, 4);
+    }
+
+    #[test]
+    fn several_results_print_one_json_document() {
+        let mut stdout = "before\n{\n  \"a\": 1\n}\n{\n  \"b\": 2\n}\n".to_owned();
+        one_document(&mut stdout, 7, false);
+        let value: serde_json::Value = serde_json::from_str(&stdout[7..]).unwrap();
+        assert_eq!(value, serde_json::json!([{"a": 1}, {"b": 2}]));
+        assert!(stdout.starts_with("before\n"));
+        let mut single = "{\"a\":1}\n".to_owned();
+        one_document(&mut single, 0, true);
+        assert_eq!(single, "{\"a\":1}\n");
     }
 
     #[test]

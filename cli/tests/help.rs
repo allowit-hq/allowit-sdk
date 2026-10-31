@@ -202,13 +202,13 @@ fn every_help_node_matches_its_snapshot() {
         assert!(output.stderr.is_empty(), "{shown}");
         let text = String::from_utf8(output.stdout).unwrap();
         assert!(!text.contains('\x1b'), "{shown} printed color");
-        // Examples come first: before the commands and options.
-        let examples = text
-            .find("Examples:\n  ")
-            .unwrap_or_else(|| panic!("{shown} has no examples"));
-        for heading in ["\nCommands:\n", "\nArguments:\n", "\nOptions:\n"] {
-            if let Some(at) = text.find(heading) {
-                assert!(examples < at, "{shown}: examples after {heading:?}");
+        // Examples come first: before the commands and options. A node that
+        // no rail serves has none (the unit tests check which nodes).
+        if let Some(examples) = text.find("Examples:\n  ") {
+            for heading in ["\nCommands:\n", "\nArguments:\n", "\nOptions:\n"] {
+                if let Some(at) = text.find(heading) {
+                    assert!(examples < at, "{shown}: examples after {heading:?}");
+                }
             }
         }
         for id in example_request_ids(&text) {

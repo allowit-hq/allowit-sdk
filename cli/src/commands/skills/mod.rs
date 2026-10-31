@@ -10,22 +10,14 @@ use crate::{
 };
 use clap::Subcommand;
 
-pub(crate) const EXAMPLES: &str = "\
-Examples:
-  allowit skills search weather
-  allowit skills show SERVICE_ID
-  allowit skills ls";
-
 pub(crate) const ROUTE: &str = "/api/gateway/services";
 
 /// Search and inspect the paid-service catalog
 #[derive(Subcommand, Debug)]
 pub(crate) enum Command {
-    #[command(before_help = search::EXAMPLES)]
     Search(search::Args),
-    #[command(before_help = show::EXAMPLES)]
     Show(show::Args),
-    #[command(visible_alias = "list", before_help = ls::EXAMPLES)]
+    #[command(visible_alias = "list")]
     Ls(ls::Args),
 }
 

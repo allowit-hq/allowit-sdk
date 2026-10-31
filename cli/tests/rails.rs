@@ -183,6 +183,18 @@ fn keys_use_the_rail_curve_and_print_only_public_metadata() {
     sandbox.ok(&["keys", "rm", "copy", "--yes"]);
     assert!(!sandbox.config().join("secrets/copy").exists());
     assert_eq!(sandbox.json(&["keys", "ls"]).as_array().unwrap().len(), 4);
+    // A broken metadata file does not hide the other keys.
+    std::fs::write(sandbox.config().join("keys/bad.toml"), "garbage = [").unwrap();
+    let output = sandbox.run(&["--json", "keys", "ls"]);
+    assert_eq!(code(&output), Some(0), "{}", stderr(&output));
+    let listed: Value = serde_json::from_str(&stdout(&output)).unwrap();
+    assert_eq!(listed.as_array().unwrap().len(), 4);
+    assert!(
+        stderr(&output).starts_with("invalid  "),
+        "{}",
+        stderr(&output)
+    );
+    assert!(stderr(&output).contains("bad.toml"));
 }
 
 #[test]
@@ -1059,4 +1071,38 @@ fn solana_harness_results_print_only_data_lines() {
     common::assert_data(&stderr(&status), "solana status");
     assert!(!stdout(&status).contains("network"), "{}", stdout(&status));
     server.join().unwrap();
+}
+
+#[test]
+fn no_dna_selects_compact_json_for_results_and_errors() {
+    let mut sandbox = Sandbox::new("no-dna");
+    sandbox.set("NO_DNA", "1");
+    for args in [&["version"][..], &["rail", "ls"]] {
+        let text = stdout(&sandbox.run(args));
+        assert_eq!(text.lines().count(), 1, "{args:?}: {text}");
+        serde_json::from_str::<Value>(&text).unwrap();
+    }
+    let output = sandbox.run(&["wallet", "show"]);
+    assert_eq!(code(&output), Some(3));
+    let error: Value = serde_json::from_str(&stderr(&output)).unwrap();
+    assert_eq!(error["error"]["exit"], 3);
+    let output = sandbox.run(&["exec", "--nope"]);
+    assert_eq!(code(&output), Some(2));
+    let error: Value = serde_json::from_str(&stderr(&output)).unwrap();
+    assert_eq!(error["error"]["exit"], 2);
+    // `--output text` still asks for text.
+    let text = stdout(&sandbox.run(&["--output", "text", "version"]));
+    assert!(serde_json::from_str::<Value>(&text).is_err(), "{text}");
+}
+
+#[test]
+fn verbose_details_are_data_lines() {
+    let sandbox = Sandbox::new("verbose");
+    sandbox.ok(&["rail", "use", "stellar:testnet"]);
+    let output = sandbox.run(&["-v", "rail", "show"]);
+    assert_eq!(code(&output), Some(0), "{}", stderr(&output));
+    let text = stderr(&output);
+    assert!(text.lines().any(|l| l == "rail  stellar:testnet"), "{text}");
+    assert!(text.lines().any(|l| l.starts_with("config  ")), "{text}");
+    common::assert_data(&text, "rail show -v");
 }

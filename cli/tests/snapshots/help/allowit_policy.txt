@@ -6,7 +6,7 @@ Examples:
   allowit policy check policy.rs
   allowit policy test policy.rs --context context.json
   allowit policy show --source
-  allowit policy params set transaction_cap=XLM:10 --sign-with-key owner
+  allowit --rail solana:devnet policy params set transaction_cap=USDC:10 --sign-with-key owner
 
 Commands:
   new        Generate a policy from a prompt

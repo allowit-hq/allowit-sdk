@@ -1,11 +1,6 @@
 //! `allowit skills search QUERY`.
 use crate::{ctx::Ctx, error::Result};
 
-pub(crate) const EXAMPLES: &str = "\
-Examples:
-  allowit skills search weather
-  allowit skills search \"image generation\" --json";
-
 /// Search the catalog
 #[derive(clap::Args, Debug)]
 pub(crate) struct Args {

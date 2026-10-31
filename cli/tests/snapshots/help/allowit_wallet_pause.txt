@@ -3,8 +3,7 @@ Stop agent spending until the owner resumes it
 Usage: allowit wallet pause [OPTIONS]
 
 Examples:
-  allowit wallet pause --sign-with-key owner
-  allowit wallet pause
+  allowit --rail solana:devnet wallet pause --sign-with-key owner
 
 Options:
   -h, --help  Print help
@@ -12,7 +11,7 @@ Options:
 Signing:
       --sign-with-link       Print the owner signing link on stderr (the default)
       --sign-with-key <KEY>  Sign with a local key (testnet and development)
-      --build-only           Write the unsigned transaction to stdout for `allowit tx send`
+      --build-only           Write the unsigned transaction to stdout
       --wait <DUR>           Wait up to DUR for the owner to sign
 
 Global options:

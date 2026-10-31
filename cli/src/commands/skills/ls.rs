@@ -1,11 +1,6 @@
 //! `allowit skills ls`.
 use crate::{ctx::Ctx, error::Result};
 
-pub(crate) const EXAMPLES: &str = "\
-Examples:
-  allowit skills ls
-  allowit skills ls --json";
-
 /// List the catalog services
 #[derive(clap::Args, Debug)]
 pub(crate) struct Args {}

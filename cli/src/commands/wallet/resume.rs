@@ -1,11 +1,6 @@
 //! `allowit wallet resume`.
 use crate::{commands::SigningArgs, ctx::Ctx, error::Result};
 
-pub(crate) const EXAMPLES: &str = "\
-Examples:
-  allowit wallet resume --sign-with-key owner
-  allowit wallet resume";
-
 /// Let the agent spend again after a pause
 #[derive(clap::Args, Debug)]
 pub(crate) struct Args {

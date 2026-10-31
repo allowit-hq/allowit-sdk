@@ -7,11 +7,6 @@ use crate::{
     vendors::WalletUpdate,
 };
 
-pub(crate) const EXAMPLES: &str = "\
-Examples:
-  allowit wallet update --agent new-agent --sign-with-key owner
-  allowit wallet update --x402 on";
-
 #[derive(Clone, Copy, Debug, clap::ValueEnum)]
 pub(crate) enum Switch {
     On,

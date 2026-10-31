@@ -2,17 +2,13 @@ Let the agent spend again after a pause
 
 Usage: allowit wallet resume [OPTIONS]
 
-Examples:
-  allowit wallet resume --sign-with-key owner
-  allowit wallet resume
-
 Options:
   -h, --help  Print help
 
 Signing:
       --sign-with-link       Print the owner signing link on stderr (the default)
       --sign-with-key <KEY>  Sign with a local key (testnet and development)
-      --build-only           Write the unsigned transaction to stdout for `allowit tx send`
+      --build-only           Write the unsigned transaction to stdout
       --wait <DUR>           Wait up to DUR for the owner to sign
 
 Global options:

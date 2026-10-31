@@ -48,9 +48,14 @@ pub(crate) fn color_allowed(no_color_flag: bool, terminal: bool) -> bool {
     env_set("CLICOLOR_FORCE") || terminal
 }
 
+/// `NO_DNA`: compact JSON output and errors, and no prompts.
+pub(crate) fn no_dna() -> bool {
+    env_set("NO_DNA")
+}
+
 impl Out {
     pub(crate) fn new(json: bool, quiet: bool, verbose: bool, no_color: bool) -> Self {
-        let compact = env_set("NO_DNA");
+        let compact = no_dna();
         Self {
             stdout: String::new(),
             stderr: String::new(),

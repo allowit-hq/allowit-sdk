@@ -9,9 +9,8 @@ use crate::{
 
 pub(crate) const EXAMPLES: &str = "\
 Examples:
-  allowit policy params set day_total_cap=XLM:50 --sign-with-key owner
-  allowit policy params set transaction_cap=USDC:10 call_cap=20
-  allowit policy params set recipients=GDEST…,GOTHER… expiry=30d";
+  allowit --rail solana:devnet policy params set day_spent_cap=USDC:50 --sign-with-key owner
+  allowit --rail solana:devnet policy params set transaction_cap=USDC:10 day_spent_cap=USDC:100 --sign-with-key owner";
 
 /// Change parameters. Keys: transaction_cap, spent_cap, day_spent_cap,
 /// day_total_cap (amounts), call_cap (a count), recipients (addresses),

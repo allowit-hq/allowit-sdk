@@ -32,19 +32,19 @@ allowit wallet show
 allowit policy show
 ```
 
-## 4. Check, then spend
+## 4. Spend
 
 ```sh
-allowit eval --op transfer --to GDEST… --amount XLM:5
 allowit exec --op transfer --to GDEST… --amount XLM:5 --request-id pay-0001
 allowit status pay-0001 --wait 60s
 ```
 
 `allowit rail show` lists the verbs that work on the rail; a verb that does
-not work there exits 3. `exec` prints a new request ID on stderr when you give
-none. After exit 5, retry only with the same `--request-id`, or read the result
-with `status`.
-`history` lists your requests.
+not work there exits 3. Where it lists `eval`, `allowit eval` takes the
+`exec` flags and asks the policy without spending. `exec` prints a new
+request ID on stderr when you give none. After exit 5, retry only with the
+same `--request-id`, or read the result with `status`. `history` lists your
+requests.
 
 Amounts: `CODE:DECIMAL` (`USDC:10`), `CODE:ISSUER:DECIMAL`, `C…:DECIMAL`
 (Stellar asset contract) or an `INTEGER` of base units. `XLM` and `native`

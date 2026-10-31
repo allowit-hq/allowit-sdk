@@ -3,8 +3,8 @@ use crate::{commands::SigningArgs, ctx::Ctx, error::Result, settings::keys, vend
 
 pub(crate) const EXAMPLES: &str = "\
 Examples:
-  allowit wallet withdraw XLM:max --to owner --sign-with-key owner
-  allowit --rail solana:devnet wallet withdraw USDC:5 --sign-with-key owner";
+  allowit --rail solana:devnet wallet withdraw USDC:5 --sign-with-key owner
+  allowit --rail solana:devnet wallet withdraw 5000000 --sign-with-key owner --request-id withdraw-0001";
 
 /// Move funds from the wallet to the owner
 #[derive(clap::Args, Debug)]

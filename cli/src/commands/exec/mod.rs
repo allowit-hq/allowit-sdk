@@ -140,8 +140,7 @@ pub(crate) fn submit(mode: Mode, a: RequestArgs, build_only: bool, cx: &mut Ctx)
         wallet: binding.wallet.clone(),
     };
     cx.out.detail(format!(
-        "rail {} wallet {}",
-        rail.id,
+        "wallet  {}",
         request.wallet.as_deref().unwrap_or("-")
     ));
     let dir = cx.dir()?;

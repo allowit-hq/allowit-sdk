@@ -10,8 +10,7 @@ use clap::Subcommand;
 
 pub(crate) const EXAMPLES: &str = "\
 Examples:
-  allowit policy params
-  allowit policy params set day_spent_cap=USDC:50 transaction_cap=USDC:10 --sign-with-key owner";
+  allowit --rail solana:devnet policy params set day_spent_cap=USDC:50 transaction_cap=USDC:10 --sign-with-key owner";
 
 /// Show or change the policy parameters
 #[derive(clap::Args, Debug)]
@@ -22,7 +21,6 @@ pub(crate) struct Args {
 
 #[derive(Subcommand, Debug)]
 pub(crate) enum Command {
-    #[command(before_help = show::EXAMPLES)]
     Show(show::Args),
     #[command(before_help = set::EXAMPLES)]
     Set(set::Args),

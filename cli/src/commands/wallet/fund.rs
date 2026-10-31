@@ -3,8 +3,8 @@ use crate::{commands::SigningArgs, ctx::Ctx, error::Result, vendors::asset::Use}
 
 pub(crate) const EXAMPLES: &str = "\
 Examples:
-  allowit wallet fund XLM:200 --from owner
-  allowit --rail solana:devnet wallet fund USDC:20 --sign-with-key owner";
+  allowit --rail solana:devnet wallet fund USDC:20 --sign-with-key owner
+  allowit --rail solana:devnet wallet fund 20000000 --sign-with-key owner --request-id fund-0001";
 
 /// Add funds to the wallet
 #[derive(clap::Args, Debug)]

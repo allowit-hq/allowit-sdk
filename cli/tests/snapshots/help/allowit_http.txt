@@ -2,10 +2,6 @@ Send a paid HTTP request with HTTPie syntax (METHOD URL NAME=VALUE...)
 
 Usage: allowit http [OPTIONS] <ARGS>...
 
-Examples:
-  allowit http POST https://api.example/v1/translate text=hello lang=fr --max-amount 0.02
-  allowit http https://api.example/v1/weather city=Paris
-
 Arguments:
   <ARGS>...  METHOD, URL and NAME=VALUE fields
 

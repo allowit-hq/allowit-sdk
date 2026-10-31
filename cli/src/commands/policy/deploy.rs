@@ -2,11 +2,6 @@
 use crate::{commands::SigningArgs, ctx::Ctx, error::Result};
 use std::path::PathBuf;
 
-pub(crate) const EXAMPLES: &str = "\
-Examples:
-  allowit policy deploy policy-v2.rs
-  allowit policy deploy policy-v2.rs --sign-with-key owner";
-
 #[derive(Clone, Copy, Debug, clap::ValueEnum)]
 pub(crate) enum Switch {
     On,

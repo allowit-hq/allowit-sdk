@@ -1,6 +1,9 @@
 //! The local request journal. `exec` records each request before it leaves
 //! the process, so `status ID` finds its rail and wallet and `history` lists
-//! it. Records are private files in `requests/`, one per request ID.
+//! it. Records are private files in `requests/XX/`, one per request ID,
+//! where XX is the first byte of the ID's SHA-256 in hex. Each of the 256
+//! folders is one private store of at most 1,000 records, so the journal
+//! holds up to 256,000 requests.
 use crate::error::{Error, Result};
 use allowit_sdk::client::store::Store;
 use serde::{Deserialize, Serialize};
@@ -26,10 +29,20 @@ pub(crate) struct Entry {
     pub exit: Option<i32>,
 }
 
-fn open(dir: &Path) -> Result<Store> {
-    super::private_dir(dir)?;
-    Store::open(&dir.join("requests"))
+/// The folder of one request ID.
+fn shard(id: &str) -> String {
+    use sha2::Digest;
+    format!("{:02x}", sha2::Sha256::digest(id.as_bytes())[0])
+}
+
+fn open_shard(dir: &Path, shard: &str) -> Result<Store> {
+    super::private_dir(&dir.join("requests"))?;
+    Store::open(&dir.join("requests").join(shard))
         .map_err(|_| Error::config("the request journal is unsafe or locked"))
+}
+
+fn open(dir: &Path, id: &str) -> Result<Store> {
+    open_shard(dir, &shard(id))
 }
 
 pub(crate) fn now() -> u64 {
@@ -40,16 +53,16 @@ pub(crate) fn now() -> u64 {
 }
 
 pub(crate) fn load(dir: &Path, id: &str) -> Result<Option<Entry>> {
-    if !dir.join("requests").exists() {
+    if !dir.join("requests").join(shard(id)).exists() {
         return Ok(None);
     }
-    open(dir)?.load(id)
+    open(dir, id)?.load(id)
 }
 
 /// Records a new request, or checks that an existing record has the same
 /// intent. A request ID never names two different requests.
 pub(crate) fn record(dir: &Path, entry: &Entry) -> Result<()> {
-    let store = open(dir)?;
+    let store = open(dir, &entry.request_id)?;
     if let Some(old) = store.load::<Entry>(&entry.request_id)? {
         if old.command != entry.command
             || old.rail != entry.rail
@@ -70,7 +83,7 @@ pub(crate) fn record(dir: &Path, entry: &Entry) -> Result<()> {
 }
 
 pub(crate) fn finish(dir: &Path, id: &str, exit: i32) -> Result<()> {
-    let store = open(dir)?;
+    let store = open(dir, id)?;
     if let Some(mut entry) = store.load::<Entry>(id)? {
         entry.exit = Some(exit);
         store.save(id, &entry)?;
@@ -80,10 +93,28 @@ pub(crate) fn finish(dir: &Path, id: &str, exit: i32) -> Result<()> {
 
 /// Every record, newest first.
 pub(crate) fn entries(dir: &Path) -> Result<Vec<Entry>> {
-    if !dir.join("requests").exists() {
+    let requests = dir.join("requests");
+    if !requests.exists() {
         return Ok(vec![]);
     }
-    let mut all: Vec<Entry> = open(dir)?.entries()?;
+    let unreadable = || Error::config("the request journal is unsafe or unreadable");
+    let mut shards = vec![];
+    for item in std::fs::read_dir(&requests).map_err(|_| unreadable())? {
+        let name = item.map_err(|_| unreadable())?.file_name();
+        let name = name.to_str().ok_or_else(unreadable)?;
+        let valid = name.len() == 2
+            && name
+                .bytes()
+                .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b));
+        if !valid {
+            return Err(unreadable());
+        }
+        shards.push(name.to_owned());
+    }
+    let mut all: Vec<Entry> = vec![];
+    for shard in shards {
+        all.extend(open_shard(dir, &shard)?.entries::<Entry>()?);
+    }
     all.sort_by(|a, b| {
         b.created_at
             .cmp(&a.created_at)
@@ -146,6 +177,24 @@ mod tests {
         assert_eq!(all[1].exit, Some(0));
         let id = new_id().unwrap();
         assert!(crate::request::request_id_valid(&id), "{id}");
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    /// More requests than one private store holds stay readable, and each
+    /// keeps its binding.
+    #[test]
+    fn the_journal_outgrows_one_store() {
+        let dir = crate::settings::temp_dir("journal-large");
+        for i in 0..1_001u64 {
+            record(&dir, &entry(&format!("pay-{i:05}"), i)).unwrap();
+        }
+        let all = entries(&dir).unwrap();
+        assert_eq!(all.len(), 1_001);
+        assert_eq!(all[0].request_id, "pay-01000");
+        let mut other = entry("pay-00007", 7);
+        other.amount = "XLM:6".into();
+        assert_eq!(record(&dir, &other).unwrap_err().code, 2);
+        assert_eq!(load(&dir, "pay-00007").unwrap().unwrap().created_at, 7);
         std::fs::remove_dir_all(dir).unwrap();
     }
 }

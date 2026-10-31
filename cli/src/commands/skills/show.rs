@@ -5,11 +5,6 @@ use crate::{
 };
 use serde_json::Value;
 
-pub(crate) const EXAMPLES: &str = "\
-Examples:
-  allowit skills show SERVICE_ID
-  allowit skills show SERVICE_ID --json";
-
 /// Show one catalog service and its endpoints
 #[derive(clap::Args, Debug)]
 pub(crate) struct Args {

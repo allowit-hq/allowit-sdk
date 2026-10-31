@@ -5,11 +5,6 @@ use crate::{
 };
 use std::path::PathBuf;
 
-pub(crate) const EXAMPLES: &str = "\
-Examples:
-  allowit tx send signed.json
-  cat signed.json | allowit tx send -";
-
 /// Submit a signed transaction from --build-only output
 #[derive(clap::Args, Debug)]
 pub(crate) struct Args {

@@ -75,10 +75,21 @@ pub(crate) struct Caps {
     pub ops: &'static [&'static str],
     /// `policy params set` keys that the rail can change.
     pub param_keys: &'static [&'static str],
-    /// Owner signing modes that work: `key`, `link`, `build-only`.
-    pub signing: &'static [&'static str],
+    /// Owner signing modes that work, per owner verb: `key`, `link`,
+    /// `build-only`.
+    pub signing: &'static [(&'static str, &'static [&'static str])],
     /// Verbs from [`VERBS`] that work.
     pub verbs: &'static [&'static str],
+}
+impl Caps {
+    /// The owner signing modes that work for one owner verb.
+    pub(crate) fn signing_modes(&self, verb: &str) -> &'static [&'static str] {
+        self.signing
+            .iter()
+            .find(|(v, _)| *v == verb)
+            .map(|(_, modes)| *modes)
+            .unwrap_or(&[])
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -124,7 +135,7 @@ pub(crate) enum SignWith {
     Link,
     /// Sign with a local key (testnet and development).
     Key(Key),
-    /// Print the unsigned transaction for `tx send`.
+    /// Print the unsigned transaction.
     BuildOnly,
 }
 impl SignWith {
@@ -305,6 +316,12 @@ pub(crate) trait Rail {
     }
 }
 
+/// Points stderr back at the terminal where an adapter silenced a rail
+/// crate's own progress output.
+pub(crate) fn restore_stderr() {
+    tempo::restore_stderr();
+}
+
 /// The adapter for a rail.
 pub(crate) fn rail(info: &'static RailInfo) -> Box<dyn Rail> {
     match info.family {
@@ -328,7 +345,11 @@ pub(crate) fn require_signing(rail: &dyn Rail, verb: &str, signing: &Signing) ->
     if signing.wait.is_some() {
         return Err(not_available(&format!("{verb} --wait"), rail.info().id));
     }
-    if rail.caps().signing.contains(&signing.with.mode()) {
+    if rail
+        .caps()
+        .signing_modes(verb)
+        .contains(&signing.with.mode())
+    {
         Ok(())
     } else {
         let flag = match signing.with {
@@ -465,6 +486,16 @@ mod tests {
             for key in caps.param_keys {
                 assert!(PARAM_KEYS.contains(key), "{key}");
             }
+            for (verb, modes) in caps.signing {
+                assert!(
+                    caps.verbs.contains(verb),
+                    "{} signs unlisted {verb}",
+                    info.id
+                );
+                for mode in *modes {
+                    assert!(["key", "link", "build-only"].contains(mode), "{mode}");
+                }
+            }
             let mut cx = ctx();
             for verb in VERBS.iter().filter(|v| !caps.verbs.contains(v)) {
                 if *verb == "call" {
@@ -520,7 +551,11 @@ mod tests {
                     .code,
                 3
             );
-            if !r.caps().signing.contains(&"build-only") {
+            if !r
+                .caps()
+                .signing_modes("wallet pause")
+                .contains(&"build-only")
+            {
                 assert_eq!(
                     require_signing(r.as_ref(), "wallet pause", &build)
                         .unwrap_err()

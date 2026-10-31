@@ -10,10 +10,8 @@ use std::path::PathBuf;
 
 pub(crate) const EXAMPLES: &str = "\
 Examples:
-  allowit wallet create --kind common --asset XLM --policy policy.rs --owner owner --agent agent
-  allowit wallet create --kind simple --asset USDC --policy policy.rs --owner GOWNER… --agent agent --x402
-  allowit wallet create --kind common --asset XLM --policy policy.rs --owner owner --agent agent --sign-with-key owner
-  allowit --rail solana:devnet wallet create --asset USDC --policy policy.json --owner owner --agent agent --fund USDC:10";
+  allowit --rail solana:devnet wallet create --asset USDC --policy policy.json --owner owner --agent agent --fund USDC:10
+  allowit --rail solana:devnet wallet create --asset USDC --policy policy.json --owner OWNER… --agent agent --fund 10000000";
 
 #[derive(Clone, Copy, Debug, clap::ValueEnum)]
 pub(crate) enum Kind {

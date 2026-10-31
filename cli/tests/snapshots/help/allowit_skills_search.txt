@@ -2,10 +2,6 @@ Search the catalog
 
 Usage: allowit skills search [OPTIONS] <QUERY>
 
-Examples:
-  allowit skills search weather
-  allowit skills search "image generation" --json
-
 Arguments:
   <QUERY>  Search text
 

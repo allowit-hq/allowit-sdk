@@ -2,10 +2,6 @@ Run Codex with the AllowIt MCP server. Needs a ChatGPT sign-in; API-key settings
 
 Usage: allowit codex [OPTIONS] [ARGS]...
 
-Examples:
-  allowit codex -- "Buy one search result under 0.05 USDC"
-  allowit codex -- --policy 3@POLICY_ADDRESS "Find a weather API"
-
 Arguments:
   [ARGS]...  Service flags, then Codex arguments
 

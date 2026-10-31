@@ -3,8 +3,8 @@ Add funds to the wallet
 Usage: allowit wallet fund [OPTIONS] <AMOUNT>
 
 Examples:
-  allowit wallet fund XLM:200 --from owner
   allowit --rail solana:devnet wallet fund USDC:20 --sign-with-key owner
+  allowit --rail solana:devnet wallet fund 20000000 --sign-with-key owner --request-id fund-0001
 
 Arguments:
   <AMOUNT>  The amount: CODE:DECIMAL, CODE:ISSUER:DECIMAL or INTEGER base units
@@ -19,7 +19,7 @@ Options:
 Signing:
       --sign-with-link       Print the owner signing link on stderr (the default)
       --sign-with-key <KEY>  Sign with a local key (testnet and development)
-      --build-only           Write the unsigned transaction to stdout for `allowit tx send`
+      --build-only           Write the unsigned transaction to stdout
       --wait <DUR>           Wait up to DUR for the owner to sign
 
 Global options:

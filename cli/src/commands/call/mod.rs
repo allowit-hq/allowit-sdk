@@ -16,8 +16,6 @@ use serde_json::json;
 
 pub(crate) const EXAMPLES: &str = "\
 Examples:
-  allowit skills search weather
-  allowit call SERVICE_ID --input '{\"city\":\"Paris\"}' --max-amount USDC:0.05
   allowit --rail tempo:testnet call https://api.example/v1/data --max-amount 0.05";
 
 /// Call a paid service by catalog ID or URL

@@ -12,7 +12,10 @@ pub(crate) struct Args {}
 
 pub(crate) fn run(_: Args, cx: &mut Ctx) -> Result<i32> {
     let dir = cx.dir()?;
-    let all = keys::list(&dir)?;
+    let (all, invalid) = keys::list(&dir)?;
+    for path in invalid {
+        cx.out.progress(format!("invalid  {}", path.display()));
+    }
     if cx.out.json {
         let values: Vec<_> = all.iter().map(super::view).collect();
         cx.out.json_value(&serde_json::Value::Array(values));

@@ -12,11 +12,6 @@ use crate::{
 use serde_json::{Value, json};
 use std::io::{BufRead, Read, Write};
 
-pub(crate) const EXAMPLES: &str = "\
-Examples:
-  printf '%s\\n' '{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/list\"}' | allowit mcp
-  allowit mcp -- --sandbox";
-
 /// Run the MCP server for paid services on stdin and stdout
 #[derive(clap::Args, Debug)]
 pub(crate) struct Args {

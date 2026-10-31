@@ -2,10 +2,6 @@ Submit transactions that were signed outside the CLI
 
 Usage: allowit tx [OPTIONS] <COMMAND>
 
-Examples:
-  allowit exec --op transfer --to GDEST… --amount XLM:5 --build-only > request.json
-  allowit tx send signed.json
-
 Commands:
   send  Submit a signed transaction from --build-only output
   help  Print this message or the help of the given subcommand(s)

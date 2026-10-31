@@ -3,10 +3,10 @@ Create, select, fund and manage policy wallets
 Usage: allowit wallet [OPTIONS] <COMMAND>
 
 Examples:
-  allowit wallet create --kind common --asset XLM --policy policy.rs --owner owner --agent agent
+  allowit --rail solana:devnet wallet create --asset USDC --policy policy.json --owner owner --agent agent --fund USDC:10
   allowit wallet use CWALLET…
-  allowit wallet fund XLM:200 --from owner
   allowit wallet show
+  allowit --rail solana:devnet wallet fund USDC:20 --sign-with-key owner
 
 Commands:
   create    Create a policy wallet with a policy, an owner and an agent

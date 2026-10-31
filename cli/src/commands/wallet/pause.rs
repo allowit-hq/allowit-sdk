@@ -3,8 +3,7 @@ use crate::{commands::SigningArgs, ctx::Ctx, error::Result};
 
 pub(crate) const EXAMPLES: &str = "\
 Examples:
-  allowit wallet pause --sign-with-key owner
-  allowit wallet pause";
+  allowit --rail solana:devnet wallet pause --sign-with-key owner";
 
 /// Stop agent spending until the owner resumes it
 #[derive(clap::Args, Debug)]

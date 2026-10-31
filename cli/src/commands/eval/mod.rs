@@ -4,7 +4,7 @@ use crate::{ctx::Ctx, error::Result, vendors::Mode};
 
 pub(crate) const EXAMPLES: &str = "\
 Examples:
-  allowit eval --op transfer --to GDEST… --amount XLM:5
+  allowit --rail solana:devnet eval --op transfer --to RECIPIENT… --amount USDC:5
   allowit eval --op transfer --to RECIPIENT… --amount USDC:2 --json";
 
 /// Ask the policy whether a request would pass. Never signs or spends
