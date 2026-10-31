@@ -1,15 +1,8 @@
 //! Owner operations (fund, withdraw, revoke, close, tune, tune-action) and
 //! executor payments (execute) submitted through the native lifecycle.
-//! Owner operations sign with `ALLOWIT_OWNER_KEYPAIR`; execute signs with
-//! `ALLOWIT_EXECUTOR_KEYPAIR` and needs `ALLOWIT_REQUEST_ID`.
-//!
-//! ```text
-//! allowit policy fund 10
-//! ALLOWIT_REQUEST_ID=pay-0001 allowit policy execute RECIPIENT 0.25
-//! allowit policy tune 20
-//! allowit policy withdraw 5
-//! allowit policy close
-//! ```
+//! Owner operations sign with the `ALLOWIT_OWNER_KEYPAIR` key file; execute
+//! signs with `ALLOWIT_EXECUTOR_KEYPAIR` and needs `ALLOWIT_REQUEST_ID`. The
+//! adapter supplies both from `--sign-with-key` and the agent key.
 use super::*;
 
 pub(super) fn run(
@@ -31,9 +24,8 @@ pub(super) fn run(
         lifecycle,
     } = *session;
     let request_id = env_value("ALLOWIT_REQUEST_ID");
-    let saved_request_id = std::env::var_os("ALLOWIT_REQUEST_ID")
-        .is_some()
-        .then_some(request_id.as_str());
+    let saved_request_id =
+        crate::config::env_present("ALLOWIT_REQUEST_ID").then_some(request_id.as_str());
     let options = match name {
         "deploy" => Options {
             amount: Some(pos[0].clone()),
@@ -61,7 +53,7 @@ pub(super) fn run(
         name
     };
     let mut result = if name == "execute" {
-        if std::env::var_os("ALLOWIT_REQUEST_ID").is_none() || request_id.is_empty() {
+        if !crate::config::env_present("ALLOWIT_REQUEST_ID") || request_id.is_empty() {
             return Err(Error::config(
                 "Set one fresh ALLOWIT_REQUEST_ID for this intended payment; keep it unchanged for retries",
             ));
@@ -156,7 +148,7 @@ pub(super) fn run(
                     if !current.final_status() && !current.expired() {
                         current.status = "uncertain".into();
                         current.extra.remove("replayed");
-                        current.extra.insert("error".into(),serde_json::json!("Recovery observation failed; keep this request ID and original journal, and run allowit policy status"));
+                        current.extra.insert("error".into(),serde_json::json!("Recovery observation failed; keep this request ID and original journal, and run allowit wallet show"));
                         journal.write(&name,&current)?;
                     }
                     Ok(current)
@@ -231,7 +223,7 @@ pub(super) fn run(
         if broadcast_withheld {
             stderr.push_str("Broadcast was withheld. Retry the identical execute command with this request ID to report and broadcast the saved proof; policy status only observes and reports.\n");
         }
-        stderr.push_str("Native SQL audit is pending. Retain the original journal and request ID; retry the identical command or run allowit policy status.\n");
+        stderr.push_str("Native SQL audit is pending. Retain the original journal and request ID; retry the identical command or run allowit wallet show.\n");
         return Ok(5);
     }
     Ok(if result.status == "failed" {

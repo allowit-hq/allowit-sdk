@@ -1,7 +1,9 @@
-//! Local policy configuration and presentation. Chain and journal semantics belong
-//! to the pinned SDK library; this module never launches another command process.
-//! Reads `ALLOWIT_POLICY_DIR`, `ALLOWIT_NETWORK`, `ALLOWIT_RPC_URL` and the key
-//! and deployment settings in `commands/policy/usage.txt`.
+//! The native Solana vault lifecycle over `allowit-native`. Chain and journal
+//! semantics belong to the pinned library; this module never launches another
+//! command process. The adapter passes resolved settings (the selected rail,
+//! the signing key file, the request ID and the RPC override) through
+//! `config::with_settings`; `ALLOWIT_POLICY_DIR` (default `.allowit`) holds
+//! the policy, its public context and its journal.
 mod deploy;
 mod generate;
 mod import;
@@ -67,8 +69,15 @@ impl Local {
         ))?;
         let context: Option<Context> = read_optional(&directory.join("context.json"))?;
         if let Some(c) = &context {
+            let present = env_value("ALLOWIT_NETWORK");
+            if !present.is_empty()
+                && crate::routing::normalize(&present)? != crate::routing::normalize(&c.network)?
+            {
+                return Err(Error::config(
+                    "the selected rail differs from the imported policy context",
+                ));
+            }
             for (name, value) in [
-                ("ALLOWIT_NETWORK", c.network.clone()),
                 ("ALLOWIT_MINT", c.mint.to_string()),
                 ("ALLOWIT_EXECUTOR", c.executor.to_string()),
                 ("ALLOWIT_AUTHORITY", c.authority.to_string()),
@@ -88,7 +97,8 @@ impl Local {
                 .map(|c| c.network.as_str())
                 .unwrap_or("solana:testnet"),
         );
-        let network = crate::routing::normalize(&network)?.to_owned();
+        // The native library names rails by their friendly names.
+        let network = crate::routing::legacy_name(&network)?.to_owned();
         native(genesis(&network))?;
         let mint = if matches!(name, "generate" | "import") {
             context.as_ref().map(|c| c.mint)

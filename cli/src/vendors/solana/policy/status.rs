@@ -1,9 +1,8 @@
-//! `allowit policy status`: observes the vault and recovers journaled operations.
-//! Reads the chain; needs no signer.
+//! The vault observation behind `allowit wallet show` on Solana: reads the
+//! vault and recovers journaled operations. Reads the chain; needs no signer.
 //!
 //! ```text
-//! ALLOWIT_REQUEST_ID=pay-0001 allowit policy execute RECIPIENT 0.25   # exit 5
-//! allowit policy status --json
+//! allowit --rail solana:devnet wallet show --json
 //! ```
 use super::*;
 
@@ -68,7 +67,9 @@ pub(super) fn run(
         }
     }
     if audit_pending {
-        stderr.push_str("Native SQL audit is pending; retain this journal and run allowit policy status again.\n");
+        stderr.push_str(
+            "Native SQL audit is pending; retain this journal and run allowit wallet show again.\n",
+        );
     }
     Ok(if audit_pending { 5 } else { 0 })
 }

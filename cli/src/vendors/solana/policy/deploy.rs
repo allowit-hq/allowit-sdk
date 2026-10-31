@@ -1,12 +1,13 @@
-//! `allowit policy deploy AMOUNT`: records a browser owner-signing intent. No owner key loads.
-//! Needs `ALLOWIT_OWNER` and `ALLOWIT_REQUEST_ID`; prints the signing link and
+//! The vault creation intent behind `allowit wallet create` on Solana: records a
+//! browser owner-signing intent. No owner key loads. The adapter supplies
+//! `ALLOWIT_OWNER` and `ALLOWIT_REQUEST_ID`; this prints the signing link and
 //! exits 10 until the owner signs.
 //!
 //! ```text
-//! allowit policy generate "Spend up to 5 test tokens per day"
-//! ALLOWIT_OWNER=OWNER_PUBKEY ALLOWIT_REQUEST_ID=deploy-0001 allowit policy deploy 10
+//! allowit --rail solana:devnet policy new "Spend up to 5 test tokens per day" -o policy.json
+//! allowit --rail solana:devnet wallet create --asset USDC --policy policy.json --owner OWNER --agent agent --fund USDC:10
 //! # executor device, fresh directory (import refuses an existing policy)
-//! ALLOWIT_POLICY_DIR=.allowit-executor allowit policy import executor.json
+//! allowit --rail solana:devnet keys import executor executor.json
 //! ```
 use super::*;
 

@@ -109,7 +109,7 @@ pub fn signing_url_with_retry(
         return Err(Error::usage("Deployment funding must be positive"));
     }
     let amount = allowit_native::policy::decimal(units);
-    let network = routing::caip2(&policy.network)?;
+    let network = routing::normalize(&policy.network)?;
     let binding = serde_json_canonicalizer::to_vec(deployment)
         .map_err(|_| Error::config("Cannot encode deployment"))?;
     let public_wallet = serde_json_canonicalizer::to_vec(&wallet)

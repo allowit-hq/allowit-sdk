@@ -1,12 +1,12 @@
-//! Existing exec/status transport for an explicitly installed Stellar wallet profile.
-//! Reads `ALLOWIT_STELLAR_BUNDLE`, signs with `ALLOWIT_STELLAR_SIGNER`, posts the
-//! bundle's `/api/native/execute` endpoints and journals in `.allowit/stellar-journal`.
+//! Agent requests for an installed Stellar wallet profile. The public wallet
+//! profile names the wallet, its roles and the engine endpoints; the agent
+//! key signs. Requests go to the profile's `/api/native/execute` endpoints and
+//! are journaled under the config directory before they leave the process.
 use crate::{
-    args::Args,
     config::{env_value, parse_origin},
     error::{Error, Result},
-    typed_request::{decode_bytes, operation_nonce},
-    typed_run::{TypedInput, read_typed_file},
+    typed_request::operation_nonce,
+    vendors::typed::TypedRequest,
 };
 use allowit_sdk::client::store::Store;
 use allowit_sdk::typed_workflow::ExecutionRequest;
@@ -15,7 +15,7 @@ use allowit_stellar_wallet::{
     WalletConfig, WalletRoute,
 };
 use serde::{Deserialize, Serialize};
-use serde_json::json;
+use serde_json::{Value, json};
 use std::{
     io::Read,
     path::Path,
@@ -25,19 +25,19 @@ use zeroize::Zeroizing;
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
-struct Bundle {
+pub(crate) struct Bundle {
     version: u8,
     profile: String,
-    network: String,
-    policy_id: String,
+    pub network: String,
+    pub policy_id: String,
     source_hash: String,
     ir_hash: String,
     module_digest: String,
-    wallet: String,
+    pub wallet: String,
     route: WalletRoute,
-    config: WalletConfig,
+    pub config: WalletConfig,
     endpoints: Endpoints,
-    /// Customer secret. This field is decoded locally and never serialized or sent.
+    /// A public profile never holds this; reading refuses a file that does.
     #[serde(default, deserialize_with = "local_secret")]
     signing_seed: Option<Zeroizing<String>>,
 }
@@ -78,14 +78,12 @@ struct Record {
     agent_signature: Option<DetachedSignature>,
     status: Option<OperationStatus>,
 }
-struct Client {
+pub(crate) struct Client {
     http: reqwest::blocking::Client,
     origin: String,
     bundle: Bundle,
     seed: Zeroizing<[u8; 32]>,
-}
-fn revalidate_for_signing(p: &PreparedOperation, now: u64) -> Result<PreparedOperation> {
-    revalidate_with_rpc_url(p, now, &env_value("ALLOWIT_STELLAR_RPC_URL"))
+    rpc_url: String,
 }
 fn revalidate_with_rpc_url(
     p: &PreparedOperation,
@@ -97,7 +95,7 @@ fn revalidate_with_rpc_url(
     }
     if value.is_empty() {
         return Err(Error::config(
-            "Set local ALLOWIT_STELLAR_RPC_URL before new policy wallet signing",
+            "policy wallet signing revalidates through Stellar RPC; pass --rpc-url URL or set rpc_url for this rail",
         ));
     }
     let rpc = checked(sdk::rpc::HttpRpc::new(value))?;
@@ -146,8 +144,14 @@ fn validate_bundle(policy: &str, bundle: &Bundle) -> Result<()> {
     }
     checked(sdk::validate_config(&bundle.config))
 }
-fn read_public_bundle(path: &Path) -> Result<Bundle> {
-    let mut bundle: Bundle = crate::typed_request::read_request_file(path)?;
+pub(crate) fn read_public_bundle(path: &Path) -> Result<Bundle> {
+    // The file reader reports request-file errors; name the profile instead.
+    let mut bundle: Bundle = crate::typed_request::read_request_file(path).map_err(|_| {
+        Error::config(format!(
+            "{} is not a readable public Stellar wallet profile",
+            path.display()
+        ))
+    })?;
     if let Some(_private) = bundle.signing_seed.take() {
         return Err(Error::config(
             "The public Stellar bundle must not contain signing material",
@@ -164,14 +168,7 @@ fn read_public_bundle(path: &Path) -> Result<Bundle> {
     }
     Ok(bundle)
 }
-pub(crate) fn public_binding(path: &Path) -> Result<(String, String)> {
-    let bundle = read_public_bundle(path)?;
-    Ok((
-        bundle.policy_id,
-        crate::routing::normalize(&bundle.network)?.into(),
-    ))
-}
-fn public_description(bundle: &Bundle, source: bool) -> serde_json::Value {
+pub(crate) fn public_description(bundle: &Bundle, source: bool) -> serde_json::Value {
     let mut value = json!({
         "policyId":bundle.policy_id,"profile":bundle.profile,"network":bundle.network,
         "wallet":bundle.wallet,"route":bundle.route,"owner":bundle.config.owner,
@@ -185,76 +182,21 @@ fn public_description(bundle: &Bundle, source: bool) -> serde_json::Value {
     }
     value
 }
-/// Inspect only validated public metadata. This operation never opens a signer or a transport.
-pub(crate) fn show(policy: &str, source: bool, stdout: &mut String) -> Result<i32> {
-    let path = env_value("ALLOWIT_STELLAR_BUNDLE");
-    if path.is_empty() {
-        return Err(Error::config(
-            "Set ALLOWIT_STELLAR_BUNDLE to inspect public wallet metadata",
-        ));
-    }
-    let bundle = read_public_bundle(Path::new(&path))?;
-    validate_bundle(policy, &bundle)?;
-    *stdout += &crate::output::json(&public_description(&bundle, source));
-    Ok(0)
-}
 impl Client {
-    fn load(policy: &str) -> Result<Self> {
-        let public_path = env_value("ALLOWIT_STELLAR_BUNDLE");
-        if !public_path.is_empty() {
-            if !env_value("ALLOWIT_TOKEN").is_empty() {
-                return Err(Error::config(
-                    "Use either the public Stellar bundle with a local signer or the legacy token, not both",
-                ));
-            }
-            let bundle = read_public_bundle(Path::new(&public_path))?;
-            let path = env_value("ALLOWIT_STELLAR_SIGNER");
-            if path.is_empty() {
-                return Err(Error::config(
-                    "Set ALLOWIT_STELLAR_SIGNER to the local private signer file",
-                ));
-            }
-            let seed = crate::wallet::stellar_signing_seed(Path::new(&path))?;
-            if sdk::account_for_seed(&seed) != bundle.config.agent {
-                return Err(Error::config(
-                    "The local Stellar signer differs from the public bundle agent",
-                ));
-            }
-            return Self::from_bundle(policy, bundle, seed);
+    /// Opens the transport for a public profile and the agent's private key.
+    pub(crate) fn load(bundle: Bundle, signer: &Path, rpc_url: Option<String>) -> Result<Self> {
+        let seed = crate::wallet::stellar_signing_seed(signer)?;
+        if sdk::account_for_seed(&seed) != bundle.config.agent {
+            return Err(Error::config(
+                "the agent key differs from the wallet profile agent",
+            ));
         }
-        let raw = Zeroizing::new(env_value("ALLOWIT_TOKEN"));
-        let encoded = raw
-            .strip_prefix("allowit-stellar-v1.")
-            .ok_or_else(|| Error::config("Set ALLOWIT_TOKEN to the customer-held Stellar token"))?;
-        if encoded.len() > 131_072
-            || encoded.len() % 2 != 0
-            || !encoded.bytes().all(|b| b.is_ascii_hexdigit())
-        {
-            return Err(Error::config("Invalid Stellar token encoding"));
-        }
-        let bytes = Zeroizing::new(
-            (0..encoded.len())
-                .step_by(2)
-                .map(|i| u8::from_str_radix(&encoded[i..i + 2], 16).unwrap())
-                .collect::<Vec<_>>(),
-        );
-        let mut bundle: Bundle = decode_bytes(&bytes)?;
-        let private = bundle
-            .signing_seed
-            .take()
-            .ok_or_else(|| Error::config("The legacy Stellar token lacks its local signer"))?;
-        let seed = Zeroizing::new(checked(sdk::decode_seed(&private))?);
-        // Signer membership is checked against current chain authority by the service.
-        bundle.config.agent = sdk::account_for_seed(&seed);
-        Self::from_bundle(policy, bundle, seed)
-    }
-    fn from_bundle(policy: &str, bundle: Bundle, seed: Zeroizing<[u8; 32]>) -> Result<Self> {
-        validate_bundle(policy, &bundle)?;
+        validate_bundle(&bundle.policy_id.clone(), &bundle)?;
         if let Some(network) = crate::routing::selected()
             && crate::routing::normalize(&bundle.network)? != network
         {
             return Err(Error::config(
-                "Selected network differs from Stellar wallet binding",
+                "the selected rail differs from the Stellar wallet profile",
             ));
         }
         let origin = parse_origin(&env_value("ALLOWIT_URL"))?;
@@ -268,6 +210,7 @@ impl Client {
             origin,
             bundle,
             seed,
+            rpc_url: rpc_url.unwrap_or_default(),
         })
     }
     fn post(&self, path: &str, body: serde_json::Value) -> Result<Response> {
@@ -401,61 +344,40 @@ impl Client {
         Ok(r)
     }
 }
-pub(crate) fn run(
-    command: &str,
-    args: &Args,
-    stdout: &mut String,
-    stderr: &mut String,
-) -> Result<i32> {
-    let client = Client::load(&args.pos[0])?;
-    let journal = Store::open(Path::new(".allowit/stellar-journal")).map_err(journal_error)?;
-    run_locked(command, args, stdout, stderr, &client, &journal)
+fn open_journal(path: &Path) -> Result<Store> {
+    Store::open(path).map_err(journal_error)
 }
-fn run_locked(
-    command: &str,
-    args: &Args,
-    stdout: &mut String,
-    stderr: &mut String,
+/// Reads one request by its ID without creating another.
+pub(crate) fn status(c: &Client, journal: &Path, id: &str, wait: Duration) -> Result<(Value, i32)> {
+    let journal = open_journal(journal)?;
+    let policy = c.bundle.policy_id.clone();
+    let name = sdk::hex(&operation_nonce(&policy, id));
+    let old: Option<Record> = journal.load(&name).map_err(journal_error)?;
+    if old.as_ref().is_some_and(|v| {
+        v.policy_id != policy
+            || v.request_id != *id
+            || !same_retained_policy_config(&c.bundle.config, &v.config)
+    }) {
+        return Err(Error::config(
+            "The journal does not bind this installed Stellar policy",
+        ));
+    }
+    poll(c, id, old, &journal, &name, wait)
+}
+/// Prepares, signs and submits one typed request, then polls within `wait`.
+pub(crate) fn exec(
     c: &Client,
-    journal: &Store,
-) -> Result<i32> {
-    if command == "status" {
-        let id = &args.pos[1];
-        let name = sdk::hex(&operation_nonce(&args.pos[0], id));
-        let old: Option<Record> = journal.load(&name).map_err(journal_error)?;
-        if old.as_ref().is_some_and(|v| {
-            v.policy_id != args.pos[0]
-                || v.request_id != *id
-                || !same_retained_policy_config(&c.bundle.config, &v.config)
-        }) {
-            return Err(Error::config(
-                "The journal does not bind this installed Stellar policy",
-            ));
-        }
-        return poll(c, id, old, journal, &name, args.wait, stdout);
-    }
-    if args.flags.get("request-file").is_empty()
-        || args
-            .flags
-            .0
-            .keys()
-            .any(|k| !matches!(k.as_str(), "request-file" | "request-id"))
-    {
-        return Err(Error::usage(
-            "Stellar exec requires --request-file without scalar request flags",
-        ));
-    }
-    let typed = read_typed_file(Path::new(args.flags.get("request-file")))?;
-    let TypedInput::Execution(request) = typed.input else {
-        return Err(Error::usage(
-            "The Stellar profile accepts only execution-request input",
-        ));
-    };
+    journal: &Path,
+    typed: TypedRequest,
+    wait: Duration,
+    stderr: &mut String,
+) -> Result<(Value, i32)> {
+    let journal = open_journal(journal)?;
+    let journal = &journal;
+    let policy = c.bundle.policy_id.clone();
     let id = typed.request_id;
-    if !args.flags.get("request-id").is_empty() && args.flags.get("request-id") != id {
-        return Err(Error::usage("--request-id differs from the request file"));
-    }
-    if request.operation.nonce != operation_nonce(&args.pos[0], &id) {
+    let request = typed.request;
+    if request.operation.nonce != operation_nonce(&policy, &id) {
         return Err(Error::usage(
             "The operation nonce does not bind this policy and request ID",
         ));
@@ -464,7 +386,7 @@ fn run_locked(
     let name = sdk::hex(&request.operation.nonce);
     let old = journal.load::<Record>(&name).map_err(journal_error)?;
     let (mut record, resumed) = if let Some(old) = old {
-        if old.policy_id != args.pos[0]
+        if old.policy_id != policy
             || old.request_id != id
             || !same_retained_policy_config(&c.bundle.config, &old.config)
             || old.request != request
@@ -476,7 +398,7 @@ fn run_locked(
         if old.agent_signature.is_some()
             || !matches!(&old.status, None | Some(OperationStatus::Prepared))
         {
-            return poll(c, &id, Some(old), journal, &name, args.wait, stdout);
+            return poll(c, &id, Some(old), journal, &name, wait);
         }
         if !same_policy_config(&c.bundle.config, &old.config) {
             return Err(Error::uncertain(
@@ -491,7 +413,7 @@ fn run_locked(
             {
                 Some(response)
             }
-            Ok(_) => return poll(c, &id, Some(old), journal, &name, args.wait, stdout),
+            Ok(_) => return poll(c, &id, Some(old), journal, &name, wait),
             Err(error) if error.status == Some(404) && pure_intent => None,
             Err(error) => return Err(error),
         };
@@ -499,7 +421,7 @@ fn run_locked(
     } else {
         (
             Record {
-                policy_id: args.pos[0].clone(),
+                policy_id: policy.clone(),
                 request_id: id.clone(),
                 config: c.bundle.config.clone(),
                 request: request.clone(),
@@ -512,14 +434,14 @@ fn run_locked(
     };
     // Preserve the original intent. Only an explicit exec can continue unsigned preparation.
     journal.save(&name, &record).map_err(journal_error)?;
-    *stderr += &format!("requestId={id}\n");
+    // Pending progress reaches the terminal before the request leaves.
     crate::flush_stderr(stderr);
     let mut prepared = if let Some(response) = resumed {
         response
     } else {
         c.post(
             &c.bundle.endpoints.execute,
-            json!({"policyId":args.pos[0],"requestId":id,"phase":"prepare","request":request}),
+            json!({"policyId":policy,"requestId":id,"phase":"prepare","request":request}),
         )?
     };
     c.validate(&prepared, &id, Some(&record), false)?;
@@ -533,7 +455,7 @@ fn run_locked(
     record.prepared = Some(prepared.prepared.clone());
     record.status = Some(OperationStatus::Prepared);
     journal.save(&name, &record).map_err(journal_error)?;
-    prepared.prepared = revalidate_for_signing(&prepared.prepared, clock()?)?;
+    prepared.prepared = revalidate_with_rpc_url(&prepared.prepared, clock()?, &c.rpc_url)?;
     checked(sdk::validate_prepared(&prepared.prepared, clock()?))?;
     let signature = checked(sdk::sign(&prepared.prepared, &c.seed, clock()?))?;
     record.prepared = Some(prepared.prepared);
@@ -542,15 +464,15 @@ fn run_locked(
     journal.save(&name, &record).map_err(journal_error)?;
     let response = c.post(
         &c.bundle.endpoints.execute,
-        json!({"policyId":args.pos[0],"requestId":id,"phase":"submit","agentSignature":signature}),
+        json!({"policyId":policy,"requestId":id,"phase":"submit","agentSignature":signature}),
     )?;
     c.validate(&response, &id, Some(&record), false)?;
     record.status = Some(response.operation.status.clone());
     journal.save(&name, &record).map_err(journal_error)?;
-    if terminal(&response.operation.status) || args.wait.is_zero() {
-        return render(&response, stdout);
+    if terminal(&response.operation.status) || wait.is_zero() {
+        return Ok(render(&response));
     }
-    poll(c, &id, Some(record), journal, &name, args.wait, stdout)
+    poll(c, &id, Some(record), journal, &name, wait)
 }
 fn terminal(status: &OperationStatus) -> bool {
     matches!(status, OperationStatus::Confirmed | OperationStatus::Failed)
@@ -562,8 +484,7 @@ fn poll(
     journal: &Store,
     name: &str,
     wait: Duration,
-    stdout: &mut String,
-) -> Result<i32> {
+) -> Result<(Value, i32)> {
     let deadline = std::time::Instant::now() + wait;
     loop {
         let r = c.status(id, record.as_ref())?;
@@ -583,27 +504,27 @@ fn poll(
         journal.save(name, &old).map_err(journal_error)?;
         record = Some(old);
         if terminal(&r.operation.status) || std::time::Instant::now() >= deadline {
-            return render(&r, stdout);
+            return Ok(render(&r));
         }
         std::thread::sleep(Duration::from_secs(1));
     }
 }
-fn render(r: &Response, stdout: &mut String) -> Result<i32> {
-    *stdout += &format!(
-        "{}\n",
-        json!({"requestId":r.operation.id,"status":r.operation.status,"transactionHash":r.operation.transaction_hash})
-    );
-    Ok(match r.operation.status {
-        OperationStatus::Confirmed => 0,
-        OperationStatus::Failed => 20,
-        OperationStatus::SubmissionUnknown => 5,
-        OperationStatus::Prepared | OperationStatus::Submitted => 12,
-    })
+fn render(r: &Response) -> (Value, i32) {
+    (
+        json!({"requestId":r.operation.id,"status":r.operation.status,"transactionHash":r.operation.transaction_hash}),
+        match r.operation.status {
+            OperationStatus::Confirmed => 0,
+            OperationStatus::Failed => 20,
+            OperationStatus::SubmissionUnknown => 5,
+            OperationStatus::Prepared | OperationStatus::Submitted => 12,
+        },
+    )
 }
 
 #[cfg(test)]
 mod public_bundle_tests {
     use super::*;
+    use crate::typed_request::decode_bytes;
     fn fixture() -> serde_json::Value {
         let f: serde_json::Value = serde_json::from_str(include_str!(
             "../../../tests/fixtures/stellar-approval.json"
@@ -665,28 +586,27 @@ mod public_bundle_tests {
         );
     }
     #[test]
-    fn public_file_network_inference_refuses_private_fields_and_changed_identity() {
+    fn public_profile_refuses_private_fields_and_changed_identity() {
         let path = std::env::temp_dir().join(format!(
             "allowit-stellar-public-{}.json",
             std::process::id()
         ));
         let mut value = fixture();
         std::fs::write(&path, serde_json::to_vec(&value).unwrap()).unwrap();
-        assert_eq!(
-            public_binding(&path).unwrap(),
-            ("existing-native-policy".into(), "stellar:testnet".into())
-        );
+        let bundle = read_public_bundle(&path).unwrap();
+        assert_eq!(bundle.policy_id, "existing-native-policy");
+        assert_eq!(bundle.network, "stellar:testnet");
         value["signingSeed"] = json!("must-stay-local");
         std::fs::write(&path, serde_json::to_vec(&value).unwrap()).unwrap();
-        assert!(public_binding(&path).is_err());
+        assert!(read_public_bundle(&path).is_err());
         value.as_object_mut().unwrap().remove("signingSeed");
         value["config"]["agent"] = value["config"]["owner"].clone();
         std::fs::write(&path, serde_json::to_vec(&value).unwrap()).unwrap();
-        assert!(public_binding(&path).is_err());
+        assert!(read_public_bundle(&path).is_err());
         value = fixture();
         value["config"]["sourceHash"] = json!(vec![0; 32]);
         std::fs::write(&path, serde_json::to_vec(&value).unwrap()).unwrap();
-        assert!(public_binding(&path).is_err());
+        assert!(read_public_bundle(&path).is_err());
         std::fs::remove_file(path).unwrap();
     }
 }
@@ -807,6 +727,7 @@ mod native_revalidation_tests {
                 signing_seed: None,
             },
             seed: Zeroizing::new([2; 32]),
+            rpc_url: String::new(),
         };
         let response = Response {
             prepared: signed.prepared.clone(),
