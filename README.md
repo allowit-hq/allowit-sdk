@@ -230,7 +230,10 @@ A compiled artifact is bound by its `source_hash` and `ir_hash`, so an owner can
 scripts/build.sh            # fail on a stale cross-repository pin or a second copy of a git package in Cargo.lock, then build the workspace
 scripts/build.sh --check    # only check the cross-repository pins and Cargo.lock
 scripts/build.sh --update   # move stale pins to their tracked commit, refresh Cargo.lock, then build
+scripts/build.sh --update allowit-contracts-solana   # move only the pins of the named repositories
 ```
+
+Every mode fails when `Cargo.lock` no longer matches the manifests.
 
 A tracking entry is `"head"` (the default branch tip), `{ branch = "name" }` or `{ version = "1.2.3" }` (the commit of tag `v1.2.3`). The build script needs `git`, `cargo` and `jq`.
 
