@@ -199,7 +199,7 @@ The facade is for your editor. Compilation and evaluation still go through the S
 | [`cli/templates/policy/`](cli/templates/policy/) | `allowit-policy-template` | A Cargo crate to write and type-check your own policy in |
 | [`cli/skills/allowit/`](cli/skills/allowit/SKILL.md) | | Instructions for an AI agent that compiles and evaluates policies |
 | [`docs/`](docs/) | | Policy language reference and execution requirements |
-| [`docs/examples/`](docs/examples/) | | Three policies and two request contexts used throughout this README |
+| [`docs/examples/`](docs/examples/) | | Three policies and two request contexts used throughout this README. They copy the allowit-core test inputs, and `cli/tests/examples.rs` keeps the copies identical at the pinned core revision |
 | [`scripts/build.sh`](scripts/build.sh) | | Checks the cross-repository pins and Cargo.lock, then builds the workspace |
 
 All packages share one Cargo workspace, one `Cargo.lock` and one version, and depend on each other by path. Code from other repositories comes in as git dependencies, each pinned by full commit in the root `Cargo.toml`. Pins point one way: this SDK depends on the rail crates and on Allowit core, and the rail crates depend on Allowit core.
