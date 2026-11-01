@@ -42,6 +42,15 @@ pub(crate) fn check_token(family: Family, s: &str) -> Result<()> {
     check("token", family, formats(family).token, s)
 }
 
+/// Whether two wallet addresses name the same wallet. Tempo 0x addresses
+/// ignore hex case; Stellar and Solana addresses are case-sensitive.
+pub(crate) fn same_wallet(family: Family, a: &str, b: &str) -> bool {
+    match family {
+        Family::Tempo => a.eq_ignore_ascii_case(b),
+        Family::Stellar | Family::Solana => a == b,
+    }
+}
+
 /// The family that an address format names, when it names exactly one.
 pub(crate) fn infer_family(s: &str) -> Option<Family> {
     FAMILIES.iter().copied().find(|family| {
@@ -80,5 +89,13 @@ mod tests {
         assert_eq!(infer_family(EVM), Some(Family::Tempo));
         assert_eq!(infer_family("nope"), None);
         assert_eq!(check_wallet(Family::Tempo, G).unwrap_err().code, 2);
+    }
+    #[test]
+    fn tempo_wallets_compare_without_case() {
+        let upper = "0xABABABABABABABABABABABABABABABABABABABAB";
+        assert!(same_wallet(Family::Tempo, upper, &upper.to_lowercase()));
+        assert!(!same_wallet(Family::Tempo, upper, EVM));
+        assert!(!same_wallet(Family::Solana, SOL, &SOL.to_lowercase()));
+        assert!(same_wallet(Family::Stellar, G, G));
     }
 }

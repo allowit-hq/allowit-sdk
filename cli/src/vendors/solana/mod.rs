@@ -119,7 +119,7 @@ impl Solana {
             request_id: s.and_then(|s| s.request_id.clone()),
             additional: s.is_some_and(|s| s.additional),
             legacy: false,
-            retry_of: None,
+            creation: None,
         })
     }
     /// The engine harness names a policy but no vault, so it cannot confirm a
@@ -486,18 +486,15 @@ impl Rail for Solana {
                 .map(|b| format!("{b:02x}"))
                 .collect::<String>()
         );
-        // An explicit new ID replaces the derived preparation once it expired
-        // unsigned; the original journal entry stays.
-        let (request_id, retry_of) = match &w.signing.request_id {
-            Some(id) if *id != derived => (id.clone(), Some(derived)),
-            _ => (derived, None),
-        };
-        if w.signing.request_id.is_none() {
-            cx.out.generated_id(&request_id);
-        }
+        // An explicit new ID replaces the latest preparation of this creation
+        // once it expired unsigned; earlier journal entries stay.
+        let request_id = w.signing.request_id.clone().unwrap_or_else(|| {
+            cx.out.generated_id(&derived);
+            derived.clone()
+        });
         let options = RunOptions {
             request_id: Some(request_id),
-            retry_of,
+            creation: Some(derived),
             ..RunOptions::default()
         };
         self.native(

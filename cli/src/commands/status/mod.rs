@@ -57,7 +57,10 @@ pub(crate) fn run(args: Args, cx: &mut Ctx) -> Result<i32> {
     let wallet = match &entry {
         Some(e) => {
             if let Some(flag) = cx.global.wallet.as_ref().filter(|_| cx.global.wallet_flag)
-                && Some(flag) != e.wallet.as_ref()
+                && !e
+                    .wallet
+                    .as_ref()
+                    .is_some_and(|w| vendors::address::same_wallet(rail.family, flag, w))
             {
                 return Err(Error::usage(match &e.wallet {
                     Some(recorded) => format!("request {} belongs to wallet {recorded}", args.id),

@@ -344,6 +344,38 @@ fn wallet_create_prints_the_bound_owner_link_without_an_owner_key_or_rpc() {
             .join("browser-deploy-create-retry-0001.json")
             .exists()
     );
+    // Each later ID replaces the preceding preparation, not the first one.
+    let mut next = create.to_vec();
+    next.extend(["--request-id", "create-retry-0002"]);
+    let output = sandbox.run(&next);
+    assert_eq!(code(&output), Some(10), "{}", stderr(&output));
+    let second: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(replaced_of(&second), Some("create-retry-0001".to_owned()));
+    assert_eq!(
+        replaced_of(&replaced),
+        value["requestId"].as_str().map(str::to_owned)
+    );
+    // A repeat keeps the predecessor that its intent binds.
+    let output = sandbox.run(&replace);
+    assert_eq!(code(&output), Some(10), "{}", stderr(&output));
+    let repeat: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(repeat["intentDigest"], replaced["intentDigest"]);
+    // A creation that starts with an explicit ID is replaceable too.
+    let mut first = create.to_vec();
+    let last = first.len() - 1;
+    first[last] = "2000000";
+    let mut explicit = first.clone();
+    explicit.extend(["--request-id", "explicit-0001"]);
+    let output = sandbox.run(&explicit);
+    assert_eq!(code(&output), Some(10), "{}", stderr(&output));
+    let opened: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(replaced_of(&opened), None);
+    let mut later = first.clone();
+    later.extend(["--request-id", "explicit-0002"]);
+    let output = sandbox.run(&later);
+    assert_eq!(code(&output), Some(10), "{}", stderr(&output));
+    let later: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(replaced_of(&later), Some("explicit-0001".to_owned()));
     let mut short = create.to_vec();
     short.extend(["--request-id", "short"]);
     assert_eq!(code(&sandbox.run(&short)), Some(2));
@@ -542,4 +574,13 @@ fn vault_operations_refuse_a_selected_wallet_of_another_vault() {
     let output = sandbox.run(&["policy", "params", "set", "day_spent_cap=3000000"]);
     assert_eq!(code(&output), Some(3), "{}", stderr(&output));
     assert!(!stderr(&output).contains("req-"), "{}", stderr(&output));
+}
+
+/// The preparation that a printed creation intent replaces.
+fn replaced_of(intent: &Value) -> Option<String> {
+    use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
+    let url = intent["signingUrl"].as_str().unwrap();
+    let encoded = url.split("#allowit-deploy=").nth(1).unwrap();
+    let payload: Value = serde_json::from_slice(&URL_SAFE_NO_PAD.decode(encoded).unwrap()).unwrap();
+    payload["retryPreparationOf"].as_str().map(str::to_owned)
 }

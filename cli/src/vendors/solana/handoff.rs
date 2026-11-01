@@ -157,8 +157,8 @@ pub fn signing_url_with_retry(
     Ok(format!("{origin}/?chain=solana#allowit-deploy={encoded}"))
 }
 
-/// Reads the public review fingerprint from a locally constructed handoff URL.
-pub fn intent_digest_from_url(url: &str) -> Result<String> {
+/// The public handoff of a locally constructed signing URL.
+fn payload_from_url(url: &str) -> Result<serde_json::Value> {
     let encoded = url
         .split("#allowit-deploy=")
         .nth(1)
@@ -166,8 +166,19 @@ pub fn intent_digest_from_url(url: &str) -> Result<String> {
     let bytes = URL_SAFE_NO_PAD
         .decode(encoded)
         .map_err(|_| Error::config("Invalid signing URL encoding"))?;
-    let value: serde_json::Value =
-        serde_json::from_slice(&bytes).map_err(|_| Error::config("Invalid signing intent"))?;
+    serde_json::from_slice(&bytes).map_err(|_| Error::config("Invalid signing intent"))
+}
+
+/// Reads the preparation that a locally constructed handoff replaces.
+pub fn retry_preparation_from_url(url: &str) -> Result<Option<String>> {
+    Ok(payload_from_url(url)?["retryPreparationOf"]
+        .as_str()
+        .map(str::to_owned))
+}
+
+/// Reads the public review fingerprint from a locally constructed handoff URL.
+pub fn intent_digest_from_url(url: &str) -> Result<String> {
+    let value = payload_from_url(url)?;
     value["intentDigest"]
         .as_str()
         .filter(|s| s.len() == 64 && s.bytes().all(|b| b.is_ascii_hexdigit()))

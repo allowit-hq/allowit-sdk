@@ -27,15 +27,36 @@ pub(super) fn run(
         ));
     }
     let journal = FileJournal::new(local.directory.join("journal"));
-    // A replacement names a prior preparation only when this journal has one.
-    let retry_preparation = match &options.retry_of {
-        Some(prior) => {
-            native(journal.read::<serde_json::Value>(&format!("browser-deploy-{prior}")))?
-                .map(|_| prior.clone())
-                .unwrap_or_default()
+    let entry = format!("browser-deploy-{request_id}");
+    // The latest preparation of a creation: the one a new request ID replaces.
+    let latest = options
+        .creation
+        .as_ref()
+        .map(|c| format!("browser-deploy-latest-{c}"));
+    let retry_preparation = match (&options.creation, &latest) {
+        (Some(creation), Some(latest)) => {
+            let recorded: Option<serde_json::Value> = native(journal.read(&entry))?;
+            match recorded.as_ref().and_then(|v| v["signingUrl"].as_str()) {
+                // A repeat keeps the predecessor that its intent binds.
+                Some(url) => crate::vendors::solana::handoff::retry_preparation_from_url(url)?
+                    .unwrap_or_default(),
+                // A new ID replaces the latest preparation in this journal.
+                None => {
+                    let pointer: Option<String> = native(journal.read(latest))?;
+                    let prior = match pointer {
+                        Some(id) => Some(id),
+                        None => native(
+                            journal
+                                .read::<serde_json::Value>(&format!("browser-deploy-{creation}")),
+                        )?
+                        .map(|_| creation.clone()),
+                    };
+                    prior.filter(|p| *p != request_id).unwrap_or_default()
+                }
+            }
         }
-        None if options.legacy => env_value("ALLOWIT_RETRY_PREPARATION_OF"),
-        None => String::new(),
+        _ if options.legacy => env_value("ALLOWIT_RETRY_PREPARATION_OF"),
+        _ => String::new(),
     };
     let url = crate::vendors::solana::handoff::signing_url_with_retry(
         &env_value("ALLOWIT_URL"),
@@ -54,14 +75,21 @@ pub(super) fn run(
     let intent =
         serde_json::json!({"requestId":request_id,"signingUrl":url,"intentDigest":fingerprint});
     native(journal.locked(|| {
-        let prior: Option<serde_json::Value> =
-            journal.read(&format!("browser-deploy-{request_id}"))?;
-        if prior.as_ref().is_some_and(|v| v != &intent) {
-            return Err(allowit_native::error::Error::config(
+        let prior: Option<serde_json::Value> = journal.read(&entry)?;
+        match prior {
+            Some(v) if v != intent => Err(allowit_native::error::Error::config(
                 "Deployment request ID already binds another intent",
-            ));
+            )),
+            Some(_) => Ok(()),
+            None => {
+                journal.write(&entry, &intent)?;
+                // Only a new preparation becomes the one to replace next.
+                match &latest {
+                    Some(latest) => journal.write(latest, &request_id),
+                    None => Ok(()),
+                }
+            }
         }
-        journal.write(&format!("browser-deploy-{request_id}"), &intent)
     }))?;
     out.value(&serde_json::json!({
         "state": "awaiting_owner_signature",
