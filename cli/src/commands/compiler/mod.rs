@@ -91,19 +91,54 @@ fn summary(result: &Value) -> Value {
             policy.insert("workflow".into(), steps);
         }
     }
-    if let Some(engines) = view["stellar_engines"].as_array() {
-        let engines: Vec<Value> = engines
-            .iter()
-            .map(|e| {
-                Value::String(format!(
-                    "{} ({})",
-                    e["engine"].as_str().unwrap_or("-"),
-                    e["rail"].as_str().unwrap_or("-")
-                ))
-            })
-            .collect();
-        view["stellar_engines"] = Value::Array(engines);
+    // Any list of engine recommendations prints one "ENGINE (RAIL)" per entry.
+    if let Some(fields) = view.as_object_mut() {
+        for value in fields.values_mut() {
+            if let Some(engines) = engine_names(value) {
+                *value = engines;
+            }
+        }
     }
     view.sort_all_objects();
     view
+}
+
+/// A non-empty array whose every entry has string `engine` and `rail` fields,
+/// as "ENGINE (RAIL)" strings. Any other value gives `None`.
+fn engine_names(value: &Value) -> Option<Value> {
+    let items = value.as_array().filter(|items| !items.is_empty())?;
+    items
+        .iter()
+        .map(|e| {
+            let engine = e.get("engine")?.as_str()?;
+            let rail = e.get("rail")?.as_str()?;
+            Some(Value::String(format!("{engine} ({rail})")))
+        })
+        .collect::<Option<Vec<_>>>()
+        .map(Value::Array)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::summary;
+    use serde_json::json;
+
+    #[test]
+    fn engine_lists_print_as_engine_and_rail_under_any_key() {
+        let result = json!({
+            "ok": true,
+            "engines": [{"engine": "a", "rail": "r1", "score": 1}],
+            "other": [{"engine": "a"}],
+            "empty": [],
+        });
+        assert_eq!(
+            summary(&result),
+            json!({
+                "ok": true,
+                "engines": ["a (r1)"],
+                "other": [{"engine": "a"}],
+                "empty": [],
+            })
+        );
+    }
 }

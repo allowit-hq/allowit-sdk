@@ -272,17 +272,17 @@ impl Tempo {
             }),
         }
     }
-    /// Renders an `execute` result for `exec --build-only`. The crate exits
-    /// 10 when the engine returns the authority-signed wallet plan; that plan
-    /// is what build-only asks for, so it prints as JSON and exits 0. A
-    /// denial, an owner-input request or a settled request keeps its code.
+    /// Renders an `execute` result for `exec --build-only` as JSON. The crate
+    /// exits 10 when the engine returns the authority-signed wallet plan;
+    /// that plan is what build-only asks for, so it exits 0. A denial, an
+    /// owner-input request or a settled request keeps its code.
     fn show_plan(cx: &mut Ctx, code: i32, value: Option<Value>) -> Result<i32> {
-        match (code, value) {
-            (10, Some(plan)) => {
-                cx.out.json_value(&plan);
-                Ok(0)
+        match value {
+            Some(result) => {
+                cx.out.json_value(&result);
+                Ok(if code == 10 { 0 } else { code })
             }
-            (code, value) => Self::show(cx, code, value),
+            None => Self::show(cx, code, None),
         }
     }
     /// The public policy with its canonical rail ID.
@@ -549,8 +549,12 @@ mod tests {
         assert_eq!(printed, plan);
         let mut cx = super::super::tests::ctx();
         let denied = serde_json::json!({"decision": "deny"});
-        assert_eq!(Tempo::show_plan(&mut cx, 20, Some(denied)).unwrap(), 20);
-        assert_eq!(cx.out.stdout, "decision  deny\n");
+        assert_eq!(
+            Tempo::show_plan(&mut cx, 20, Some(denied.clone())).unwrap(),
+            20
+        );
+        let printed: Value = serde_json::from_str(&cx.out.stdout).unwrap();
+        assert_eq!(printed, denied);
         let mut cx = super::super::tests::ctx();
         assert_eq!(Tempo::show_plan(&mut cx, 10, None).unwrap_err().code, 10);
     }

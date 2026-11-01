@@ -451,6 +451,28 @@ fn verbs_without_a_backend_exit_3_as_not_available() {
         ("solana:devnet", vec!["call", "SERVICE_ID"]),
         ("eip155:42431", vec!["call", "SERVICE_ID"]),
         ("stellar:testnet", vec!["call", "https://api.example/v1"]),
+        // Gateway settings never reach a native call: they take the gateway.
+        (
+            "eip155:42431",
+            vec![
+                "call",
+                "https://api.example/v1",
+                "--sandbox",
+                "--max-amount",
+                "0.05",
+            ],
+        ),
+        (
+            "eip155:42431",
+            vec![
+                "call",
+                "https://api.example/v1",
+                "--account",
+                "main",
+                "--max-amount",
+                "0.05",
+            ],
+        ),
         ("solana:devnet", vec!["curl", "https://api.example/v1"]),
         (
             "solana:devnet",
@@ -477,6 +499,19 @@ fn verbs_without_a_backend_exit_3_as_not_available() {
         assert!(output.stdout.is_empty(), "{all:?}");
     }
     mock.assert_untouched();
+    // An invalid policy selector exits 2 before any rail path runs.
+    let output = sandbox.run(&[
+        "--rail",
+        "eip155:42431",
+        "call",
+        "https://api.example/v1",
+        "--policy",
+        "not-a-selector",
+        "--max-amount",
+        "0.05",
+    ]);
+    assert_eq!(code(&output), Some(2), "{}", stderr(&output));
+    assert!(output.stdout.is_empty());
     // rail show lists what works and what does not.
     let shown = sandbox.json(&["rail", "show", "stellar:testnet"]);
     let available = shown["available"].as_array().unwrap();

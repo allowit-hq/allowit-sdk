@@ -66,7 +66,20 @@ pub(crate) fn run(a: Args, cx: &mut Ctx) -> Result<i32> {
                 .map_err(|_| Error::usage("--input must be valid JSON"))
         })
         .transpose()?;
+    if let Some(policy) = &a.policy {
+        args::validate_selector(policy)?;
+    }
     let vendor = cx.vendor()?;
+    let verb = if a.target.contains("://") {
+        "call URL"
+    } else {
+        "call SERVICE"
+    };
+    // --sandbox, --policy and --account are gateway settings; a native call
+    // cannot honor them, so they always take the gateway path.
+    if a.sandbox || a.policy.is_some() || a.account.is_some() {
+        vendor.gateway(verb)?;
+    }
     let request = CallRequest {
         target: a.target.clone(),
         input: input.clone(),
@@ -76,14 +89,7 @@ pub(crate) fn run(a: Args, cx: &mut Ctx) -> Result<i32> {
     if let Some(code) = vendor.call(cx, &request)? {
         return Ok(code);
     }
-    vendor.gateway(if a.target.contains("://") {
-        "call URL"
-    } else {
-        "call SERVICE"
-    })?;
-    if let Some(policy) = &a.policy {
-        args::validate_selector(policy)?;
-    }
+    vendor.gateway(verb)?;
     let common = Common {
         policy_selector: a.policy,
         sandbox: a.sandbox,
