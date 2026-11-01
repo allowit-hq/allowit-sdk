@@ -1,72 +1,131 @@
-//! Builds the typed transfer request from the `exec` flags and the installed
-//! wallet profile. The policy wallet admits only a transfer of its own asset:
-//! XLM moves as a native transfer, an issued asset as a SEP-41 `transfer`.
+//! Builds the typed request of one `exec` operation with the request builders
+//! of `allowit-stellar-wallet`. A transfer moves the wallet's asset to a G or C
+//! address. A policy wallet also deposits its asset into a SEP-56 vault for a
+//! minimum of shares, and redeems vault shares for a minimum of its asset.
 use crate::{
     error::{Error, Result},
     typed_request::operation_nonce,
     vendors::{
+        ExecRequest,
         asset::{Amount, Asset},
         typed::TypedRequest,
     },
 };
-use allowit_sdk::typed_workflow::{
-    AbiValue, AccountId, AccountKind, AssetId, Chain, ExecutionInput, ExecutionRequest,
-    NativeInstruction, OperationRef, WorkflowAsset, WorkflowEffectBound, WorkflowFeeBound,
-};
-use allowit_stellar_wallet::{self as sdk, WalletConfig, WalletRoute};
+use allowit_sdk::typed_workflow::AccountKind;
+use allowit_stellar_wallet::{self as sdk, AccountState, TrustedState, WalletConfig, WalletRoute};
 
-/// A G account or a C contract as a workflow account.
-fn account(address: &str) -> Result<AccountId> {
-    let invalid = || Error::usage(format!("{address} is not a canonical Stellar address"));
-    let parsed = sdk::address(address).map_err(|_| invalid())?;
-    if sdk::address_text(&parsed).map_err(|_| invalid())? != address {
-        return Err(invalid());
+/// Checks the operation flags alone, before any profile, journal or network
+/// access.
+pub(crate) fn check(op: &str, to: &str, token_out: Option<&Amount>, args: bool) -> Result<()> {
+    if args {
+        return Err(Error::usage("--args applies to custom operations"));
     }
-    let (kind, key) = if address.starts_with('G') {
-        (
-            AccountKind::Wallet,
-            sdk::account_key(address).map_err(|_| invalid())?,
-        )
-    } else {
-        (AccountKind::Contract, contract_key(address)?)
-    };
-    Ok(AccountId {
-        chain: Chain::Stellar,
-        kind,
-        address: key,
-    })
+    let vault = sdk::request::account(to).is_ok_and(|a| a.kind == AccountKind::Contract);
+    match (op, token_out) {
+        ("transfer", None) => Ok(()),
+        ("transfer", Some(_)) => Err(Error::usage(
+            "--token-out applies to swap, deposit and redeem, not transfer",
+        )),
+        ("deposit" | "redeem", _) if !vault => Err(Error::usage(format!(
+            "a {op} goes to a C… vault contract, not {to}"
+        ))),
+        ("deposit", None) => Err(Error::usage(
+            "a deposit needs --token-out MIN_SHARES, the fewest vault shares to receive",
+        )),
+        ("redeem", None) => Err(Error::usage(
+            "a redeem needs --token-out ASSET:MIN, the least of the wallet asset to receive",
+        )),
+        ("redeem", Some(min)) if min.units() == Some(0) => Err(Error::usage(
+            "a redeem needs a positive --token-out minimum",
+        )),
+        ("deposit" | "redeem", Some(_)) => Ok(()),
+        _ => Err(Error::unsupported(format!(
+            "exec --op {op} is not available on Stellar yet"
+        ))),
+    }
 }
 
-/// The 32-byte contract ID of a C strkey.
-fn contract_key(address: &str) -> Result<[u8; 32]> {
-    const ALPHABET: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZ234567";
-    let mut bits = 0u32;
-    let mut count = 0;
-    let mut bytes = vec![];
-    for c in address.bytes() {
-        let value = ALPHABET
-            .iter()
-            .position(|a| *a == c)
-            .ok_or_else(|| Error::usage("invalid contract strkey"))? as u32;
-        bits = (bits << 5) | value;
-        count += 5;
-        if count >= 8 {
-            count -= 8;
-            bytes.push((bits >> count) as u8);
-            bits &= (1 << count) - 1;
+/// The typed request of one checked operation. Amounts are checked against the
+/// installed asset before `state` is read.
+pub(crate) fn build(
+    policy_id: &str,
+    config: &WalletConfig,
+    r: &ExecRequest,
+    state: impl FnOnce() -> Result<TrustedState>,
+) -> Result<TypedRequest> {
+    let minimum = || {
+        r.token_out
+            .as_ref()
+            .ok_or_else(|| Error::usage(format!("a {} needs --token-out", r.op)))
+    };
+    let (amount, min) = match r.op.as_str() {
+        "transfer" => (installed_units(config, &r.amount)?, 0),
+        "deposit" => (installed_units(config, &r.amount)?, shares(minimum()?)?),
+        "redeem" => (shares(&r.amount)?, installed_units(config, minimum()?)?),
+        op => {
+            return Err(Error::unsupported(format!(
+                "exec --op {op} is not available on Stellar yet"
+            )));
         }
+    };
+    let state = state()?;
+    let id = operation_nonce(policy_id, &r.request_id);
+    let request = match r.op.as_str() {
+        "transfer" => sdk::request::transfer(config, &state, id, &r.to, amount),
+        "deposit" => sdk::request::deposit(config, &state, id, &r.to, amount, min),
+        _ => sdk::request::redeem(config, &state, id, &r.to, amount, min),
     }
-    // Version byte, 32 key bytes and a two-byte checksum; sdk::address has
-    // already checked the checksum.
-    if bytes.len() != 35 || bytes[0] != 2 << 3 {
-        return Err(Error::usage("invalid contract strkey"));
+    .map_err(|e| Error::usage(format!("the {} does not fit this wallet: {e}", r.op)))?;
+    TypedRequest::new(policy_id, &r.request_id, request)
+}
+
+/// The chain state that the builders read: the fee payer. A policy wallet pays
+/// fees from its current agent account, which Stellar RPC reports. Classic
+/// custody pays them from the wallet and the builders read no state for it, so
+/// the profile fills it; the engine checks every request against its own.
+pub(crate) fn state(c: &WalletConfig, rpc_url: Option<&str>) -> Result<TrustedState> {
+    if c.route == WalletRoute::Native {
+        return Ok(TrustedState {
+            contract_version: None,
+            policy_state: None,
+            source: AccountState {
+                address: c.wallet.clone(),
+                sequence: 0,
+                master_weight: 0,
+                low_threshold: 0,
+                medium_threshold: 0,
+                high_threshold: 0,
+                signers: vec![],
+            },
+            nonce: 0,
+            deployment_version: 0,
+            spent_daily: 0,
+            spent_total: 0,
+            spent_day: 0,
+            calls: 0,
+            ledger: 0,
+            module_digest: c.module_digest,
+            source_hash: c.source_hash,
+            owner: c.owner.clone(),
+            agent: c.agent.clone(),
+            server: c.server.clone(),
+            policy_instance: c.policy_instance,
+        });
     }
-    Ok(bytes[1..33].try_into().expect("32 bytes"))
+    let url = rpc_url.filter(|u| !u.is_empty()).ok_or_else(|| {
+        Error::config(
+            "a policy wallet request names its current agent account from Stellar RPC; pass --rpc-url URL or set rpc_url for this rail",
+        )
+    })?;
+    let rpc = sdk::rpc::HttpRpc::new(url).map_err(Error::config)?;
+    sdk::rpc::trusted_state_for_discovery(&rpc, c, None)
+        .map(|found| found.state)
+        .map_err(Error::config)
 }
 
 /// Checks that the amount names the wallet's installed asset and returns its
 /// base units.
-pub(crate) fn installed_units(config: &WalletConfig, amount: &Amount) -> Result<u64> {
+pub(crate) fn installed_units(config: &WalletConfig, amount: &Amount) -> Result<i128> {
     let matches = match &amount.asset {
         Asset::Installed => true,
         Asset::Native { .. } => config.asset_symbol == "XLM" && config.asset_issuer.is_none(),
@@ -89,93 +148,42 @@ pub(crate) fn installed_units(config: &WalletConfig, amount: &Amount) -> Result<
             config: false,
         });
     }
-    let units = amount
-        .units()
-        .ok_or_else(|| Error::usage("a transfer needs an exact amount"))?;
-    u64::try_from(units).map_err(|_| Error::usage("the amount is too large"))
+    units(amount)
 }
 
-/// The typed transfer request for one recipient and amount.
-pub(crate) fn transfer(
-    policy_id: &str,
-    request_id: &str,
-    config: &WalletConfig,
-    to: &str,
-    units: u64,
-) -> Result<TypedRequest> {
-    let network = sdk::network_id(&config.network).map_err(Error::config)?;
-    let wallet = account(&config.wallet)?;
-    let recipient = account(to)?;
-    let native = WorkflowAsset::Native {
-        chain: Chain::Stellar,
-        network,
-    };
-    let xlm = config.asset_symbol == "XLM" && config.asset_issuer.is_none();
-    let (instruction, asset) = if xlm {
-        (
-            NativeInstruction::StellarNativeTransfer {
-                source: wallet.clone(),
-                destination: recipient.clone(),
-                stroops: units,
-            },
-            native.clone(),
-        )
-    } else {
-        let token = account(&config.asset)?;
-        (
-            NativeInstruction::StellarCall {
-                contract: token.clone(),
-                // The wallet identifies a Stellar call by its contract, function
-                // and arguments and does not read the schema digest.
-                schema_digest: [0; 32],
-                function: "transfer".into(),
-                arguments: vec![
-                    AbiValue::Account(wallet.clone()),
-                    AbiValue::Account(recipient.clone()),
-                    AbiValue::Signed128(i128::from(units)),
-                ],
-            },
-            WorkflowAsset::Token(AssetId { network, token }),
-        )
-    };
-    // The classic route pays fees from the wallet account; the policy wallet
-    // route pays them from the agent account.
-    let payer = if config.route == WalletRoute::Native {
-        wallet.clone()
-    } else {
-        account(&config.agent)?
-    };
-    let request = ExecutionRequest {
-        operation: OperationRef {
-            policy_instance: config.policy_instance,
-            nonce: operation_nonce(policy_id, request_id),
-        },
-        input: ExecutionInput::Instructions(vec![instruction]),
-        effect_bounds: vec![WorkflowEffectBound {
-            asset,
-            source: wallet,
-            beneficiary: recipient,
-            max_debit: units.into(),
-            min_credit: units.into(),
-            max_burn: 0u64.into(),
-        }],
-        fee_bounds: Some(vec![WorkflowFeeBound {
-            payer,
-            asset: native,
-            max_fee: u64::from(config.max_fee_stroops).into(),
-        }]),
-        evidence: vec![],
-    };
-    // The wallet library decodes exactly what the engine will check.
-    sdk::transfer_from_request(config, &request)
-        .map_err(|e| Error::usage(format!("the transfer does not fit this wallet: {e}")))?;
-    TypedRequest::new(policy_id, request_id, request)
+/// Vault shares: INTEGER base units, never a named asset.
+fn shares(amount: &Amount) -> Result<i128> {
+    if amount.asset != Asset::Installed {
+        return Err(Error::usage(format!(
+            "{} is not a share amount; vault shares are INTEGER base units",
+            amount.text
+        )));
+    }
+    units(amount)
+}
+
+fn units(amount: &Amount) -> Result<i128> {
+    let units = amount
+        .units()
+        .ok_or_else(|| Error::usage("the operation needs an exact amount"))?;
+    i128::try_from(units).map_err(|_| Error::usage("the amount is too large"))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::vendors::asset::{Quantity, Use};
+    use crate::{
+        commands::{Global, exec::RequestArgs},
+        ctx::Ctx,
+        routing::Family,
+        term::Out,
+        vendors::{
+            Mode,
+            asset::{exec_uses, parse},
+        },
+    };
+    use allowit_sdk::typed_workflow::ExecutionRequest;
+    use std::time::Duration;
 
     fn config(route: WalletRoute, usdc: bool) -> WalletConfig {
         let owner = sdk::account_for_seed(&[1; 32]);
@@ -195,7 +203,10 @@ mod tests {
             source_digest: [0; 32],
             asset: String::new(),
             asset_symbol: if usdc { "USDC" } else { "XLM" }.into(),
-            asset_issuer: usdc.then(|| sdk::account_for_seed(&[9; 32])),
+            asset_issuer: usdc.then(|| {
+                let tokens = super::super::tokens_for("stellar:testnet");
+                tokens[1].issuer.unwrap().to_owned()
+            }),
             source_hash: sdk::hash(&source),
             policy_source: source,
             module_digest: [5; 32],
@@ -203,9 +214,7 @@ mod tests {
         };
         c.asset = sdk::sac_address(&c.network, &sdk::asset_xdr(&c).unwrap()).unwrap();
         if route == WalletRoute::PolicyWallet {
-            let native = sdk::asset_from_identity("XLM", None).unwrap();
-            // Any valid contract strkey serves as the wallet contract.
-            c.wallet = sdk::sac_address("stellar:mainnet", &native).unwrap();
+            c.wallet = vault(0);
             // Policy wallets run portable source with an empty Simple binding.
             let source = "use allowit::prelude::*;\npub fn execute(ctx: &AllowitContext) -> allowit::Result {\n    Ok(())\n}\n";
             c.language = sdk::PolicyLanguage::Portable;
@@ -222,64 +231,147 @@ mod tests {
         }
         c
     }
+    /// A contract strkey that names no asset of the test configurations.
+    fn vault(n: u8) -> String {
+        let asset = sdk::asset_from_identity("VLT", Some(&sdk::account_for_seed(&[20 + n; 32])));
+        sdk::sac_address("stellar:testnet", &asset.unwrap()).unwrap()
+    }
+    fn request(op: &str, to: &str, amount: &str, token_out: Option<&str>) -> ExecRequest {
+        let tokens = super::super::tokens_for("stellar:testnet");
+        let (spend, minimum) = exec_uses(op);
+        ExecRequest {
+            mode: Mode::Exec,
+            op: op.into(),
+            to: to.into(),
+            amount: parse(Family::Stellar, tokens, amount, spend).unwrap(),
+            token_out: token_out.map(|t| parse(Family::Stellar, tokens, t, minimum).unwrap()),
+            args: None,
+            request_id: "request-0001".into(),
+            wait: Duration::ZERO,
+            build_only: true,
+            wallet: None,
+        }
+    }
 
     #[test]
-    fn native_and_sep41_transfers_decode_in_the_wallet_library() {
+    fn exec_flags_build_requests_that_decode_to_the_same_operation() {
         let to = sdk::account_for_seed(&[6; 32]);
-        for (route, usdc) in [
-            (WalletRoute::Native, false),
-            (WalletRoute::PolicyWallet, false),
-            (WalletRoute::PolicyWallet, true),
-        ] {
-            let c = config(route.clone(), usdc);
-            let typed = transfer("policy-1", "request-0001", &c, &to, 1_000_000).unwrap();
-            let t = sdk::transfer_from_request(&c, &typed.request).unwrap();
-            assert_eq!(t.amount, 1_000_000);
-            assert_eq!(t.recipient, to);
-            assert_eq!(t.native, !usdc, "{route:?}");
+        let usdc = config(WalletRoute::PolicyWallet, true);
+        // The policy wallet's current agent account differs from the profile
+        // agent; it pays the fee.
+        let mut state = state(&config(WalletRoute::Native, false), None).unwrap();
+        state.source.address = sdk::account_for_seed(&[8; 32]);
+        let cases = [
+            (
+                config(WalletRoute::Native, false),
+                request("transfer", &to, "XLM:0.1", None),
+            ),
+            (usdc.clone(), request("transfer", &to, "USDC:0.1", None)),
+            (
+                usdc.clone(),
+                request("deposit", &vault(1), "USDC:5", Some("4900000")),
+            ),
+            (
+                usdc.clone(),
+                request("redeem", &vault(1), "2000000", Some("USDC:0.19")),
+            ),
+        ];
+        for (c, r) in cases {
+            let typed = build("policy-1", &c, &r, || Ok(state.clone())).unwrap();
+            let expected = match r.op.as_str() {
+                "transfer" => sdk::StellarOperation::Transfer(sdk::Transfer {
+                    token: c.asset.clone(),
+                    source: c.wallet.clone(),
+                    recipient: to.clone(),
+                    amount: 1_000_000,
+                    native: c.route == WalletRoute::Native,
+                }),
+                "deposit" => sdk::StellarOperation::Deposit(sdk::Deposit {
+                    vault: vault(1),
+                    assets: 50_000_000,
+                    min_shares: 4_900_000,
+                }),
+                _ => sdk::StellarOperation::Redeem(sdk::Redeem {
+                    vault: vault(1),
+                    shares: 2_000_000,
+                    min_assets: 1_900_000,
+                }),
+            };
+            assert_eq!(
+                sdk::operation_from_request(&c, &typed.request).unwrap(),
+                expected
+            );
+            let payer = if c.route == WalletRoute::Native {
+                &c.wallet
+            } else {
+                &state.source.address
+            };
+            assert_eq!(
+                fee_payer(&typed.request),
+                sdk::request::account(payer).unwrap()
+            );
             assert_eq!(
                 typed.request.operation.nonce,
                 operation_nonce("policy-1", "request-0001")
             );
         }
     }
-
-    #[test]
-    fn contract_strkeys_decode_to_their_contract_id() {
-        let native = sdk::asset_from_identity("XLM", None).unwrap();
-        let sac = sdk::sac_address("stellar:testnet", &native).unwrap();
-        let id = contract_key(&sac).unwrap();
-        let account = account(&sac).unwrap();
-        assert_eq!(account.kind, AccountKind::Contract);
-        assert_eq!(account.address, id);
+    fn fee_payer(r: &ExecutionRequest) -> allowit_sdk::typed_workflow::AccountId {
+        r.fee_bounds.as_ref().unwrap()[0].payer.clone()
     }
 
     #[test]
     fn only_the_installed_asset_can_move() {
         let c = config(WalletRoute::Native, false);
-        let tokens = super::super::tokens_for("stellar:testnet");
-        let xlm = crate::vendors::asset::parse(
-            crate::routing::Family::Stellar,
-            tokens,
-            "XLM:5",
-            Use::Spend,
-        )
-        .unwrap();
+        let xlm = request("transfer", "G", "XLM:5", None).amount;
         assert_eq!(installed_units(&c, &xlm).unwrap(), 50_000_000);
-        let usdc = crate::vendors::asset::parse(
-            crate::routing::Family::Stellar,
-            tokens,
-            "USDC:1",
-            Use::Spend,
-        )
-        .unwrap();
+        let usdc = request("transfer", "G", "USDC:1", None).amount;
         assert_eq!(installed_units(&c, &usdc).unwrap_err().code, 4);
-        let max = Amount {
-            asset: Asset::Installed,
-            quantity: Quantity::Max,
-            decimals: None,
-            text: "XLM:max".into(),
+    }
+
+    #[test]
+    fn a_vault_operation_without_a_vault_or_minimum_stops_before_the_journal() {
+        let dir = crate::settings::temp_dir("vault-flags");
+        let global = Global {
+            config_dir: Some(dir.clone()),
+            rail: Some("stellar:testnet".into()),
+            ..Global::default()
         };
-        assert_eq!(installed_units(&c, &max).unwrap_err().code, 2);
+        let mut cx = Ctx::new(global, Out::new(false, true, false, true));
+        let account = sdk::account_for_seed(&[6; 32]);
+        for (op, to, amount, token_out, needle) in [
+            (
+                "redeem",
+                account.as_str(),
+                "2000000",
+                Some("USDC:1"),
+                "vault contract",
+            ),
+            ("redeem", &vault(1), "2000000", None, "--token-out"),
+            ("deposit", &vault(1), "USDC:1", None, "--token-out"),
+            (
+                "redeem",
+                &vault(1),
+                "USDC:1",
+                Some("USDC:1"),
+                "share amount",
+            ),
+        ] {
+            let args = RequestArgs {
+                op: op.into(),
+                to: to.into(),
+                amount: amount.into(),
+                token_out: token_out.map(Into::into),
+                args: None,
+                request_id: Some("request-0001".into()),
+                wait: Duration::ZERO,
+            };
+            let error =
+                crate::commands::exec::submit(Mode::Exec, args, false, &mut cx).unwrap_err();
+            assert_eq!(error.code, 2, "{op} {to}: {}", error.message);
+            assert!(error.message.contains(needle), "{}", error.message);
+        }
+        // No journal, profile or engine was read: the config directory is empty.
+        assert_eq!(std::fs::read_dir(&dir).unwrap().count(), 0);
     }
 }

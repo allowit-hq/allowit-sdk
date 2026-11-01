@@ -7,9 +7,10 @@ This crate (`allowit-cli`, library `allowit_cli`) builds the `allowit` binary. I
 ```sh
 cargo run --locked --bin allowit -- --help
 cargo build --locked --release --bin allowit
+cargo build --locked --release --bin allowit --no-default-features   # the Stellar rail only
 ```
 
-Release builds use the workspace release profile (`lto`, `opt-level = "s"`, `panic = "abort"`, `strip`).
+Release builds use the workspace release profile (`lto`, `opt-level = "s"`, `panic = "abort"`, `strip`). The default features `solana` and `tempo` build those rails and their crates. Without them, every command on a Solana or Tempo rail exits 3.
 
 ## Commands
 
@@ -42,7 +43,7 @@ allowit policy params [show]
 allowit policy params set KEY=VALUE... [--request-id ID]
 allowit policy functions [NAME]
 
-allowit exec --op OP --to ADDR --amount AMOUNT [--token-out ASSET:MIN] [--args JSON]
+allowit exec --op OP --to ADDR --amount AMOUNT [--token-out MIN] [--args JSON]
              [--request-id ID] [--wait DUR] [--build-only]
 allowit eval  (the exec flags; never signs)
 allowit status ID [--wait DUR]
@@ -94,16 +95,17 @@ There is no default rail. A command that needs one exits 3 with the hint `allowi
 | `policy params set` | not available | `day_spent_cap`, `transaction_cap` | not available |
 | `policy deploy` | not available | not available | not available |
 | `exec --op transfer` | engine endpoints, `--build-only` | engine harness | vault payment, `--build-only` |
+| `exec --op deposit`, `redeem` | SEP-56 vaults of a policy wallet, `--build-only` | not available | not available |
 | `eval` | not available | engine harness | not available |
 | `status` | engine endpoints | engine harness | executor bundle |
 | `call URL` | not available | not available | MPP |
 | `call SERVICE`, `skills`, `curl`, `http`, `mcp`, `claude`, `codex` | not available | not available | not available |
 
-`exec --build-only` prints the unsigned request (Stellar) or the authority-signed wallet plan (Tempo) as JSON and exits 0. The CLI never signs or submits it, and does not record it in the request journal. Stellar builds the request locally and sends nothing. Tempo asks the engine for the plan, and the engine records the request under its ID; a denial, an owner-input request or a settled request keeps its exit code. A signer and submitter outside the CLI use the output; `tx send` is not available on any rail. On Solana, `exec --build-only` exits 3 before a request ID is spent or a credential is read.
+`exec --build-only` prints the unsigned request (Stellar) or the authority-signed wallet plan (Tempo) as JSON and exits 0. The CLI never signs or submits it, and does not record it in the request journal. Stellar builds the request locally and sends nothing; a policy wallet request first reads the wallet's current agent account, its fee payer, through Stellar RPC. Tempo asks the engine for the plan, and the engine records the request under its ID; a denial, an owner-input request or a settled request keeps its exit code. A signer and submitter outside the CLI use the output; `tx send` is not available on any rail. On Solana, `exec --build-only` exits 3 before a request ID is spent or a credential is read.
 
 A selected wallet (`--wallet`, `ALLOWIT_WALLET` or `wallet use`) must be the wallet that the Stellar profile, the Tempo bundle or the Solana policy context in `ALLOWIT_POLICY_DIR` names; another wallet exits 3. The Solana engine harness names a policy but no vault, so Solana `exec`, `eval`, `status` and `policy show` exit 3 while a wallet is selected. The request journal binds each request ID to its rail, the wallet and policy that the rail resolved, and the request itself; a retry under another wallet or policy exits 2. `status ID` uses the rail and wallet in the journal and reads only under the recorded policy. It refuses a different `--rail` or `--wallet` flag; `ALLOWIT_RAIL`, `ALLOWIT_WALLET` and the `use` defaults yield to the journal.
 
-Mainnet rails serve `exec`, `status`, `wallet show`, `policy show` and `policy build` on Stellar, and `exec`, `eval`, `status` and `policy show` on Solana. Tempo mainnet serves no verb yet. `swap`, `deposit`, `redeem` and `custom` operations need new contract entrypoints on every rail; they exit 3. The paid-service commands keep their request builders in `src/gateway/`, but the engine serves no paid-service route, so they exit 3 on every rail.
+Mainnet rails serve `exec`, `status`, `wallet show`, `policy show` and `policy build` on Stellar, and `exec`, `eval`, `status` and `policy show` on Solana. Tempo mainnet serves no verb yet. `swap` and `custom` operations need new contract entrypoints on every rail, and `deposit` and `redeem` on Solana and Tempo; they exit 3. The paid-service commands keep their request builders in `src/gateway/`, but the engine serves no paid-service route, so they exit 3 on every rail.
 
 ## Amounts
 
@@ -112,10 +114,10 @@ Mainnet rails serve `exec`, `status`, `wallet show`, `policy show` and `policy b
 | `CODE:DECIMAL` | Display units of a token from the rail's table, for example `USDC:10`. `XLM` and `native` name the same asset. |
 | `CODE:ISSUER:DECIMAL` | ISSUER is a Stellar G… issuer, a Solana mint or a Tempo 0x… token. |
 | `C…:DECIMAL` | A Stellar Asset Contract. |
-| `INTEGER` | Base units of the wallet's installed asset. |
+| `INTEGER` | Base units of the wallet's installed asset, or vault shares. |
 | `CODE:max` | The whole balance, for `wallet withdraw` only. |
 
-`--token-out` takes `ASSET:MIN`, where MIN may be zero. Each rail supplies its decimals: 7 on Stellar, 9 for SOL and 6 for USDC on Solana, 6 on Tempo. An amount with more decimal places than its token exits 2. An amount of a token other than the wallet's own exits 4. `call --max-amount` also takes a plain decimal of the paying asset, for example `0.05`. `curl`, `http`, `claude` and `codex` take the same `--max-amount`; `--max-payment` is its earlier name.
+`--token-out` takes `ASSET:MIN`, where MIN may be zero. Vault shares, the `--amount` of a redeem and the `--token-out` of a deposit, are INTEGER base units only. Each rail supplies its decimals: 7 on Stellar, 9 for SOL and 6 for USDC on Solana, 6 on Tempo. An amount with more decimal places than its token exits 2. An amount of a token other than the wallet's own exits 4. `call --max-amount` also takes a plain decimal of the paying asset, for example `0.05`. `curl`, `http`, `claude` and `codex` take the same `--max-amount`; `--max-payment` is its earlier name.
 
 Policy parameter keys are the canonical keys of the contracts params map: `transaction_cap`, `spent_cap`, `day_spent_cap` and `day_total_cap` take amounts, `call_cap` a count, `recipients` addresses, `tokens` assets, `expiry` an RFC 3339 time or a duration such as `30d`, and `operations` operation names. A list value replaces the earlier list.
 
@@ -158,11 +160,13 @@ allowit keys import agent agent.key
 allowit setup --agent agent
 allowit exec --op transfer --to GDEST… --amount XLM:5 --request-id pay-0001
 allowit status pay-0001 --wait 60s
+allowit exec --op deposit --to CVAULT… --amount USDC:100 --token-out 990000000
+allowit exec --op redeem --to CVAULT… --amount 500000000 --token-out USDC:49.5
 ```
 
-`exec` builds the typed request from its flags: a native transfer for an XLM wallet, or a SEP-41 `transfer` of the installed asset. The wallet library decodes the request before it leaves the process. The agent key from `setup --agent` signs each engine request and the prepared operation. A transfer of another asset exits 4. `--build-only` prints the typed request and sends nothing; a signer outside the CLI submits it, because `tx send` is not available on any rail yet.
+`exec` builds the typed request from its flags with the request builders of the wallet library: a native transfer for an XLM wallet, or a SEP-41 `transfer` of the installed asset. A policy wallet also deposits its asset into a SEP-56 vault (`--to` the C… vault, `--amount` the asset, `--token-out` the fewest shares to receive) and redeems vault shares (`--amount` the shares, `--token-out` the asset and the least to receive). A deposit or redeem without a vault contract or `--token-out` exits 2 before the request journal. The wallet library decodes the request before it leaves the process. The agent key from `setup --agent` signs each engine request and the prepared operation. A transfer of another asset exits 4. `--build-only` prints the typed request and sends nothing; a signer outside the CLI submits it, because `tx send` is not available on any rail yet.
 
-The CLI journals each operation before it sends it. After exit 5, run the same `exec` again or read the result with `status`; the CLI never prepares replacement bytes for a request ID. A terminal status requires a verified chain receipt. A rotated agent key can recover an original receipt without signing again. Policy wallet signing revalidates the prepared operation through Stellar RPC before the agent signs: pass `--rpc-url URL` or set `rpc_url` for the rail in `config.toml`. The RPC receives only public observations and unsigned simulation bytes. Classic execution and signed status recovery need no RPC.
+The CLI journals each operation before it sends it. After exit 5, run the same `exec` again or read the result with `status`; the CLI never prepares replacement bytes for a request ID. A terminal status requires a verified chain receipt. A rotated agent key can recover an original receipt without signing again. Policy wallet signing revalidates the prepared operation through Stellar RPC before the agent signs: pass `--rpc-url URL` or set `rpc_url` for the rail in `config.toml`. The same RPC names the policy wallet's current agent account as the fee payer when `exec` builds a request. The RPC receives only public observations and unsigned simulation bytes. Classic execution and signed status recovery need no RPC.
 
 The hidden `wallet configure` and `wallet approve` commands keep the Stellar testnet owner links of earlier releases. `configure` prepares the signer-setting operations for a fresh funded classic account. `approve` binds the complete source, revision and public wallet binding of an installed classic policy and moves no funds. Both print a browser URL and exit 10. Their journals belong to the current working directory.
 

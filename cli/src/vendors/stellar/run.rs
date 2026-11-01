@@ -382,7 +382,7 @@ pub(crate) fn exec(
             "The operation nonce does not bind this policy and request ID",
         ));
     }
-    checked(sdk::transfer_from_request(&c.bundle.config, &request))?;
+    checked(sdk::operation_from_request(&c.bundle.config, &request))?;
     let name = sdk::hex(&request.operation.nonce);
     let old = journal.load::<Record>(&name).map_err(journal_error)?;
     let (mut record, resumed) = if let Some(old) = old {

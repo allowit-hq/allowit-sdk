@@ -289,6 +289,10 @@ pub(crate) fn resolve_address(dir: &Path, value: &str, rail: &str) -> Result<Str
 mod tests {
     use super::*;
     #[test]
+    #[cfg_attr(
+        not(all(feature = "solana", feature = "tempo")),
+        ignore = "needs the Solana and Tempo rails"
+    )]
     fn generate_add_import_and_remove_keep_secrets_private() {
         use std::os::unix::fs::PermissionsExt;
         let dir = crate::settings::temp_dir("keys");

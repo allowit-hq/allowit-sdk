@@ -6,10 +6,12 @@
 //! | `CODE:DECIMAL` | display units of a token from the rail's table; `native` names the native asset |
 //! | `CODE:ISSUER:DECIMAL` | ISSUER is a Stellar G issuer, a Solana mint or a Tempo 0x token |
 //! | `C…:DECIMAL` | a Stellar asset contract (Stellar only) |
-//! | `INTEGER` | base units of the wallet's installed asset |
+//! | `INTEGER` | base units of the wallet's installed asset, or vault shares |
 //! | `CODE:max` | the whole balance; `wallet withdraw` only |
 //!
-//! `--token-out` takes `ASSET:MIN` in the same forms; MIN may be zero.
+//! `--token-out` takes `ASSET:MIN` in the same forms; MIN may be zero. Vault
+//! shares, the `--amount` of a redeem and the `--token-out` of a deposit, are
+//! INTEGER base units only.
 use crate::{
     error::{Error, Result, quoted},
     routing::Family,
@@ -28,7 +30,8 @@ pub(crate) struct Token {
 /// The asset an amount names.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum Asset {
-    /// The wallet's installed asset (a plain INTEGER amount).
+    /// No asset named: a plain INTEGER amount of the wallet's installed asset,
+    /// or of vault shares for [`Use::Shares`].
     Installed,
     Native {
         code: String,
@@ -68,6 +71,18 @@ pub(crate) enum Use {
     Minimum,
     /// A policy parameter value: a nonnegative amount.
     Limit,
+    /// Vault shares: a positive INTEGER of base units.
+    Shares,
+}
+
+/// The uses of an operation's `--amount` and `--token-out`: a redeem spends
+/// vault shares and a deposit receives them.
+pub(crate) fn exec_uses(op: &str) -> (Use, Use) {
+    match op {
+        "redeem" => (Use::Shares, Use::Minimum),
+        "deposit" => (Use::Spend, Use::Shares),
+        _ => (Use::Spend, Use::Minimum),
+    }
 }
 
 impl Amount {
@@ -140,7 +155,14 @@ fn code_valid(code: &str) -> bool {
 
 /// Parses an amount for a rail with the given family and token table.
 pub(crate) fn parse(family: Family, tokens: &[Token], text: &str, usage: Use) -> Result<Amount> {
-    if !text.is_empty() && text.bytes().all(|b| b.is_ascii_digit()) {
+    let integer = !text.is_empty() && text.bytes().all(|b| b.is_ascii_digit());
+    if usage == Use::Shares && !integer {
+        return Err(Error::usage(format!(
+            "{} is not a share amount; vault shares are INTEGER base units",
+            quoted(text)
+        )));
+    }
+    if integer {
         if usage == Use::Minimum {
             return Err(Error::usage(
                 "--token-out needs ASSET:MIN, for example USDC:9.5",

@@ -1,6 +1,13 @@
 //! The `allowit` command. Argument parsing, terminal output and rail adapters
 //! live here; engine requests and service composition come from
 //! `allowit-sdk-engine`, which has no terminal I/O.
+// Shared code that only the Solana and Tempo adapters read is unused in a
+// build without them; the default build checks it.
+#![cfg_attr(
+    not(all(feature = "solana", feature = "tempo")),
+    allow(dead_code, unused_imports)
+)]
+#[cfg(feature = "solana")]
 pub use allowit_native as native;
 pub use allowit_sdk::admin;
 pub use allowit_sdk_engine::{VERSION, error, wallet};
@@ -19,6 +26,7 @@ mod vendors;
 use crate::{config::env_value, error::Error, exit::Exit, term::Out};
 use serde_json::{Value, json};
 use std::io::Write;
+#[cfg(feature = "solana")]
 pub use vendors::solana::handoff;
 pub use vendors::stellar::{approval as stellar_approval, owner as stellar_owner};
 

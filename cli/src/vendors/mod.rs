@@ -1,14 +1,18 @@
 //! Rail adapters. Command files reach a chain only through [`rail`] and the
 //! [`Rail`] trait; rail code lives only in `vendors/<rail>/`, as thin adapters
-//! over `allowit-stellar-wallet`, `allowit-native` and `allowit-tempo`.
+//! over `allowit-stellar-wallet`, `allowit-native` and `allowit-tempo`. The
+//! `solana` and `tempo` features build the last two; a rail left out has an
+//! adapter that lists no verbs.
 //!
 //! Every verb has a default that exits 3 with "VERB is not available on RAIL
 //! yet". An adapter overrides only the verbs whose backend works, and lists
 //! them in [`Caps::verbs`], which `rail show` prints.
 pub(crate) mod address;
 pub(crate) mod asset;
+#[cfg(feature = "solana")]
 pub(crate) mod solana;
 pub(crate) mod stellar;
+#[cfg(feature = "tempo")]
 pub(crate) mod tempo;
 pub(crate) mod typed;
 
@@ -224,6 +228,17 @@ pub(crate) trait Rail {
     fn na(&self, verb: &str) -> Error {
         not_available(verb, self.info().id)
     }
+    /// Checks the operation flags of an `exec` or `eval` request before any
+    /// settings, journal or network access.
+    fn check_exec(
+        &self,
+        _op: &str,
+        _to: &str,
+        _token_out: Option<&Amount>,
+        _args: Option<&serde_json::Value>,
+    ) -> Result<()> {
+        Ok(())
+    }
     /// Resolves the wallet and policy that an agent request runs under, from
     /// the selected wallet (if any) and the rail's installed profile. Refuses
     /// a selection that the request path cannot confirm. Runs before a
@@ -327,6 +342,7 @@ pub(crate) trait Rail {
 /// Points stderr back at the terminal where an adapter silenced a rail
 /// crate's own progress output.
 pub(crate) fn restore_stderr() {
+    #[cfg(feature = "tempo")]
     tempo::restore_stderr();
 }
 
@@ -359,8 +375,12 @@ pub(crate) const FAMILIES: &[Family] = &[Family::Stellar, Family::Tempo, Family:
 pub(crate) fn formats(family: Family) -> &'static Formats {
     match family {
         Family::Stellar => &stellar::formats::FORMATS,
+        #[cfg(feature = "solana")]
         Family::Solana => &solana::formats::FORMATS,
+        #[cfg(feature = "tempo")]
         Family::Tempo => &tempo::formats::FORMATS,
+        #[cfg(not(all(feature = "solana", feature = "tempo")))]
+        _ => &unbuilt::FORMATS,
     }
 }
 
@@ -368,8 +388,49 @@ pub(crate) fn formats(family: Family) -> &'static Formats {
 pub(crate) fn rail(info: &'static RailInfo) -> Box<dyn Rail> {
     match info.family {
         Family::Stellar => Box::new(stellar::Stellar(info)),
+        #[cfg(feature = "solana")]
         Family::Solana => Box::new(solana::Solana(info)),
+        #[cfg(feature = "tempo")]
         Family::Tempo => Box::new(tempo::Tempo(info)),
+        #[cfg(not(all(feature = "solana", feature = "tempo")))]
+        _ => Box::new(unbuilt::Unbuilt(info)),
+    }
+}
+
+/// A rail that this build leaves out: no address matches it and its adapter
+/// lists no verbs, so every command on it exits 3.
+#[cfg(not(all(feature = "solana", feature = "tempo")))]
+mod unbuilt {
+    use super::{Caps, Formats, Rail, RailInfo, Token};
+    const UNBUILT: &str = "a rail this binary is built without";
+    pub(super) const FORMATS: Formats = Formats {
+        account: (|_| false, UNBUILT),
+        wallet: (|_| false, UNBUILT),
+        recipient: (|_| false, UNBUILT),
+        token: (|_| false, UNBUILT),
+        asset_contract: |_| None,
+        issuer_decimals: None,
+    };
+    pub(super) struct Unbuilt(pub &'static RailInfo);
+    impl Rail for Unbuilt {
+        fn info(&self) -> &'static RailInfo {
+            self.0
+        }
+        fn tokens(&self) -> &'static [Token] {
+            &[]
+        }
+        fn caps(&self) -> Caps {
+            Caps {
+                curve: "",
+                address_is_key: false,
+                service_asset: "",
+                ops: &[],
+                exec_build_only: false,
+                param_keys: &[],
+                signing: &[],
+                verbs: &[],
+            }
+        }
     }
 }
 
@@ -565,8 +626,10 @@ pub(super) mod tests {
                     error.message
                 );
             }
-            for op in ["swap", "deposit", "redeem", "custom"] {
-                assert_eq!(require_op(r.as_ref(), op).unwrap_err().code, 3);
+            for op in ["transfer", "swap", "deposit", "redeem", "custom"] {
+                if !caps.ops.contains(&op) {
+                    assert_eq!(require_op(r.as_ref(), op).unwrap_err().code, 3);
+                }
             }
             let build = Signing {
                 with: SignWith::BuildOnly,

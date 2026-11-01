@@ -18,8 +18,7 @@ pub struct PublicWallet {
 fn public(network: &str, seed: &[u8; 32]) -> Result<PublicWallet> {
     let family = routing::family(network)?;
     let (address, public_key, key_type) = if family == Family::Tempo {
-        let (address, public_key) = allowit_tempo::wallet::public_key(seed)
-            .map_err(|_| Error::config("Invalid Tempo wallet seed"))?;
+        let (address, public_key) = tempo::public_key(seed)?;
         (address, public_key, "secp256k1".to_owned())
     } else {
         let key = ed25519_dalek::SigningKey::from_bytes(seed)
@@ -39,6 +38,33 @@ fn public(network: &str, seed: &[u8; 32]) -> Result<PublicWallet> {
         public_key,
         key_type,
     })
+}
+/// Tempo (eip155) secp256k1 keys. A build without the `tempo` feature refuses
+/// them with exit 3.
+#[cfg(feature = "tempo")]
+mod tempo {
+    use crate::error::{Error, Result};
+    pub(super) fn public_key(seed: &[u8; 32]) -> Result<(String, String)> {
+        allowit_tempo::wallet::public_key(seed)
+            .map_err(|_| Error::config("Invalid Tempo wallet seed"))
+    }
+    pub(super) fn validate_public(address: &str, public_key: &str) -> Result<()> {
+        allowit_tempo::wallet::validate_public(address, public_key)
+            .map_err(|_| Error::usage("Invalid Tempo public wallet"))
+    }
+}
+#[cfg(not(feature = "tempo"))]
+mod tempo {
+    use crate::error::{Error, Result};
+    pub(super) fn unbuilt() -> Error {
+        Error::unsupported("Tempo keys are not built into this binary")
+    }
+    pub(super) fn public_key(_: &[u8; 32]) -> Result<(String, String)> {
+        Err(unbuilt())
+    }
+    pub(super) fn validate_public(_: &str, _: &str) -> Result<()> {
+        Err(unbuilt())
+    }
 }
 fn stellar_address(key: &[u8; 32]) -> String {
     let mut bytes = vec![6 << 3];
@@ -78,6 +104,11 @@ fn storage(path: &Path) -> Result<(Store, String)> {
 /// Generates an executor key in the rail's existing private-file format.
 pub fn generate_wallet(network: &str, path: &Path) -> Result<PublicWallet> {
     let family = routing::family(network)?;
+    // The seed loop below retries only invalid seeds.
+    #[cfg(not(feature = "tempo"))]
+    if family == Family::Tempo {
+        return Err(tempo::unbuilt());
+    }
     let (_lock, _name) = storage(path)?;
     let mut seed = Zeroizing::new([0u8; 32]);
     let metadata = loop {
@@ -280,8 +311,7 @@ impl PublicWallet {
             if self.key_type != "secp256k1" {
                 return Err(Error::usage("Invalid public key type"));
             }
-            allowit_tempo::wallet::validate_public(&self.address, &self.public_key)
-                .map_err(|_| Error::usage("Invalid Tempo public wallet"))?;
+            tempo::validate_public(&self.address, &self.public_key)?;
             self.address.clone()
         } else {
             if self.key_type != "ed25519" {
