@@ -200,7 +200,7 @@ The facade is for your editor. Compilation and evaluation still go through the S
 | [`cli/skills/allowit/`](cli/skills/allowit/SKILL.md) | | Instructions for an AI agent that compiles and evaluates policies |
 | [`docs/`](docs/) | | Policy language reference and execution requirements |
 | [`docs/examples/`](docs/examples/) | | Three policies and two request contexts used throughout this README |
-| [`scripts/build.sh`](scripts/build.sh) | | Checks the cross-repository pins, then builds the workspace |
+| [`scripts/build.sh`](scripts/build.sh) | | Checks the cross-repository pins and Cargo.lock, then builds the workspace |
 
 All packages share one Cargo workspace, one `Cargo.lock` and one version, and depend on each other by path. Code from other repositories comes in as git dependencies, each pinned by full commit in the root `Cargo.toml`. Pins point one way: this SDK depends on the rail crates and on Allowit core, and the rail crates depend on Allowit core.
 
@@ -229,8 +229,8 @@ A compiled artifact is bound by its `source_hash` and `ir_hash`, so an owner can
 ## Development
 
 ```sh
-scripts/build.sh            # fail on a stale cross-repository pin, then build the workspace
-scripts/build.sh --check    # only check the cross-repository pins
+scripts/build.sh            # fail on a stale cross-repository pin or a second copy of a git package in Cargo.lock, then build the workspace
+scripts/build.sh --check    # only check the cross-repository pins and Cargo.lock
 scripts/build.sh --update   # move stale pins to their tracked commit, refresh Cargo.lock, then build
 ```
 

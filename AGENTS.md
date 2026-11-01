@@ -23,12 +23,14 @@ on Allowit core. Never move core or rail code into this repository, and never
 add a `[patch]` section. Each git dependency is pinned by full `rev` in the
 root `[workspace.dependencies]` (the policy template repeats the core pin), and
 `[workspace.metadata.allowit.track]` says which revision it must be pinned to.
-Run `scripts/build.sh` before pushing: it fails on a stale pin and builds the
-workspace. `scripts/build.sh --update` rewrites stale pins and `Cargo.lock`.
+Run `scripts/build.sh` before pushing: it fails on a stale pin or on a second
+copy of a git package in `Cargo.lock`, then builds the workspace. `scripts/build.sh --update` rewrites stale pins and `Cargo.lock`.
 Update the rail repositories to a new core commit before this SDK, so that
-`Cargo.lock` holds one allowit-core revision.
+`Cargo.lock` holds one allowit-core revision; the build script fails
+otherwise.
 
 `allowit-stellar-wallet` on `stellar-core` still depends on `allowit-sdk` from
 this repository at 67f5d69. `cli/src/vendors/stellar/run.rs` converts the
 execution request between the two core copies and fails closed. Remove that
-conversion when the wallet depends on allowit-core.
+conversion when the wallet depends on allowit-core. Until then `Cargo.lock`
+holds two copies of package `allowit-sdk`, and `scripts/build.sh` fails.
