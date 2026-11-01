@@ -15,7 +15,7 @@ name = "allowit"
 path = "src/main.rs"
 
 [dependencies]
-allowit-sdk = { path = "../core", features = ["client"] }
+allowit-sdk = { workspace = true, features = ["default", "client"] }
 allowit-sdk-engine = { path = "../engine" }
 allowit-native.workspace = true
 allowit-stellar-wallet.workspace = true

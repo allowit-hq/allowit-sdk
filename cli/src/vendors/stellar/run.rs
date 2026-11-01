@@ -14,7 +14,7 @@ use allowit_stellar_wallet::{
     self as sdk, DetachedSignature, OperationStatus, PreparedOperation, SignedOperation,
     WalletConfig, WalletRoute,
 };
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use serde_json::json;
 use std::{
     io::Read,
@@ -111,6 +111,18 @@ fn clock() -> Result<u64> {
 }
 fn checked<T>(v: sdk::Result<T>) -> Result<T> {
     v.map_err(Error::config)
+}
+/// allowit-stellar-wallet builds against its own allowit-sdk pin, so its
+/// typed-workflow types are distinct from this crate's. Convert through JSON
+/// and fail closed unless the value survives unchanged.
+fn convert<T: Serialize, U: Serialize + DeserializeOwned>(value: &T) -> Result<U> {
+    let changed = || Error::config("Stellar request does not match the wallet request format");
+    let json = serde_json::to_value(value).map_err(|_| changed())?;
+    let out: U = serde_json::from_value(json.clone()).map_err(|_| changed())?;
+    if serde_json::to_value(&out).map_err(|_| changed())? != json {
+        return Err(changed());
+    }
+    Ok(out)
 }
 fn journal_error(_: Error) -> Error {
     Error::config("Stellar operation journal is unsafe or unreadable; retain the original journal")
@@ -335,7 +347,7 @@ impl Client {
             || p.request.operation.nonce != operation_nonce(&self.bundle.policy_id, id)
             || r.operation.transaction_hash != sdk::hex(&p.transaction_hash)
             || record.is_some_and(|old| {
-                old.request != p.request
+                !convert::<_, ExecutionRequest>(&p.request).is_ok_and(|v| v == old.request)
                     || !config_matches(&old.config, &p.config)
                     || old.prepared.as_ref().is_some_and(|v| v != p)
             })
@@ -460,7 +472,10 @@ fn run_locked(
             "The operation nonce does not bind this policy and request ID",
         ));
     }
-    checked(sdk::transfer_from_request(&c.bundle.config, &request))?;
+    checked(sdk::transfer_from_request(
+        &c.bundle.config,
+        &convert(&request)?,
+    ))?;
     let name = sdk::hex(&request.operation.nonce);
     let old = journal.load::<Record>(&name).map_err(journal_error)?;
     let (mut record, resumed) = if let Some(old) = old {
@@ -567,15 +582,18 @@ fn poll(
     let deadline = std::time::Instant::now() + wait;
     loop {
         let r = c.status(id, record.as_ref())?;
-        let mut old = record.unwrap_or_else(|| Record {
-            policy_id: c.bundle.policy_id.clone(),
-            request_id: id.into(),
-            config: c.bundle.config.clone(),
-            request: r.prepared.request.clone(),
-            prepared: Some(r.prepared.clone()),
-            agent_signature: None,
-            status: None,
-        });
+        let mut old = match record {
+            Some(old) => old,
+            None => Record {
+                policy_id: c.bundle.policy_id.clone(),
+                request_id: id.into(),
+                config: c.bundle.config.clone(),
+                request: convert(&r.prepared.request)?,
+                prepared: Some(r.prepared.clone()),
+                agent_signature: None,
+                status: None,
+            },
+        };
         if old.prepared.is_none() {
             old.prepared = Some(r.prepared.clone());
         }
@@ -821,5 +839,46 @@ mod native_revalidation_tests {
         client
             .validate(&response, "request-current", None, true)
             .unwrap();
+        // The retained request is a core ExecutionRequest; the response
+        // carries the wallet's copy of that type.
+        let mut record = Record {
+            policy_id: "policy-current".into(),
+            request_id: "request-current".into(),
+            config: client.bundle.config.clone(),
+            request: convert(&response.prepared.request).unwrap(),
+            prepared: Some(response.prepared.clone()),
+            agent_signature: None,
+            status: None,
+        };
+        client
+            .validate(&response, "request-current", Some(&record), true)
+            .unwrap();
+        record.request.operation.nonce[0] ^= 1;
+        assert!(
+            client
+                .validate(&response, "request-current", Some(&record), true)
+                .is_err()
+        );
+    }
+    #[test]
+    fn requests_convert_between_core_copies_only_without_change() {
+        let data: serde_json::Value = serde_json::from_str(include_str!(
+            "../../../tests/fixtures/stellar-native-revalidation-rpc.json"
+        ))
+        .unwrap();
+        let signed: SignedOperation = serde_json::from_value(data["signed"].clone()).unwrap();
+        let wallet = signed.prepared.request;
+        let core: ExecutionRequest = convert(&wallet).unwrap();
+        assert!(wallet == convert(&core).unwrap());
+        let mut extra = serde_json::to_value(&core).unwrap();
+        extra["unexpected"] = json!(true);
+        assert!(convert::<_, ExecutionRequest>(&extra).is_err());
+        // A target type that silently drops a field is refused too.
+        #[derive(Serialize, Deserialize)]
+        struct Narrow {
+            kept: u8,
+        }
+        assert!(convert::<_, Narrow>(&json!({"kept": 1, "dropped": 2})).is_err());
+        assert!(convert::<_, Narrow>(&json!({"kept": 1})).is_ok());
     }
 }

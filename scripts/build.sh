@@ -108,4 +108,3 @@ fi
 [ "$mode" = check ] && exit 0
 
 cargo build --workspace --all-targets --locked
-cargo rustc --locked -p allowit-sdk --release --lib --target wasm32-unknown-unknown --crate-type cdylib

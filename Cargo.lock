@@ -16,7 +16,7 @@ name = "allowit-cli"
 version = "0.3.0"
 dependencies = [
  "allowit-native",
- "allowit-sdk",
+ "allowit-sdk 0.1.0 (git+https://github.com/allowit-hq/allowit-core.git?rev=e68ad4be5e4d1c28b8435982a2a208d2f872ba4e)",
  "allowit-sdk-engine",
  "allowit-solana-vendor",
  "allowit-stellar-wallet",
@@ -39,7 +39,8 @@ dependencies = [
 
 [[package]]
 name = "allowit-native"
-version = "0.3.0"
+version = "0.1.0"
+source = "git+https://github.com/allowit-hq/allowit-contracts-solana.git?rev=51cf9a6543e96811482e78d4a56f1b711d787dbd#51cf9a6543e96811482e78d4a56f1b711d787dbd"
 dependencies = [
  "base64 0.22.1",
  "bs58",
@@ -58,14 +59,30 @@ dependencies = [
 name = "allowit-policy-template"
 version = "0.3.0"
 dependencies = [
- "allowit-sdk",
+ "allowit-sdk 0.1.0 (git+https://github.com/allowit-hq/allowit-core.git?rev=e68ad4be5e4d1c28b8435982a2a208d2f872ba4e)",
 ]
 
 [[package]]
 name = "allowit-sdk"
-version = "0.3.0"
+version = "0.1.0"
+source = "git+https://github.com/allowit-hq/allowit-sdk.git?rev=67f5d696847992e18131f815ce905713ec3646e1#67f5d696847992e18131f815ce905713ec3646e1"
 dependencies = [
- "borsh",
+ "proc-macro2",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "solana-sha256-hasher",
+ "syn 2.0.119",
+ "unicode-ident",
+ "unicode-normalization",
+ "unicode-script",
+]
+
+[[package]]
+name = "allowit-sdk"
+version = "0.1.0"
+source = "git+https://github.com/allowit-hq/allowit-core.git?rev=e68ad4be5e4d1c28b8435982a2a208d2f872ba4e#e68ad4be5e4d1c28b8435982a2a208d2f872ba4e"
+dependencies = [
  "libc",
  "proc-macro2",
  "reqwest",
@@ -85,7 +102,7 @@ name = "allowit-sdk-engine"
 version = "0.3.0"
 dependencies = [
  "allowit-native",
- "allowit-sdk",
+ "allowit-sdk 0.1.0 (git+https://github.com/allowit-hq/allowit-core.git?rev=e68ad4be5e4d1c28b8435982a2a208d2f872ba4e)",
  "allowit-solana-delegated-x402",
  "allowit-solana-paysh-cooperating",
  "allowit-solana-service-rpc",
@@ -113,10 +130,11 @@ dependencies = [
 
 [[package]]
 name = "allowit-solana-delegated-x402"
-version = "0.3.0"
+version = "0.1.0"
+source = "git+https://github.com/allowit-hq/allowit-contracts-solana.git?rev=51cf9a6543e96811482e78d4a56f1b711d787dbd#51cf9a6543e96811482e78d4a56f1b711d787dbd"
 dependencies = [
  "allowit-native",
- "allowit-sdk",
+ "allowit-sdk 0.1.0 (git+https://github.com/allowit-hq/allowit-core.git?rev=e68ad4be5e4d1c28b8435982a2a208d2f872ba4e)",
  "base64 0.22.1",
  "bs58",
  "reqwest",
@@ -126,26 +144,29 @@ dependencies = [
 
 [[package]]
 name = "allowit-solana-paysh-cooperating"
-version = "0.3.0"
+version = "0.1.0"
+source = "git+https://github.com/allowit-hq/allowit-contracts-solana.git?rev=51cf9a6543e96811482e78d4a56f1b711d787dbd#51cf9a6543e96811482e78d4a56f1b711d787dbd"
 dependencies = [
- "allowit-sdk",
+ "allowit-sdk 0.1.0 (git+https://github.com/allowit-hq/allowit-core.git?rev=e68ad4be5e4d1c28b8435982a2a208d2f872ba4e)",
  "reqwest",
  "serde_json",
 ]
 
 [[package]]
 name = "allowit-solana-service-rpc"
-version = "0.3.0"
+version = "0.1.0"
+source = "git+https://github.com/allowit-hq/allowit-contracts-solana.git?rev=51cf9a6543e96811482e78d4a56f1b711d787dbd#51cf9a6543e96811482e78d4a56f1b711d787dbd"
 dependencies = [
- "allowit-sdk",
+ "allowit-sdk 0.1.0 (git+https://github.com/allowit-hq/allowit-core.git?rev=e68ad4be5e4d1c28b8435982a2a208d2f872ba4e)",
  "serde_json",
 ]
 
 [[package]]
 name = "allowit-solana-service-upstreams"
-version = "0.3.0"
+version = "0.1.0"
+source = "git+https://github.com/allowit-hq/allowit-contracts-solana.git?rev=51cf9a6543e96811482e78d4a56f1b711d787dbd#51cf9a6543e96811482e78d4a56f1b711d787dbd"
 dependencies = [
- "allowit-sdk",
+ "allowit-sdk 0.1.0 (git+https://github.com/allowit-hq/allowit-core.git?rev=e68ad4be5e4d1c28b8435982a2a208d2f872ba4e)",
  "allowit-vendor-google-air-quality",
  "allowit-vendor-open-meteo",
  "allowit-vendor-paysh-catalog",
@@ -154,9 +175,10 @@ dependencies = [
 
 [[package]]
 name = "allowit-solana-vendor"
-version = "0.3.0"
+version = "0.1.0"
+source = "git+https://github.com/allowit-hq/allowit-contracts-solana.git?rev=51cf9a6543e96811482e78d4a56f1b711d787dbd#51cf9a6543e96811482e78d4a56f1b711d787dbd"
 dependencies = [
- "allowit-sdk",
+ "allowit-sdk 0.1.0 (git+https://github.com/allowit-hq/allowit-core.git?rev=e68ad4be5e4d1c28b8435982a2a208d2f872ba4e)",
  "reqwest",
  "serde_json",
 ]
@@ -166,7 +188,7 @@ name = "allowit-stellar-wallet"
 version = "0.1.0"
 source = "git+https://github.com/allowit-hq/allowit-contracts-stellar.git?rev=2415bff42c972281fd4648bdbdc44dcf3cfccf82#2415bff42c972281fd4648bdbdc44dcf3cfccf82"
 dependencies = [
- "allowit-sdk",
+ "allowit-sdk 0.1.0 (git+https://github.com/allowit-hq/allowit-sdk.git?rev=67f5d696847992e18131f815ce905713ec3646e1)",
  "base64 0.22.1",
  "ed25519-dalek",
  "reqwest",
@@ -179,9 +201,10 @@ dependencies = [
 
 [[package]]
 name = "allowit-tempo"
-version = "0.3.0"
+version = "0.1.0"
+source = "git+https://github.com/allowit-hq/allowit-contracts-tempo.git?rev=a04ac42178cb32aab10badf029f102385a29d3e2#a04ac42178cb32aab10badf029f102385a29d3e2"
 dependencies = [
- "allowit-sdk",
+ "allowit-sdk 0.1.0 (git+https://github.com/allowit-hq/allowit-core.git?rev=e68ad4be5e4d1c28b8435982a2a208d2f872ba4e)",
  "base64 0.22.1",
  "chrono",
  "k256",
@@ -201,11 +224,11 @@ dependencies = [
 
 [[package]]
 name = "allowit-tempo-services"
-version = "0.3.0"
+version = "0.1.0"
+source = "git+https://github.com/allowit-hq/allowit-contracts-tempo.git?rev=a04ac42178cb32aab10badf029f102385a29d3e2#a04ac42178cb32aab10badf029f102385a29d3e2"
 dependencies = [
- "allowit-sdk",
+ "allowit-sdk 0.1.0 (git+https://github.com/allowit-hq/allowit-core.git?rev=e68ad4be5e4d1c28b8435982a2a208d2f872ba4e)",
  "k256",
- "num-bigint",
  "serde",
  "serde_json",
  "sha3",
@@ -213,37 +236,40 @@ dependencies = [
 
 [[package]]
 name = "allowit-vendor-google-air-quality"
-version = "0.3.0"
+version = "0.1.0"
+source = "git+https://github.com/allowit-hq/allowit-contracts-solana.git?rev=51cf9a6543e96811482e78d4a56f1b711d787dbd#51cf9a6543e96811482e78d4a56f1b711d787dbd"
 dependencies = [
- "allowit-sdk",
+ "allowit-sdk 0.1.0 (git+https://github.com/allowit-hq/allowit-core.git?rev=e68ad4be5e4d1c28b8435982a2a208d2f872ba4e)",
  "reqwest",
  "serde_json",
 ]
 
 [[package]]
 name = "allowit-vendor-open-meteo"
-version = "0.3.0"
+version = "0.1.0"
+source = "git+https://github.com/allowit-hq/allowit-contracts-solana.git?rev=51cf9a6543e96811482e78d4a56f1b711d787dbd#51cf9a6543e96811482e78d4a56f1b711d787dbd"
 dependencies = [
- "allowit-sdk",
+ "allowit-sdk 0.1.0 (git+https://github.com/allowit-hq/allowit-core.git?rev=e68ad4be5e4d1c28b8435982a2a208d2f872ba4e)",
  "reqwest",
  "serde_json",
 ]
 
 [[package]]
 name = "allowit-vendor-paysh-catalog"
-version = "0.3.0"
+version = "0.1.0"
+source = "git+https://github.com/allowit-hq/allowit-contracts-solana.git?rev=51cf9a6543e96811482e78d4a56f1b711d787dbd#51cf9a6543e96811482e78d4a56f1b711d787dbd"
 dependencies = [
- "allowit-sdk",
+ "allowit-sdk 0.1.0 (git+https://github.com/allowit-hq/allowit-core.git?rev=e68ad4be5e4d1c28b8435982a2a208d2f872ba4e)",
  "serde_json",
- "sha2 0.10.9",
 ]
 
 [[package]]
 name = "allowit-vendor-paysh-stock"
-version = "0.3.0"
+version = "0.1.0"
+source = "git+https://github.com/allowit-hq/allowit-contracts-solana.git?rev=51cf9a6543e96811482e78d4a56f1b711d787dbd#51cf9a6543e96811482e78d4a56f1b711d787dbd"
 dependencies = [
  "allowit-native",
- "allowit-sdk",
+ "allowit-sdk 0.1.0 (git+https://github.com/allowit-hq/allowit-core.git?rev=e68ad4be5e4d1c28b8435982a2a208d2f872ba4e)",
  "base64 0.22.1",
  "chrono",
  "serde",
@@ -317,29 +343,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d2f6c7dbe95a6ed67ad9f18e57daf93a2f034c524b99fd2b76d18fdfeb6660aa"
 dependencies = [
  "hybrid-array",
-]
-
-[[package]]
-name = "borsh"
-version = "1.6.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d1da5ab77c1437701eeff7c88d968729e7766172279eab0676857b3d63af7a6f"
-dependencies = [
- "borsh-derive",
- "cfg_aliases",
-]
-
-[[package]]
-name = "borsh-derive"
-version = "1.6.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bfcfdc083699101d5a7965e49925975f2f55060f94f9a05e7187be95d530ca59"
-dependencies = [
- "once_cell",
- "proc-macro-crate",
- "proc-macro2",
- "quote",
- "syn 2.0.119",
 ]
 
 [[package]]
@@ -1457,15 +1460,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4a6394b9e965e73d0a289ee54f589087e2c676aedf60885baf52c76b771e4958"
 
 [[package]]
-name = "proc-macro-crate"
-version = "3.5.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e67ba7e9b2b56446f1d419b1d807906278ffa1a658a8a5d8a39dcb1f5a78614f"
-dependencies = [
- "toml_edit",
-]
-
-[[package]]
 name = "proc-macro2"
 version = "1.0.107"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2215,36 +2209,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "toml_datetime"
-version = "1.1.1+spec-1.1.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3165f65f62e28e0115a00b2ebdd37eb6f3b641855f9d636d3cd4103767159ad7"
-dependencies = [
- "serde_core",
-]
-
-[[package]]
-name = "toml_edit"
-version = "0.25.15+spec-1.1.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1340ea94a5856333492c9064b02c778b191dd2c853778d9609debdcdfea3a614"
-dependencies = [
- "indexmap",
- "toml_datetime",
- "toml_parser",
- "winnow",
-]
-
-[[package]]
-name = "toml_parser"
-version = "1.1.3+spec-1.1.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1d38ac1cf9b95face32296c0a3ede1fdc270627c9d9c02a7274dd6d960dc4d56"
-dependencies = [
- "winnow",
-]
-
-[[package]]
 name = "tower"
 version = "0.5.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2637,15 +2601,6 @@ name = "windows_x86_64_msvc"
 version = "0.52.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "589f6da84c646204747d1270a2a5661ea66ed1cced2631d546fdfb155959f9ec"
-
-[[package]]
-name = "winnow"
-version = "1.0.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "23b97319f7b8343df12cc98938e5c3eb436064524c8d2b4e30a1d3a36eecdf81"
-dependencies = [
- "memchr",
-]
 
 [[package]]
 name = "wit-bindgen"
