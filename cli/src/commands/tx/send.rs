@@ -1,0 +1,23 @@
+//! `allowit tx send FILE|-`.
+use crate::{
+    ctx::{Ctx, read_input},
+    error::Result,
+};
+use std::path::PathBuf;
+
+/// Submit a signed transaction from --build-only output
+#[derive(clap::Args, Debug)]
+pub(crate) struct Args {
+    /// The signed transaction; - reads stdin
+    pub file: PathBuf,
+}
+
+pub(crate) fn run(args: Args, cx: &mut Ctx) -> Result<i32> {
+    let vendor = cx.vendor()?;
+    // Refuse what the rail cannot serve before reading any input.
+    if !vendor.caps().verbs.contains(&"tx send") {
+        return Err(vendor.na("tx send"));
+    }
+    let bytes = read_input(&args.file)?;
+    vendor.tx_send(cx, &bytes)
+}

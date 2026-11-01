@@ -1,6 +1,7 @@
 //! Quote, call and status rendering for backend operations. [`purchase`] posts
 //! `/api/gateway/quote`, checks the quote binding and expiry, then posts
-//! `/api/gateway/call` once; an uncertain result points to `allowit call status`.
+//! `/api/gateway/call` once; an uncertain result names the operation ID that
+//! a retry reuses with `--request-id`.
 use super::{
     Gateway,
     args::{self, Common},
@@ -30,24 +31,6 @@ pub(crate) fn operation_id(common: &Common, request: &Value) -> String {
     );
     h.update(request.to_string());
     format!("allowit-{:x}", h.finalize())[..48].into()
-}
-
-fn recovery_context(common: &Common) -> String {
-    let mut result = String::new();
-    for (flag, value) in [
-        ("--policy", &common.policy_selector),
-        ("--account", &common.account),
-        ("--rail", &common.rail),
-        ("--rpc", &common.rpc_url),
-    ] {
-        if let Some(v) = value {
-            result += &format!(" {flag} '{}'", v.replace('\'', "'\\''"));
-        }
-    }
-    if common.sandbox {
-        result += " --sandbox";
-    }
-    result
 }
 
 pub(crate) fn purchase(
@@ -99,14 +82,15 @@ pub(crate) fn purchase(
     {
         call["maxDebitMoney"] = limit.clone();
     }
-    let recovery = format!("allowit call status {id}{}", recovery_context(common));
-    *stderr += &format!("allowit: operation {id}; if uncertain, check with {recovery}\n");
+    // The operation ID reaches the terminal before the request leaves; a
+    // retry needs it, so -q keeps it.
+    *stderr += &format!("{id}\n");
     crate::flush_stderr(stderr);
     let value = client
         .send("POST", "/api/gateway/call", Some(&call))
         .map_err(|mut e| {
             if e.code == 5 {
-                e.message += &format!("; check {recovery}; do not create a new operation ID");
+                e.message += &format!("; retry only with --request-id {id}");
             }
             e
         })?;
@@ -192,13 +176,37 @@ pub(crate) fn render_operation(
             stdout.push_str(body);
         }
         if status >= 400 {
-            *stderr += &format!("allowit: delivered upstream HTTP {status}\n");
+            *stderr += &format!("httpStatus  {status}\n");
             return Ok(4);
         }
     } else {
-        *stderr += &format!(
-            "allowit: operation state {state}; settlement and resource delivery remain separate\n"
-        );
+        *stdout += &crate::term::text(value);
     }
     Ok(exit)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn text_results_are_data_lines_without_prose() {
+        let common = Common::default();
+        let (mut stdout, mut stderr) = (String::new(), String::new());
+        let pending = json!({"operationId": "allowit-0001", "state": "pending"});
+        assert_eq!(
+            render_operation(&pending, &common, &mut stdout, &mut stderr).unwrap(),
+            12
+        );
+        assert_eq!(stdout, "operationId  allowit-0001\nstate        pending\n");
+        assert!(stderr.is_empty(), "{stderr}");
+        let (mut stdout, mut stderr) = (String::new(), String::new());
+        let delivered = json!({"operationId": "allowit-0001", "state": "delivered",
+            "result": {"status": 404, "body": "missing"}});
+        assert_eq!(
+            render_operation(&delivered, &common, &mut stdout, &mut stderr).unwrap(),
+            4
+        );
+        assert_eq!(stdout, "missing");
+        assert_eq!(stderr, "httpStatus  404\n");
+    }
 }

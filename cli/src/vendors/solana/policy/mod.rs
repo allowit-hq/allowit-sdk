@@ -1,7 +1,10 @@
-//! Local policy configuration and presentation. Chain and journal semantics belong
-//! to the pinned SDK library; this module never launches another command process.
-//! Reads `ALLOWIT_POLICY_DIR`, `ALLOWIT_NETWORK`, `ALLOWIT_RPC_URL` and the key
-//! and deployment settings in `commands/policy/usage.txt`.
+//! The native Solana vault lifecycle over `allowit-native`. Chain and journal
+//! semantics belong to the pinned library; this module never launches another
+//! command process. The adapter passes resolved settings (the selected rail,
+//! the signing key file, the request ID and the RPC override) through
+//! `config::with_settings`; `ALLOWIT_POLICY_DIR` (default `.allowit`) holds
+//! the policy, its public context and its journal. The selected wallet,
+//! request ID and additional-operation choice arrive as [`RunOptions`].
 mod deploy;
 mod generate;
 mod import;
@@ -11,6 +14,7 @@ mod status;
 use crate::{
     config::env_value,
     error::{Error, Result},
+    term::Out,
     vendors::solana::audit::{AuditConfig, AuditedRpc, Reporter, execution_identity},
 };
 use allowit_native::{
@@ -29,6 +33,35 @@ use std::{
     path::{Path, PathBuf},
     sync::Arc,
 };
+
+/// Per-run choices that the command line makes.
+#[derive(Clone, Debug, Default)]
+pub(crate) struct RunOptions {
+    /// The selected wallet. A vault operation refuses another vault.
+    pub wallet: Option<String>,
+    /// The operation's request ID; a retry reuses it.
+    pub request_id: Option<String>,
+    /// An explicitly additional fund or withdraw after an uncertain one.
+    pub additional: bool,
+    /// Hidden verbs of earlier releases, whose hints name their settings.
+    pub legacy: bool,
+    /// The derived ID of a vault creation. A new request ID for the same
+    /// creation replaces its latest expired unsigned preparation.
+    pub creation: Option<String>,
+}
+impl RunOptions {
+    /// The settings of the hidden verbs of earlier releases.
+    pub(crate) fn from_environment(wallet: Option<String>) -> Self {
+        Self {
+            wallet,
+            request_id: crate::config::env_present("ALLOWIT_REQUEST_ID")
+                .then(|| env_value("ALLOWIT_REQUEST_ID")),
+            additional: env_value("ALLOWIT_ADDITIONAL_OWNER_OPERATION") == "1",
+            legacy: true,
+            creation: None,
+        }
+    }
+}
 
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -67,8 +100,15 @@ impl Local {
         ))?;
         let context: Option<Context> = read_optional(&directory.join("context.json"))?;
         if let Some(c) = &context {
+            let present = env_value("ALLOWIT_NETWORK");
+            if !present.is_empty()
+                && crate::routing::normalize(&present)? != crate::routing::normalize(&c.network)?
+            {
+                return Err(Error::config(
+                    "the selected rail differs from the imported policy context",
+                ));
+            }
             for (name, value) in [
-                ("ALLOWIT_NETWORK", c.network.clone()),
                 ("ALLOWIT_MINT", c.mint.to_string()),
                 ("ALLOWIT_EXECUTOR", c.executor.to_string()),
                 ("ALLOWIT_AUTHORITY", c.authority.to_string()),
@@ -88,7 +128,8 @@ impl Local {
                 .map(|c| c.network.as_str())
                 .unwrap_or("solana:testnet"),
         );
-        let network = crate::routing::normalize(&network)?.to_owned();
+        // The native library names rails by their friendly names.
+        let network = crate::routing::legacy_name(&network)?.to_owned();
         native(genesis(&network))?;
         let mint = if matches!(name, "generate" | "import") {
             context.as_ref().map(|c| c.mint)
@@ -166,13 +207,24 @@ impl Local {
         Ok((client, audit))
     }
     fn save_policy(&self, policy: &Policy) -> Result<()> {
-        create_private(
-            &self.policy_file,
-            policy,
-            "A policy already exists here. Choose a new ALLOWIT_POLICY_DIR; keep the previous policy and journal for recovery.",
-        )
+        create_private(&self.policy_file, policy, POLICY_EXISTS)
+    }
+    /// Saves a policy that a creation deploys as this directory's policy,
+    /// which the later vault commands read. The same policy may be there.
+    fn keep_deployed_policy(&self, policy: &Policy) -> Result<()> {
+        let path = self.directory.join("policy.json");
+        match read_optional::<Policy>(&path)? {
+            None => create_private(&path, policy, POLICY_EXISTS),
+            Some(saved)
+                if serde_json::to_value(&saved).ok() == serde_json::to_value(policy).ok() =>
+            {
+                Ok(())
+            }
+            Some(_) => Err(Error::config(POLICY_EXISTS)),
+        }
     }
 }
+const POLICY_EXISTS: &str = "A policy already exists here. Choose a new ALLOWIT_POLICY_DIR; keep the previous policy and journal for recovery.";
 /// Saved policy state shared by status and the owner/executor lifecycle operations.
 struct Session<'a> {
     local: &'a Local,
@@ -183,19 +235,26 @@ struct Session<'a> {
     audit: Option<&'a Reporter>,
     journal: &'a FileJournal,
     lifecycle: &'a PolicyLifecycle<'a>,
+    options: &'a RunOptions,
 }
-pub(crate) fn run(
-    name: &str,
-    pos: &[String],
-    json: bool,
-    stdout: &mut String,
-    stderr: &mut String,
-) -> Result<i32> {
+/// The vault's token mint: the imported policy context's mint, else
+/// `ALLOWIT_MINT`. `None` when neither names one.
+pub(crate) fn configured_mint() -> Result<Option<String>> {
+    let directory = absolute(&configured("ALLOWIT_POLICY_DIR", ".allowit"))?;
+    let context: Option<Context> = read_optional(&directory.join("context.json"))?;
+    if let Some(c) = context {
+        return Ok(Some(c.mint.to_string()));
+    }
+    let mint = public_setting("ALLOWIT_MINT", None)?;
+    Ok(mint.map(|m| m.to_string()))
+}
+
+pub(crate) fn run(name: &str, pos: &[String], options: &RunOptions, out: &mut Out) -> Result<i32> {
     native(allowit_native::journal::require_supported_platform())?;
     let mut local = Local::load(name)?;
     match name {
-        "generate" => return generate::run(&local, pos, json, stdout),
-        "import" => return import::run(&local, pos, json, stdout),
+        "generate" => return generate::run(&local, pos, out),
+        "import" => return import::run(&local, pos, out),
         _ => {}
     }
     let policy: Policy = read_optional(&local.policy_file)?
@@ -229,7 +288,7 @@ pub(crate) fn run(
         ));
     }
     if name == "deploy" {
-        return deploy::run(&local, &policy, pos, json, stdout);
+        return deploy::run(&local, &policy, pos, options, out);
     }
     let owner_role = !matches!(name, "execute" | "status");
     let signer = if owner_role {
@@ -244,6 +303,18 @@ pub(crate) fn run(
         ));
     }
     let (client, audit) = local.client(&policy.id, matches!(name, "execute" | "status"))?;
+    if let Some(wallet) = &options.wallet {
+        // The vault address derives offline from the deployment, owner and policy.
+        let vault = native(client.public_binding(&policy, owner))?
+            .vault
+            .to_string();
+        if &vault != wallet {
+            return Err(Error::config(format!(
+                "the policy in {} is for vault {vault}, not {wallet}",
+                local.directory.display()
+            )));
+        }
+    }
     let journal = FileJournal::new(local.directory.join("journal"));
     if owner_role && local.context.is_none() {
         let bundle = native(client.bundle(&policy, owner))?;
@@ -268,11 +339,12 @@ pub(crate) fn run(
         audit: audit.as_deref(),
         journal: &journal,
         lifecycle: &lifecycle,
+        options,
     };
     if name == "status" {
-        return status::run(&session, json, stdout, stderr);
+        return status::run(&session, out);
     }
-    lifecycle::run(&session, name, pos, json, stdout, stderr)
+    lifecycle::run(&session, name, pos, out)
 }
 
 fn load_signer(name: &str) -> Result<LocalSigner> {

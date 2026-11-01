@@ -51,7 +51,7 @@ That is [`docs/examples/research.rs`](docs/examples/research.rs), and it compile
 - **Deterministic money.** Daily caps, per-transaction caps and purchase tiers use exact integer units and host-authenticated counters, and the daily cap runs before the policy's own control flow.
 - **Preference questions with thresholds.** `check_preference` turns a natural-language question into an auditable step with explicit approve and deny thresholds.
 - **Language server included.** `allowit lsp` speaks JSON-RPC over stdio with diagnostics, hover, completion and a workflow view.
-- **Chain-aware output.** `compile` reports which Stellar wallet implementation fits the source, and `stellar-native` emits the generated Rust for a custom one.
+- **Chain-aware output.** `policy check` reports which Stellar wallet implementation fits the source, and `policy build` emits the generated Rust for a custom one.
 
 ## Quick start
 
@@ -62,10 +62,10 @@ git clone https://github.com/allowit-hq/allowit-sdk.git
 cd allowit-sdk
 
 # Compile a policy and inspect its IR, hashes and workflow
-cargo run --locked --bin allowit -- compile docs/examples/research.rs
+cargo run --locked --bin allowit -- policy check docs/examples/research.rs
 
 # Evaluate it against a request, as the hosted oracle would
-cargo run --locked --bin allowit -- evaluate docs/examples/research.rs docs/examples/context.json oracle
+cargo run --locked --bin allowit -- policy test docs/examples/research.rs --context docs/examples/context.json
 ```
 
 The second command prints a decision (abridged below; the full output also carries the evidence key, source span and hashes). For this example it is `SEMANTIC_EVIDENCE_REQUIRED`: the policy asks a preference question, and nobody has assessed it yet. That is the SDK doing its job. A host obtains an assessment bound to this request, re-evaluates, and only then can the request pass.
@@ -88,10 +88,10 @@ The second command prints a decision (abridged below; the full output also carri
 More to try:
 
 ```sh
-cargo run --locked --bin allowit -- workflow docs/examples/approval.rs                                        # owner-facing step list
-cargo run --locked --bin allowit -- evaluate docs/examples/approval.rs docs/examples/context.json contract     # same policy, contract profile
-cargo run --locked --bin allowit -- evaluate docs/examples/green-investments.rs docs/examples/green-context.json oracle
-cargo run --locked --bin allowit -- registry                                                                  # every supported function, with help text
+cargo run --locked --bin allowit -- policy check docs/examples/approval.rs                                                           # the owner-facing step list is in "workflow"
+cargo run --locked --bin allowit -- policy test docs/examples/approval.rs --context docs/examples/context.json --mode contract           # same policy, contract profile
+cargo run --locked --bin allowit -- policy test docs/examples/green-investments.rs --context docs/examples/green-context.json
+cargo run --locked --bin allowit -- policy functions                                                                                 # every supported function, with help text
 ```
 
 ## Write a policy
@@ -132,33 +132,31 @@ Evaluation takes a JSON request such as [`docs/examples/context.json`](docs/exam
 
 ```sh
 cargo test --locked -p allowit-policy-template
-cargo run --locked --bin allowit -- compile cli/templates/policy/src/policy.rs
+cargo run --locked --bin allowit -- policy check cli/templates/policy/src/policy.rs
 ```
 
 [`cli/templates/policy`](cli/templates/policy/) is an ordinary Cargo crate whose `src/policy.rs` you replace with your own source. It type-checks with `rustc` and compiles through the real policy compiler, so your editor and the SDK agree.
 
 ## The `allowit` CLI
 
-The `allowit` binary in [`cli/`](cli/) has two command families. The agent-facing commands (`show`, `eval`, `exec`, `status`, `policy`, `wallet` and the backend groups such as `call` and `curl`) send requests to a running Allowit service; [the CLI README](cli/README.md) describes them. The policy compiler commands below run the SDK locally and send nothing:
+The `allowit` binary in [`cli/`](cli/) selects a rail, keeps local keys, manages policy wallets and sends agent requests; [the CLI README](cli/README.md) describes every command. The policy commands below run the SDK locally, read no rail, wallet or credential, and send nothing:
 
 ```
-allowit compile|check|workflow POLICY.rs
-allowit evaluate POLICY.rs CONTEXT.json [oracle|contract]
-allowit stellar-native POLICY.rs
-allowit registry
-allowit json [REQUEST.json|-]
+allowit policy check POLICY.rs
+allowit policy test POLICY.rs --context CONTEXT.json [--mode oracle|contract]
+allowit --rail stellar:testnet policy build POLICY.rs [-o OUT]
+allowit policy functions [NAME]
 allowit lsp
 ```
 
-Pass `-` to read a policy or a JSON request from stdin. The JSON commands print pretty output and exit 1 when `ok` is false. These commands read no environment variables and select no network.
+Pass `-` to read a policy or a JSON file from stdin. The JSON commands print pretty output and exit 2 when `ok` is false. The earlier names `compile`, `check`, `workflow`, `evaluate`, `stellar-native` and `registry` stay as hidden aliases, and `json` stays as the hidden editor wire protocol.
 
 | Command | What you get |
 | --- | --- |
-| `compile`, `check`, `workflow` | The compiled policy: validated IR, `source_hash`, `ir_hash`, execution requirements, the owner-facing `workflow` step list, and the recommended Stellar engines |
-| `evaluate` | A decision for one request under the `oracle` (default) or `contract` profile |
-| `registry` | Every supported function with title, signature and description |
-| `json` | Any wire-protocol request, for example `edit_preference` or `compile_stellar_wallet` |
-| `stellar-native` | Generated Rust for a custom Stellar policy wallet, or a clear refusal |
+| `policy check` | The compiled policy: validated IR, `source_hash`, `ir_hash`, execution requirements, the owner-facing `workflow` step list, and the recommended Stellar engines |
+| `policy test` | A decision for one request under the `oracle` (default) or `contract` profile |
+| `policy functions` | Every supported function with title, signature and description |
+| `policy build` | Generated Rust for a custom Stellar policy wallet, or a clear refusal |
 | `lsp` | A stdio language server with diagnostics, hover, completion and `allowit/workflow` |
 
 ## Embed it

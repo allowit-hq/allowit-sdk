@@ -20,17 +20,20 @@ allowit-sdk-engine = { path = "../engine" }
 allowit-native.workspace = true
 allowit-stellar-wallet.workspace = true
 allowit-tempo = { workspace = true, features = ["client"] }
-allowit-solana-vendor.workspace = true
 serde_json_canonicalizer = "0.3"
 ed25519-dalek = "2"
 base64 = "0.22.1"
+clap = { version = "4.6", features = ["derive", "env", "wrap_help"] }
+clap_complete = "4.6"
 libc = "0.2.190"
 regex = "1.11.1"
 reqwest = { version = "0.12.23", default-features = false, features = ["blocking", "native-tls-vendored"] }
 serde = { version = "1.0.219", features = ["derive"] }
 serde_json = { version = "1.0.143", features = ["raw_value", "arbitrary_precision"] }
 sha2 = "0.10.9"
+syntect = { version = "5.2", default-features = false, features = ["default-syntaxes", "default-themes", "regex-fancy", "parsing"] }
 time = { version = "0.3", features = ["parsing"] }
+toml = "0.9"
 url = "2.5.7"
 zeroize = "1.8.2"
 

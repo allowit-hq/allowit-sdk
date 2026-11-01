@@ -59,7 +59,7 @@ A functional Stellar policy receives the request, the owner's `Grant` and the cu
 
 Common rejects discarded rule results, branching, repeated rules and custom map changes; those policies need Custom. Classic G-address wallets support Simple-style signing with service-enforced scalar policies. They pay classic reserves and no Soroban custody rent, and they cannot run Common or Custom rules. Stateful native policies need Common or Custom. Source that needs external evidence has no Stellar recommendation.
 
-The `compile_stellar_wallet` request takes `source`, `network` (`stellar:testnet` or `stellar:mainnet`), `rail` (`classic` or `policy_wallet`), `engine` and `require_onchain`. It returns the selected implementation, the exact Common rules, the source digest and, for Custom only, generated Rust. The SDK never substitutes weaker enforcement when a selection fails. From the CLI, `allowit stellar-native POLICY.rs` emits Custom policy source.
+The `compile_stellar_wallet` request takes `source`, `network` (`stellar:testnet` or `stellar:mainnet`), `rail` (`classic` or `policy_wallet`), `engine` and `require_onchain`. It returns the selected implementation, the exact Common rules, the source digest and, for Custom only, generated Rust. The SDK never substitutes weaker enforcement when a selection fails. From the CLI, `allowit --rail stellar:testnet policy build POLICY.rs` emits Custom policy source.
 
 ## Preference questions
 
