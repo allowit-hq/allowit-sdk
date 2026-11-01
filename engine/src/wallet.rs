@@ -18,8 +18,7 @@ pub struct PublicWallet {
 fn public(network: &str, seed: &[u8; 32]) -> Result<PublicWallet> {
     let family = routing::family(network)?;
     let (address, public_key, key_type) = if family == Family::Tempo {
-        let (address, public_key) = allowit_tempo::wallet::public_key(seed)
-            .map_err(|_| Error::config("Invalid Tempo wallet seed"))?;
+        let (address, public_key) = tempo::public_key(seed)?;
         (address, public_key, "secp256k1".to_owned())
     } else {
         let key = ed25519_dalek::SigningKey::from_bytes(seed)
@@ -39,6 +38,33 @@ fn public(network: &str, seed: &[u8; 32]) -> Result<PublicWallet> {
         public_key,
         key_type,
     })
+}
+/// Tempo (eip155) secp256k1 keys. A build without the `tempo` feature refuses
+/// them with exit 3.
+#[cfg(feature = "tempo")]
+mod tempo {
+    use crate::error::{Error, Result};
+    pub(super) fn public_key(seed: &[u8; 32]) -> Result<(String, String)> {
+        allowit_tempo::wallet::public_key(seed)
+            .map_err(|_| Error::config("Invalid Tempo wallet seed"))
+    }
+    pub(super) fn validate_public(address: &str, public_key: &str) -> Result<()> {
+        allowit_tempo::wallet::validate_public(address, public_key)
+            .map_err(|_| Error::usage("Invalid Tempo public wallet"))
+    }
+}
+#[cfg(not(feature = "tempo"))]
+mod tempo {
+    use crate::error::{Error, Result};
+    pub(super) fn unbuilt() -> Error {
+        Error::unsupported("Tempo keys are not built into this binary")
+    }
+    pub(super) fn public_key(_: &[u8; 32]) -> Result<(String, String)> {
+        Err(unbuilt())
+    }
+    pub(super) fn validate_public(_: &str, _: &str) -> Result<()> {
+        Err(unbuilt())
+    }
 }
 fn stellar_address(key: &[u8; 32]) -> String {
     let mut bytes = vec![6 << 3];
@@ -78,6 +104,11 @@ fn storage(path: &Path) -> Result<(Store, String)> {
 /// Generates an executor key in the rail's existing private-file format.
 pub fn generate_wallet(network: &str, path: &Path) -> Result<PublicWallet> {
     let family = routing::family(network)?;
+    // The seed loop below retries only invalid seeds.
+    #[cfg(not(feature = "tempo"))]
+    if family == Family::Tempo {
+        return Err(tempo::unbuilt());
+    }
     let (_lock, _name) = storage(path)?;
     let mut seed = Zeroizing::new([0u8; 32]);
     let metadata = loop {
@@ -237,13 +268,23 @@ pub fn inspect_wallet(network: &str, path: &Path) -> Result<PublicWallet> {
     bytes.zeroize();
     Ok(metadata)
 }
+/// The networks whose keys this build generates.
+#[cfg(test)]
+fn built_networks() -> Vec<&'static str> {
+    let mut networks = vec!["solana:devnet", "stellar:testnet"];
+    if cfg!(feature = "tempo") {
+        networks.push("eip155:42431");
+    }
+    networks
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     #[test]
     fn public_metadata_cannot_serialize_secret() {
         let seed = [7u8; 32];
-        for network in ["solana:devnet", "stellar:testnet", "eip155:42431"] {
+        for network in built_networks() {
             let p = public(network, &seed).unwrap();
             let v = serde_json::to_value(p).unwrap();
             assert_eq!(v.as_object().unwrap().len(), 4);
@@ -261,12 +302,15 @@ mod tests {
         assert_eq!(stellar.public_key, stellar.address);
         assert!(stellar.public_key.starts_with('G'));
         stellar.validate().unwrap();
-        let mut seed = [0; 32];
-        seed[31] = 1;
-        assert_eq!(
-            public("eip155:42431", &seed).unwrap().address,
-            "0x7e5f4552091a69125d5dfcb7b8c2659029395bdf"
-        );
+        #[cfg(feature = "tempo")]
+        {
+            let mut seed = [0; 32];
+            seed[31] = 1;
+            assert_eq!(
+                public("eip155:42431", &seed).unwrap().address,
+                "0x7e5f4552091a69125d5dfcb7b8c2659029395bdf"
+            );
+        }
     }
 }
 
@@ -280,8 +324,7 @@ impl PublicWallet {
             if self.key_type != "secp256k1" {
                 return Err(Error::usage("Invalid public key type"));
             }
-            allowit_tempo::wallet::validate_public(&self.address, &self.public_key)
-                .map_err(|_| Error::usage("Invalid Tempo public wallet"))?;
+            tempo::validate_public(&self.address, &self.public_key)?;
             self.address.clone()
         } else {
             if self.key_type != "ed25519" {
@@ -333,7 +376,7 @@ mod storage_tests {
     }
     #[test]
     fn generated_files_are_usable_private_and_never_replaced() {
-        for n in ["solana:devnet", "stellar:testnet", "eip155:42431"] {
+        for n in built_networks() {
             let p = path();
             let public = generate_wallet(n, &p).unwrap();
             public.validate().unwrap();
@@ -366,6 +409,13 @@ mod storage_tests {
             }
             std::fs::remove_dir_all(p.parent().unwrap()).unwrap();
         }
+    }
+    #[cfg(not(feature = "tempo"))]
+    #[test]
+    fn tempo_keys_are_refused_when_tempo_is_left_out() {
+        let p = path();
+        assert_eq!(generate_wallet("eip155:42431", &p).unwrap_err().code, 3);
+        assert!(!p.exists());
     }
     #[test]
     fn symlink_hardlink_and_insecure_files_are_refused() {

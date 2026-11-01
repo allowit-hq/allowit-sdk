@@ -27,5 +27,8 @@ jobs:
       - run: cargo test --locked -p allowit-sdk-engine -p allowit-cli
       - run: cargo test --locked -p allowit-policy-template
       - run: cargo clippy --locked -p allowit-sdk-engine -p allowit-cli --all-targets -- -D warnings
+      # The Stellar-only build: no Solana or Tempo crate.
+      - run: cargo clippy --locked -p allowit-cli --no-default-features --all-targets -- -D warnings
+      - run: cargo test --locked -p allowit-cli --no-default-features --lib
       - run: cargo test --locked -p allowit-sdk-engine --features services
       - run: cargo clippy --locked -p allowit-sdk-engine --features services --all-targets -- -D warnings

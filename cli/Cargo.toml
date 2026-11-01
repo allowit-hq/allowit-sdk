@@ -15,12 +15,27 @@ name = "allowit_cli"
 name = "allowit"
 path = "src/main.rs"
 
+[[test]]
+name = "solana"
+required-features = ["solana"]
+
+[[example]]
+name = "deployment_fixture"
+required-features = ["solana"]
+
+[features]
+default = ["solana", "tempo"]
+# The Solana and Tempo rails. `--no-default-features` builds the Stellar rail
+# only; the commands of a rail left out exit 3.
+solana = ["dep:allowit-native"]
+tempo = ["dep:allowit-tempo", "allowit-sdk-engine/tempo"]
+
 [dependencies]
 allowit-sdk = { workspace = true, features = ["default", "client"] }
-allowit-sdk-engine = { path = "../engine" }
-allowit-native.workspace = true
+allowit-sdk-engine = { path = "../engine", default-features = false }
+allowit-native = { workspace = true, optional = true }
 allowit-stellar-wallet.workspace = true
-allowit-tempo = { workspace = true, features = ["client"] }
+allowit-tempo = { workspace = true, features = ["client"], optional = true }
 serde_json_canonicalizer = "0.3"
 ed25519-dalek = "2"
 base64 = "0.22.1"

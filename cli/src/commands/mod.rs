@@ -9,7 +9,7 @@ mod completion;
 mod config;
 mod curl;
 mod eval;
-mod exec;
+pub(crate) mod exec;
 mod guide;
 mod history;
 mod http;
@@ -819,6 +819,10 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(
+        not(all(feature = "solana", feature = "tempo")),
+        ignore = "needs the Solana and Tempo rails"
+    )]
     fn example_checks_catch_bad_values() {
         let words = |s: &str| example_words(s).unwrap();
         for bad in [
@@ -873,6 +877,10 @@ mod tests {
     /// Every example in help, the guide and the READMEs parses, and its
     /// request IDs, amounts, parameters and waits are valid.
     #[test]
+    #[cfg_attr(
+        not(all(feature = "solana", feature = "tempo")),
+        ignore = "needs the Solana and Tempo rails"
+    )]
     fn every_example_parses_with_valid_values() {
         fn walk(cmd: &clap::Command, path: String, out: &mut Vec<(String, String)>) {
             if let Some(help) = cmd.get_before_help() {
@@ -911,6 +919,10 @@ mod tests {
     /// A node that some rail serves lists examples; a node that no rail
     /// serves lists none, since none of them could run.
     #[test]
+    #[cfg_attr(
+        not(all(feature = "solana", feature = "tempo")),
+        ignore = "needs the Solana and Tempo rails"
+    )]
     fn served_nodes_and_only_they_have_examples() {
         fn served(cmd: &clap::Command, path: &[&str]) -> bool {
             let children: Vec<_> = cmd

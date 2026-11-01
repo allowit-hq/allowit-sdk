@@ -1,10 +1,11 @@
 //! Stellar adapter over `allowit-stellar-wallet`.
 //!
 //! - `keys fund`: Friendbot on testnet.
-//! - `exec --op transfer`, `status`: the installed wallet profile's engine
-//!   endpoints, signed by the rail's agent key (`setup --agent`). The public
-//!   wallet profile comes from `ALLOWIT_STELLAR_BUNDLE` until the wallet is
-//!   resolved from chain state.
+//! - `exec --op transfer|deposit|redeem`, `status`: the installed wallet
+//!   profile's engine endpoints, signed by the rail's agent key (`setup
+//!   --agent`). Deposits and redeems need a policy wallet and a SEP-56 vault.
+//!   The public wallet profile comes from `ALLOWIT_STELLAR_BUNDLE` until the
+//!   wallet is resolved from chain state.
 //! - `wallet show`, `policy show`: the public wallet profile.
 //! - `policy build`: the Rust source of a custom policy wallet.
 //! - Hidden `wallet configure`, `wallet approve` and `stellar-native`: the
@@ -16,7 +17,11 @@ pub(crate) mod run;
 
 pub(crate) mod formats;
 
-use super::{Binding, Caps, ExecRequest, Rail, asset::Token, require_op};
+use super::{
+    Binding, Caps, ExecRequest, Rail,
+    asset::{Amount, Token},
+    require_op,
+};
 use crate::{
     config::env_value,
     ctx::Ctx,
@@ -121,7 +126,7 @@ impl Rail for Stellar {
             curve: "ed25519",
             address_is_key: true,
             service_asset: "USDC",
-            ops: &["transfer"],
+            ops: &["transfer", "deposit", "redeem"],
             exec_build_only: true,
             // No `policy params set` backend yet.
             param_keys: &[],
@@ -225,23 +230,34 @@ impl Rail for Stellar {
         }
         Ok(0)
     }
+    fn check_exec(
+        &self,
+        op: &str,
+        to: &str,
+        token_out: Option<&Amount>,
+        args: Option<&serde_json::Value>,
+    ) -> Result<()> {
+        request::check(op, to, token_out, args.is_some())
+    }
     fn exec(&self, cx: &mut Ctx, r: &ExecRequest) -> Result<i32> {
         require_op(self, &r.op)?;
-        if r.token_out.is_some() || r.args.is_some() {
-            return Err(Error::usage(
-                "--token-out and --args apply to swap and custom operations, not transfer",
-            ));
-        }
         super::address::check_recipient(self.0.family, &r.to)?;
+        request::check(&r.op, &r.to, r.token_out.as_ref(), r.args.is_some())?;
         let bundle = self.profile(cx, r.wallet.as_deref())?;
-        let units = request::installed_units(&bundle.config, &r.amount)?;
-        let typed = request::transfer(
-            &bundle.policy_id,
-            &r.request_id,
-            &bundle.config,
-            &r.to,
-            units,
-        )?;
+        // A retry keeps its retained fee payer and reads no RPC.
+        let retained = if r.build_only {
+            None
+        } else {
+            run::retained_request(&self.journal(cx)?, &bundle.policy_id, &r.request_id)?
+        };
+        let typed = if let Some(old) = &retained {
+            request::rebuild(&bundle.policy_id, &bundle.config, r, old)?
+        } else {
+            let rpc = cx.rpc_url(self.0)?;
+            request::build(&bundle.policy_id, &bundle.config, r, || {
+                request::state(&bundle.config, rpc.as_deref())
+            })?
+        };
         if r.build_only {
             // The unsigned request is a document for a signer and submitter
             // outside the CLI: always JSON.

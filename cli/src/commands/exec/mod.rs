@@ -5,7 +5,7 @@ use crate::{
     error::{Error, Result, quoted},
     request::request_id_valid,
     settings::journal,
-    vendors::{ExecRequest, Mode, asset::Use},
+    vendors::{ExecRequest, Mode, asset::exec_uses},
 };
 use std::{path::Path, time::Duration};
 
@@ -13,7 +13,9 @@ pub(crate) const EXAMPLES: &str = "\
 Examples:
   allowit exec --op transfer --to GDEST… --amount XLM:5
   allowit exec --op transfer --to GDEST… --amount XLM:5 --request-id pay-0001 --wait 2m
-  allowit exec --op transfer --to GDEST… --amount 50000000 --build-only";
+  allowit exec --op transfer --to GDEST… --amount 50000000 --build-only
+  allowit exec --op deposit --to CVAULT… --amount USDC:100 --token-out 990000000
+  allowit exec --op redeem --to CVAULT… --amount 500000000 --token-out USDC:49.5";
 
 /// The request flags shared by `exec` and `eval`.
 #[derive(clap::Args, Debug)]
@@ -21,14 +23,14 @@ pub(crate) struct RequestArgs {
     /// transfer, swap, deposit, redeem, custom, custom.FN or custom:C….FN
     #[arg(long, value_name = "OP")]
     pub op: String,
-    /// The recipient address
+    /// The recipient address, or the vault of a deposit or redeem
     #[arg(long, value_name = "ADDR")]
     pub to: String,
-    /// CODE:DECIMAL, CODE:ISSUER:DECIMAL, C…:DECIMAL or INTEGER base units
+    /// CODE:DECIMAL, CODE:ISSUER:DECIMAL, C…:DECIMAL or INTEGER base units; INTEGER vault shares for redeem
     #[arg(long, value_name = "AMOUNT")]
     pub amount: String,
-    /// The asset and minimum to receive, for swap: ASSET:MIN
-    #[arg(long, value_name = "ASSET:MIN")]
+    /// The minimum to receive: ASSET:MIN for swap and redeem, INTEGER vault shares for deposit
+    #[arg(long, value_name = "MIN")]
     pub token_out: Option<String>,
     /// Call arguments as a JSON object, for custom operations
     #[arg(long, value_name = "JSON")]
@@ -94,11 +96,12 @@ pub(crate) fn submit(mode: Mode, a: RequestArgs, build_only: bool, cx: &mut Ctx)
     crate::vendors::require_op(vendor.as_ref(), &a.op)?;
     // Input checks come before any settings, journal or network access.
     crate::vendors::address::check_recipient(rail.family, &a.to)?;
-    let amount = vendor.parse_amount(&a.amount, Use::Spend)?;
+    let (spend, minimum) = exec_uses(&a.op);
+    let amount = vendor.parse_amount(&a.amount, spend)?;
     let token_out = a
         .token_out
         .as_deref()
-        .map(|t| vendor.parse_amount(t, Use::Minimum))
+        .map(|t| vendor.parse_amount(t, minimum))
         .transpose()?;
     let call_args = match &a.args {
         Some(raw) => {
@@ -111,6 +114,7 @@ pub(crate) fn submit(mode: Mode, a: RequestArgs, build_only: bool, cx: &mut Ctx)
         }
         None => None,
     };
+    vendor.check_exec(&a.op, &a.to, token_out.as_ref(), call_args.as_ref())?;
     if a.request_id
         .as_deref()
         .is_some_and(|id| !request_id_valid(id))

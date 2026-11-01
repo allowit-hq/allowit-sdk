@@ -9,6 +9,9 @@ publish = false
 description = "Allowit backend requests and service composition, with no terminal I/O"
 
 [features]
+default = ["tempo"]
+# Tempo (eip155) agent keys.
+tempo = ["dep:allowit-tempo"]
 # The typed service facade (`services`). It links the rail service crates;
 # the allowit binary does not enable it.
 services = [
@@ -25,7 +28,7 @@ services = [
 [dependencies]
 allowit-sdk = { workspace = true, features = ["std", "typed-workflow", "client"] }
 allowit-stellar-wallet.workspace = true
-allowit-tempo = { workspace = true, features = ["client"] }
+allowit-tempo = { workspace = true, features = ["client"], optional = true }
 allowit-solana-service-upstreams = { workspace = true, optional = true }
 allowit-solana-service-rpc = { workspace = true, optional = true }
 allowit-solana-delegated-x402 = { workspace = true, optional = true }

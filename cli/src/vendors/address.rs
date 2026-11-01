@@ -68,6 +68,10 @@ mod tests {
     const SOL: &str = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v";
     const EVM: &str = "0x20c0000000000000000000000000000000000001";
     #[test]
+    #[cfg_attr(
+        not(all(feature = "solana", feature = "tempo")),
+        ignore = "needs the Solana and Tempo rails"
+    )]
     fn formats_match_their_family_only() {
         let native = allowit_stellar_wallet::asset_from_identity("XLM", None).unwrap();
         let contract = allowit_stellar_wallet::sac_address("stellar:testnet", &native).unwrap();

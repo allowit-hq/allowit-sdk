@@ -23,7 +23,7 @@ allowit-solana-paysh-cooperating = { git = "https://github.com/allowit-hq/allowi
 allowit-tempo = { git = "https://github.com/allowit-hq/allowit-contracts-tempo.git", rev = "ac94e4551af251e3a31e8247ddcaaf9a2535fa9b" }
 allowit-tempo-services = { git = "https://github.com/allowit-hq/allowit-contracts-tempo.git", rev = "ac94e4551af251e3a31e8247ddcaaf9a2535fa9b" }
 # TODO: replace rev with tag = "v0.1.0" together with the allowit-sdk entry above.
-allowit-stellar-wallet = { git = "https://github.com/allowit-hq/allowit-contracts-stellar.git", rev = "c9a85574ef040ea10f7b885d50124c7935f4a5c7", version = "0.1" }
+allowit-stellar-wallet = { git = "https://github.com/allowit-hq/allowit-contracts-stellar.git", rev = "6583beb6bd628a0734320e1adcb3542b45341f8c", version = "0.1" }
 
 # Every Allowit workspace uses this profile block, so a shared target directory
 # builds each shared crate once. Release builds keep overflow checks, which the
