@@ -58,6 +58,12 @@ pub(crate) fn build(
             .as_ref()
             .ok_or_else(|| Error::usage(format!("a {} needs --token-out", r.op)))
     };
+    if config.route == WalletRoute::Native && r.op != "transfer" {
+        return Err(Error::unsupported(format!(
+            "a classic Stellar wallet only transfers; a {} needs a policy wallet",
+            r.op
+        )));
+    }
     let (amount, min) = match r.op.as_str() {
         "transfer" => (installed_units(config, &r.amount)?, 0),
         "deposit" => (installed_units(config, &r.amount)?, shares(minimum()?)?),
@@ -352,12 +358,16 @@ mod tests {
     }
 
     #[test]
-    fn only_the_installed_asset_can_move() {
+    fn a_classic_wallet_moves_only_its_installed_asset() {
         let c = config(WalletRoute::Native, false);
         let xlm = request("transfer", "G", "XLM:5", None).amount;
         assert_eq!(installed_units(&c, &xlm).unwrap(), 50_000_000);
         let usdc = request("transfer", "G", "USDC:1", None).amount;
         assert_eq!(installed_units(&c, &usdc).unwrap_err().code, 4);
+        // Vault operations need a policy wallet: refused before any state read.
+        let r = request("deposit", &vault(1), "XLM:5", Some("4900000"));
+        let error = build("policy-1", &c, &r, || unreachable!()).unwrap_err();
+        assert_eq!(error.code, 3, "{}", error.message);
     }
 
     #[test]
