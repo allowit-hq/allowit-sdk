@@ -102,7 +102,9 @@ for url in $urls; do
   while IFS=$'\t' read -r _ rev name; do
     [ "$rev" = "$want" ] && continue
     echo "$name: $repo $spec is $want, pinned ${rev/#-/no rev}" >&2
-    if [ "$rev" = - ]; then failed=1; else stale="$stale $repo:$rev:$want"; fi
+    # Only a full commit is rewritten, so the plain-text rewrite below
+    # cannot match part of another pin.
+    if [[ $rev =~ ^[0-9a-f]{40}$ ]]; then stale="$stale $repo:$rev:$want"; else failed=1; fi
   done < <(awk -F'\t' -v u="$url" '$1 == u' <<<"$pins")
 done
 [ "$failed" = 0 ] || exit 1
