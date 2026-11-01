@@ -29,10 +29,11 @@ pub(super) fn run(
     let journal = FileJournal::new(local.directory.join("journal"));
     let entry = format!("browser-deploy-{request_id}");
     // The latest preparation of a creation: the one a new request ID replaces.
+    // Its prefix differs from every request-ID entry, so no ID can name it.
     let latest = options
         .creation
         .as_ref()
-        .map(|c| format!("browser-deploy-latest-{c}"));
+        .map(|c| format!("latest-preparation-{c}"));
     let retry_preparation = match (&options.creation, &latest) {
         (Some(creation), Some(latest)) => {
             let recorded: Option<serde_json::Value> = native(journal.read(&entry))?;
@@ -76,20 +77,20 @@ pub(super) fn run(
         serde_json::json!({"requestId":request_id,"signingUrl":url,"intentDigest":fingerprint});
     native(journal.locked(|| {
         let prior: Option<serde_json::Value> = journal.read(&entry)?;
-        match prior {
-            Some(v) if v != intent => Err(allowit_native::error::Error::config(
+        if prior.as_ref().is_some_and(|v| v != &intent) {
+            return Err(allowit_native::error::Error::config(
                 "Deployment request ID already binds another intent",
-            )),
-            Some(_) => Ok(()),
-            None => {
-                journal.write(&entry, &intent)?;
-                // Only a new preparation becomes the one to replace next.
-                match &latest {
-                    Some(latest) => journal.write(latest, &request_id),
-                    None => Ok(()),
-                }
+            ));
+        }
+        local.keep_deployed_policy(policy).map_err(to_native)?;
+        if prior.is_none() {
+            journal.write(&entry, &intent)?;
+            // Only a new preparation becomes the one to replace next.
+            if let Some(latest) = &latest {
+                journal.write(latest, &request_id)?;
             }
         }
+        Ok(())
     }))?;
     out.value(&serde_json::json!({
         "state": "awaiting_owner_signature",

@@ -376,6 +376,43 @@ fn wallet_create_prints_the_bound_owner_link_without_an_owner_key_or_rpc() {
     assert_eq!(code(&output), Some(10), "{}", stderr(&output));
     let later: Value = serde_json::from_slice(&output.stdout).unwrap();
     assert_eq!(replaced_of(&later), Some("explicit-0001".to_owned()));
+    // The vault directory keeps the deployed policy for the later vault
+    // commands, and a creation with another policy is refused.
+    let vault = sandbox.config().join("vaults/solana-devnet");
+    assert_eq!(
+        std::fs::read(vault.join("policy.json")).unwrap(),
+        std::fs::read(&policy).unwrap()
+    );
+    assert_eq!(mode(&vault.join("policy.json")), 0o600);
+    let other = sandbox.work().join("other.json");
+    sandbox.ok(&[
+        "policy",
+        "new",
+        "Spend up to 6 test tokens per day",
+        "-o",
+        other.to_str().unwrap(),
+    ]);
+    let mut different = create.to_vec();
+    different[6] = other.to_str().unwrap();
+    let output = sandbox.run(&different);
+    assert_eq!(code(&output), Some(3), "{}", stderr(&output));
+    // A request ID cannot name the latest-preparation pointer of a fresh
+    // creation, so the intent survives and its retry repeats it.
+    let mut fresh = create.to_vec();
+    fresh[last] = "3000000";
+    let output = sandbox.run(&fresh);
+    assert_eq!(code(&output), Some(10), "{}", stderr(&output));
+    let derived: Value = serde_json::from_slice(&output.stdout).unwrap();
+    std::fs::remove_dir_all(vault.join("journal")).unwrap();
+    let pointer = format!("latest-{}", derived["requestId"].as_str().unwrap());
+    fresh.extend(["--request-id", pointer.as_str()]);
+    let output = sandbox.run(&fresh);
+    assert_eq!(code(&output), Some(10), "{}", stderr(&output));
+    let named: Value = serde_json::from_slice(&output.stdout).unwrap();
+    let output = sandbox.run(&fresh);
+    assert_eq!(code(&output), Some(10), "{}", stderr(&output));
+    let again: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(again["intentDigest"], named["intentDigest"]);
     let mut short = create.to_vec();
     short.extend(["--request-id", "short"]);
     assert_eq!(code(&sandbox.run(&short)), Some(2));

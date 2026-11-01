@@ -207,13 +207,24 @@ impl Local {
         Ok((client, audit))
     }
     fn save_policy(&self, policy: &Policy) -> Result<()> {
-        create_private(
-            &self.policy_file,
-            policy,
-            "A policy already exists here. Choose a new ALLOWIT_POLICY_DIR; keep the previous policy and journal for recovery.",
-        )
+        create_private(&self.policy_file, policy, POLICY_EXISTS)
+    }
+    /// Saves a policy that a creation deploys as this directory's policy,
+    /// which the later vault commands read. The same policy may be there.
+    fn keep_deployed_policy(&self, policy: &Policy) -> Result<()> {
+        let path = self.directory.join("policy.json");
+        match read_optional::<Policy>(&path)? {
+            None => create_private(&path, policy, POLICY_EXISTS),
+            Some(saved)
+                if serde_json::to_value(&saved).ok() == serde_json::to_value(policy).ok() =>
+            {
+                Ok(())
+            }
+            Some(_) => Err(Error::config(POLICY_EXISTS)),
+        }
     }
 }
+const POLICY_EXISTS: &str = "A policy already exists here. Choose a new ALLOWIT_POLICY_DIR; keep the previous policy and journal for recovery.";
 /// Saved policy state shared by status and the owner/executor lifecycle operations.
 struct Session<'a> {
     local: &'a Local,
