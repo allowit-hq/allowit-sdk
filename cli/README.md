@@ -183,7 +183,7 @@ The Tempo adapter runs `allowit-tempo` on Tempo testnet with the bundle in `ALLO
 - `src/gateway/` holds the paid-service request builders that `call`, `curl`, `http`, `skills` and `mcp` share. `Rail::gateway` gates them.
 - [`templates/policy/`](templates/policy/) is the copy-paste policy crate, and [`skills/allowit/`](skills/allowit/SKILL.md) is the agent skill.
 
-Help snapshots for every command live in `tests/snapshots/help/`. After an intended help change, run `ALLOWIT_UPDATE_SNAPSHOTS=1 cargo test -p allowit-cli --test help`.
+Help snapshots for every command group live in `tests/snapshots/help/`. After an intended help change, run `ALLOWIT_UPDATE_SNAPSHOTS=1 cargo test -p allowit-cli --test help`.
 
 ## Owner operations
 

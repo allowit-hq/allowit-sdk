@@ -113,23 +113,11 @@ fn primitive_budget_still_precedes_early_return_and_checks_overflow() {
 mod empty_template_rust_build {
     use allowit_sdk as allowit;
     include!("fixtures/empty-policy.rs");
-    #[test]
-    fn template_accepts_actual_wrapper() {
-        let config = new();
-        let ctx = super::context();
-        let _future = _execute(&ctx, &config);
-    }
 }
 #[allow(dead_code, unused_variables)]
 mod complete_template_rust_build {
     use allowit_sdk as allowit;
     include!("fixtures/constructor-policy.rs");
-    #[test]
-    fn template_accepts_actual_wrapper() {
-        let config = new();
-        let ctx = super::context();
-        let _future = _execute(&ctx, &config);
-    }
 }
 
 fn preference_source(deny: &str, approve: &str) -> String {
@@ -378,12 +366,6 @@ fn source_checks_preserve_rust_borrow_types() {
 mod native_storage_rust_build {
     use allowit_sdk as allowit;
     include!("fixtures/native-storage-policy.rs");
-    #[test]
-    fn template_accepts_actual_wrapper() {
-        let config = new();
-        let ctx = super::context();
-        let _future = _execute(&ctx, &config);
-    }
 }
 
 #[test]

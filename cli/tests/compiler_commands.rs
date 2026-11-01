@@ -1,5 +1,6 @@
-//! The policy compiler commands are local: wallet and network environment
-//! must not change their output or exit code.
+//! The policy compiler and other local commands are local: wallet and
+//! network environment and a broken configuration must not change their
+//! output or exit code.
 use std::process::{Command, Output};
 
 const WALLET_ENV: &[&str] = &[
@@ -25,12 +26,19 @@ fn allowit(args: &[&str], wallet_env: &[(&str, &str)]) -> Output {
 }
 
 #[test]
-fn compiler_commands_ignore_wallet_environment() {
+fn local_commands_ignore_wallet_environment_and_broken_config() {
+    let config = std::env::temp_dir()
+        .canonicalize()
+        .unwrap()
+        .join(format!("allowit-cli-broken-config-{}", std::process::id()));
+    std::fs::create_dir_all(&config).unwrap();
+    std::fs::write(config.join("config.toml"), "rail = [broken").unwrap();
+    let config_dir = config.to_str().unwrap();
     let hostile = [
         ("ALLOWIT_NETWORK", "bogus"),
         ("ALLOWIT_RAIL", "bogus"),
         ("ALLOWIT_WALLET", "bogus"),
-        ("ALLOWIT_CONFIG_DIR", "/nonexistent/allowit-config"),
+        ("ALLOWIT_CONFIG_DIR", config_dir),
         (
             "ALLOWIT_TEMPO_BUNDLE",
             "/nonexistent/allowit-tempo-bundle.json",
@@ -43,6 +51,11 @@ fn compiler_commands_ignore_wallet_environment() {
         ("ALLOWIT_TOKEN", "USDC"),
     ];
     let commands: &[&[&str]] = &[
+        &["help"],
+        &["--help"],
+        &["version"],
+        &["guide"],
+        &["completion", "--shell", "bash"],
         &["compile", "../docs/examples/research.rs"],
         &["check", "../docs/examples/research.rs"],
         &["workflow", "../docs/examples/research.rs"],
@@ -66,13 +79,23 @@ fn compiler_commands_ignore_wallet_environment() {
     for args in commands {
         let clean = allowit(args, &[]);
         let with_env = allowit(args, &hostile);
+        // The native Stellar profile rejects this example's expression.
+        let expected = if args[0] == "stellar-native" { 2 } else { 0 };
+        assert_eq!(clean.status.code(), Some(expected), "{args:?}");
         assert_eq!(clean.status.code(), with_env.status.code(), "{args:?}");
         assert_eq!(clean.stdout, with_env.stdout, "{args:?}");
         assert_eq!(clean.stderr, with_env.stderr, "{args:?}");
     }
     let compiled = allowit(&["compile", "../docs/examples/research.rs"], &hostile);
-    assert!(compiled.status.success());
     assert!(String::from_utf8(compiled.stdout).unwrap().contains("USDC"));
+    // A command that needs the configuration reports it.
+    let output = allowit(&["keys", "ls"], &hostile);
+    assert_eq!(output.status.code(), Some(3));
+    assert!(String::from_utf8_lossy(&output.stderr).contains("config.toml is invalid"));
+    let output = allowit(&["rail", "show"], &hostile);
+    assert_eq!(output.status.code(), Some(2));
+    assert!(String::from_utf8_lossy(&output.stderr).contains("unknown rail"));
+    std::fs::remove_dir_all(config).unwrap();
 }
 
 #[test]

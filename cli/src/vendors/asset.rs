@@ -307,12 +307,16 @@ mod tests {
             .unwrap()
     }
     #[test]
-    fn display_units_use_the_rail_decimals() {
+    fn units_parse_and_format_with_the_rail_decimals() {
         assert_eq!(units(Family::Stellar, STELLAR, "XLM:5"), 50_000_000);
         assert_eq!(units(Family::Stellar, STELLAR, "USDC:0.25"), 2_500_000);
         assert_eq!(units(Family::Solana, SOLANA, "USDC:0.25"), 250_000);
         assert_eq!(units(Family::Solana, SOLANA, "SOL:1"), 1_000_000_000);
         assert_eq!(units(Family::Solana, SOLANA, "1500"), 1500);
+        assert_eq!(format_units(2_500_000, 7), "0.25");
+        assert_eq!(format_units(50_000_000, 7), "5");
+        assert_eq!(format_units(1, 6), "0.000001");
+        assert_eq!(decimal_units("0.000001", 6).unwrap(), 1);
     }
     #[test]
     fn native_and_xlm_name_the_same_asset() {
@@ -396,12 +400,5 @@ mod tests {
                 "{bad}"
             );
         }
-    }
-    #[test]
-    fn units_format_back_to_decimals() {
-        assert_eq!(format_units(2_500_000, 7), "0.25");
-        assert_eq!(format_units(50_000_000, 7), "5");
-        assert_eq!(format_units(1, 6), "0.000001");
-        assert_eq!(decimal_units("0.000001", 6).unwrap(), 1);
     }
 }

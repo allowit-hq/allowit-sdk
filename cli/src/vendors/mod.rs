@@ -514,7 +514,7 @@ pub(super) mod tests {
     }
 
     #[test]
-    fn every_unlisted_verb_exits_3_as_not_available() {
+    fn every_unlisted_verb_op_and_signing_mode_exits_3() {
         for info in RAILS {
             let r = rail(info);
             let caps = r.caps();
@@ -565,13 +565,6 @@ pub(super) mod tests {
                     error.message
                 );
             }
-        }
-    }
-
-    #[test]
-    fn unlisted_ops_and_signing_modes_exit_3() {
-        for info in RAILS {
-            let r = rail(info);
             for op in ["swap", "deposit", "redeem", "custom"] {
                 assert_eq!(require_op(r.as_ref(), op).unwrap_err().code, 3);
             }

@@ -113,6 +113,8 @@ fn named_configuration_keeps_the_same_placement_and_feature_rules() {
     #[cfg(not(feature = "oracle-ledger"))]
     assert_eq!(p.unwrap_err().code, "LEDGER_REQUIRED");
 }
+// Compiling this module type-checks the registered names.
+#[allow(dead_code)]
 mod native_facade {
     use allowit_sdk as allowit;
     use allowit_sdk::prelude::*;
@@ -144,6 +146,8 @@ mod native_facade {
         Ok(())
     }
 }
+// Compiling this module type-checks the registered names.
+#[allow(dead_code)]
 mod versioned_facade {
     use allowit_sdk as allowit;
     use allowit_sdk::v1::prelude::*;
@@ -175,12 +179,6 @@ mod versioned_facade {
         Ok(())
     }
 }
-#[test]
-fn registered_names_type_check_in_both_facades() {
-    let _ = native_facade::check;
-    let _ = versioned_facade::check;
-}
-
 #[test]
 fn every_registered_core_alias_compiles_to_its_bounded_operation() {
     for body in [

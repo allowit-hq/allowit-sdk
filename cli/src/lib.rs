@@ -263,7 +263,7 @@ pub(crate) fn flush_stderr(stderr: &mut String) {
 #[cfg(test)]
 mod display_tests {
     #[test]
-    fn json_display_controls_are_escaped() {
+    fn display_controls_are_escaped_in_json_and_text() {
         let original = serde_json::json!({"prompt":"source\u{202e} text\u{0085}\u{1b}]52;x"});
         let encoded = super::safe_output(serde_json::to_string_pretty(&original).unwrap());
         assert!(!encoded.contains('\u{202e}'));
@@ -273,9 +273,6 @@ mod display_tests {
             serde_json::from_str::<serde_json::Value>(&encoded).unwrap(),
             original
         );
-    }
-    #[test]
-    fn text_display_controls_are_escaped() {
         let text = "name  agent\u{1b}]52;c;aGk=\u{7}\nnote  a\u{202e}b\tc\r\n".to_owned();
         let shown = super::safe_output(text);
         assert_eq!(

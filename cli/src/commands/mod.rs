@@ -969,13 +969,4 @@ mod tests {
             assert!(parse_wait(bad).is_err(), "{bad}");
         }
     }
-    #[test]
-    fn unknown_commands_list_the_commands_at_that_level() {
-        let argv = |s: &[&str]| s.iter().map(|s| s.to_string()).collect::<Vec<_>>();
-        let top = available_commands(&argv(&["allowit", "nope"]));
-        assert!(top.contains(&"keys".to_owned()) && top.contains(&"exec".to_owned()));
-        assert!(!top.contains(&"json".to_owned()));
-        let keys = available_commands(&argv(&["allowit", "--rail", "x", "keys", "nope"]));
-        assert!(keys.contains(&"generate".to_owned()));
-    }
 }

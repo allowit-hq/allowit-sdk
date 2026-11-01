@@ -565,16 +565,13 @@ mod tests {
         LocalSigner::from_secret(&pair).unwrap()
     }
     #[test]
-    fn scoped_execute_request_accepts_only_the_canonical_authority_partial() {
-        check_authorization_response("live");
-    }
-    #[test]
-    fn expired_unsigned_response_is_actionable_but_never_authorizes_signing() {
-        check_authorization_response("expired");
-    }
-    #[test]
-    fn expired_response_rejects_invalid_flags_and_substituted_bindings() {
+    fn execute_authorization_accepts_only_bound_canonical_responses() {
         for case in [
+            // The canonical authority partial is accepted.
+            "live",
+            // An expired unsigned response is actionable but never signs.
+            "expired",
+            // Expired responses with bad flags or substituted bindings.
             "missing-retry-flag",
             "false-flags",
             "null-flag",
@@ -582,34 +579,22 @@ mod tests {
             "unknown-field",
             "changed-digest",
             "changed-binding",
-        ] {
-            check_authorization_response(case);
-        }
-    }
-    #[test]
-    fn engine_execution_binding_is_required_and_must_match_the_approval() {
-        for case in [
+            // The engine execution binding is required and must match.
             "missing-execution-binding",
             "unknown-execution-binding-field",
             "changed-execution-policy",
             "changed-execution-revision",
             "foreign-execution-owner",
             "unknown-recipient-mode",
+            // Wallet recipient vaults bind the derived token account, so a
+            // wallet-bound identity can never match its approval.
+            "wallet",
+            "any-wallet",
+            "wallet-identity",
+            "any-wallet-other-mint",
         ] {
             check_authorization_response(case);
         }
-    }
-    #[test]
-    fn wallet_recipient_vaults_bind_the_derived_token_account() {
-        check_authorization_response("wallet");
-        check_authorization_response("any-wallet");
-    }
-    #[test]
-    fn wallet_recipient_vaults_reject_an_identity_bound_to_the_wallet() {
-        // The engine binds the derived token account, so a wallet-bound identity
-        // can never match its approval.
-        check_authorization_response("wallet-identity");
-        check_authorization_response("any-wallet-other-mint");
     }
     const WALLET: &str = "9WzDXwBbmkg8ZTbNMqUxvQRAyrZzDsGYdLVL9zYtAWWM";
     /// Finalized `getAccountInfo` answers; an unlisted address does not exist.
@@ -1012,19 +997,20 @@ mod tests {
         server.join().unwrap();
     }
     #[test]
-    fn durable_exact_proof_is_acknowledged_before_chain_broadcast() {
-        check_report_before_broadcast(200, acknowledgment(), true);
-    }
-    #[test]
-    fn failed_redirected_or_substituted_acknowledgment_blocks_broadcast() {
-        check_report_before_broadcast(503, acknowledgment(), false);
-        check_report_before_broadcast(302, acknowledgment(), false);
+    fn only_a_durable_exact_acknowledgment_allows_chain_broadcast() {
         let mut wrong = acknowledgment();
         wrong["signature"] = json!("different");
-        check_report_before_broadcast(200, wrong, false);
         let mut final_state = acknowledgment();
         final_state["status"] = json!("settled");
-        check_report_before_broadcast(200, final_state, false);
+        for (status, operation, send) in [
+            (200, acknowledgment(), true),
+            (503, acknowledgment(), false),
+            (302, acknowledgment(), false),
+            (200, wrong, false),
+            (200, final_state, false),
+        ] {
+            check_report_before_broadcast(status, operation, send);
+        }
     }
     #[test]
     fn withheld_broadcast_stays_pending_after_late_durable_acknowledgment() {

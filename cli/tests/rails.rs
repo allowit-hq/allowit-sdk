@@ -17,11 +17,9 @@ fn rail_aliases_resolve_to_canonical_caip2_and_each_rail_keeps_its_own_settings(
         "{}",
         stderr(&output)
     );
+    // The routing unit tests cover every alias; here one alias persists.
     for (alias, canonical) in [
         ("stellar:mainnet", "stellar:pubnet"),
-        ("solana:devnet", "solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1"),
-        ("tempo:testnet", "eip155:42431"),
-        ("eip155:42431", "eip155:42431"),
         ("stellar:testnet", "stellar:testnet"),
     ] {
         assert_eq!(
@@ -368,41 +366,6 @@ fn cross_rail_input_fails_before_any_settings_bundle_or_network_access() {
     ]);
     assert_eq!(code(&output), Some(2));
     mock.assert_untouched();
-}
-
-#[test]
-fn local_commands_never_read_broken_rail_or_wallet_settings() {
-    let mut sandbox = Sandbox::new("local");
-    std::fs::create_dir_all(sandbox.config()).unwrap();
-    std::fs::write(sandbox.config().join("config.toml"), "rail = [broken").unwrap();
-    sandbox
-        .set("ALLOWIT_RAIL", "not-a-rail")
-        .set("ALLOWIT_WALLET", "not-a-wallet")
-        .set("ALLOWIT_TEMPO_BUNDLE", "/must-not-be-read")
-        .set("ALLOWIT_STELLAR_BUNDLE", "/must-not-be-read");
-    let policy = format!(
-        "{}/../docs/examples/research.rs",
-        env!("CARGO_MANIFEST_DIR")
-    );
-    for args in [
-        vec!["help"],
-        vec!["--help"],
-        vec!["version"],
-        vec!["guide"],
-        vec!["completion", "--shell", "bash"],
-        vec!["policy", "check", &policy],
-        vec!["policy", "functions"],
-    ] {
-        let output = sandbox.run(&args);
-        assert_eq!(code(&output), Some(0), "{args:?}: {}", stderr(&output));
-    }
-    // A command that needs the configuration reports it.
-    let output = sandbox.run(&["keys", "ls"]);
-    assert_eq!(code(&output), Some(3));
-    assert!(stderr(&output).contains("config.toml is invalid"));
-    let output = sandbox.run(&["rail", "show"]);
-    assert_eq!(code(&output), Some(2));
-    assert!(stderr(&output).contains("unknown rail"));
 }
 
 #[test]

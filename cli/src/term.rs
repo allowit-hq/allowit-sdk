@@ -312,7 +312,7 @@ mod tests {
         out
     }
     #[test]
-    fn flat_objects_print_as_aligned_lines_in_text_mode() {
+    fn values_print_as_aligned_text_lines_and_json_only_in_json_mode() {
         let mut out = plain(false);
         out.value(&json!({"name":"agent","address":"GABC"}));
         // Key order follows serde_json's map order; alignment does not.
@@ -322,9 +322,6 @@ mod tests {
         let mut out = plain(true);
         out.value(&json!({"name":"agent"}));
         assert_eq!(out.stdout, "{\n  \"name\": \"agent\"\n}\n");
-    }
-    #[test]
-    fn nested_values_print_as_text_lines_and_never_as_json() {
         let mut out = plain(false);
         out.value(&json!({
             "rail": "stellar:testnet",
@@ -384,13 +381,6 @@ mod tests {
         assert_eq!(out.rendered_stdout(out.stdout.clone()), source);
         out.color_out = true;
         assert!(out.rendered_stdout(out.stdout.clone()).contains("\x1b["));
-    }
-    #[test]
-    fn json_mode_prints_source_as_one_json_object() {
-        let mut out = plain(true);
-        out.source("fn main() {}\n");
-        let value: Value = serde_json::from_str(&out.stdout).unwrap();
-        assert_eq!(value, json!({"source": "fn main() {}\n"}));
     }
     #[test]
     fn live_progress_leaves_at_once() {

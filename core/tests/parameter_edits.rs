@@ -519,33 +519,20 @@ fn partial_semantic_edit_is_rejected(body: &str) {
 }
 
 #[test]
-fn a_reversed_comparison_prevents_partial_literal_threshold_edits() {
-    partial_semantic_edit_is_rejected(
-        "let fit = semantic(ctx, \"Research\")?;\nif 5000 <= fit.lower_bps { return Ok(()); }\nif fit.lower_bps < 9000 { return fail(\"No\"); }\nOk(())",
-    );
-}
-
-#[test]
-fn a_computed_bound_prevents_partial_literal_threshold_edits() {
-    for other_comparison in [
+fn another_use_of_the_assessment_prevents_partial_literal_threshold_edits() {
+    for other_use in [
+        // A reversed comparison.
+        "if 5000 <= fit.lower_bps { return Ok(()); }",
+        // A computed bound.
         "let cutoff = 5000; if fit.lower_bps >= cutoff { return Ok(()); }",
         "if fit.lower_bps >= 4000 + 1000 { return Ok(()); }",
         "if fit.lower_bps + 1000 >= 6000 { return Ok(()); }",
-    ] {
-        partial_semantic_edit_is_rejected(&format!(
-            "let fit = semantic(ctx, \"Research\")?;\n{other_comparison}\nif fit.lower_bps < 9000 {{ return fail(\"No\"); }}\nOk(())"
-        ));
-    }
-}
-
-#[test]
-fn an_aliased_assessment_prevents_partial_literal_threshold_edits() {
-    for alias in [
+        // An aliased assessment.
         "let alias = fit; if alias.lower_bps >= 5000 { return Ok(()); }",
         "let lower = fit.lower_bps; if lower >= 5000 { return Ok(()); }",
     ] {
         partial_semantic_edit_is_rejected(&format!(
-            "let fit = semantic(ctx, \"Research\")?;\n{alias}\nif fit.lower_bps < 9000 {{ return fail(\"No\"); }}\nOk(())"
+            "let fit = semantic(ctx, \"Research\")?;\n{other_use}\nif fit.lower_bps < 9000 {{ return fail(\"No\"); }}\nOk(())"
         ));
     }
 }

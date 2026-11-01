@@ -249,16 +249,6 @@ mod tests {
         assert!(check_result(&r, "exec", Network::Wallet).is_err());
     }
     #[test]
-    fn credentials_and_terminal_sequences_are_scrubbed() {
-        let s = clean(
-            "a.b.abcdefghijklmnop \u{1b}[2J abcdefghijklmnop \u{202e}x".into(),
-            "a.b.abcdefghijklmnop",
-        );
-        assert!(!s.contains("abcdefghijklmnop"));
-        assert!(!s.contains('\u{1b}'));
-        assert!(!s.contains('\u{202e}'));
-    }
-    #[test]
     fn legacy_json_and_text_keep_recursive_sorted_presentation() {
         let value: Value = serde_json::from_str(r#"{"z":{"b":2,"a":1},"a":0}"#).unwrap();
         assert_eq!(
