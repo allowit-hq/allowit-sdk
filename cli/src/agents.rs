@@ -111,7 +111,8 @@ pub(crate) fn run(program: &str, args: &[String], common: &Common) -> Result<i32
 }
 
 fn mcp_args(common: &Common) -> Vec<String> {
-    let mut args = vec!["mcp".to_owned()];
+    // `--` keeps the service flags out of the global flags of `allowit mcp`.
+    let mut args = vec!["mcp".to_owned(), "--".to_owned()];
     if common.sandbox {
         args.push("--sandbox".into());
     }
@@ -126,7 +127,7 @@ fn mcp_args(common: &Common) -> Vec<String> {
         }
     }
     if let Some(money) = &common.max_debit {
-        args.extend(["--max-payment".into(), money.amount.clone()]);
+        args.extend(["--max-amount".into(), money.amount.clone()]);
         args.extend(["--currency".into(), money.currency.clone()]);
     }
     args

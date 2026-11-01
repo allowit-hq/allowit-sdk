@@ -1,28 +1,37 @@
-//! `allowit http [METHOD] URL [NAME=VALUE ...]`: HTTPie-style request syntax.
-//! The backend sends the request; no local HTTP tool runs.
-//!
-//! `NAME=VALUE` fields become a JSON body. Also accepts the curl options of
-//! `allowit curl`. Quotes and calls through `/api/gateway/quote` and
-//! `/api/gateway/call`.
-//!
-//! ```text
-//! allowit http POST https://api.example/v1/translate text=hello lang=fr \
-//!   --max-payment 0.02 --request-id translate-0001 --json
-//! allowit call status translate-0001
-//! ```
+//! `allowit http ARGS...` (hidden alias `fetch`): HTTPie request syntax, sent
+//! and paid by the engine. No local HTTP tool runs.
 use crate::{
+    ctx::Ctx,
     error::Result,
     gateway::{
-        args::{self, Invocation},
+        args::{self, parse},
         http::http_request,
         operation::purchase,
     },
 };
 use serde_json::json;
 
-pub(crate) fn run(inv: &mut Invocation, stdout: &mut String, stderr: &mut String) -> Result<i32> {
-    let r = http_request(inv)?;
+/// Send a paid HTTP request with HTTPie syntax (METHOD URL NAME=VALUE...)
+#[derive(clap::Args, Debug)]
+pub(crate) struct Args {
+    /// METHOD, URL and NAME=VALUE fields
+    #[arg(
+        required = true,
+        trailing_var_arg = true,
+        allow_hyphen_values = true,
+        value_name = "ARGS"
+    )]
+    pub args: Vec<String>,
+}
+
+pub(crate) fn run(a: Args, cx: &mut Ctx) -> Result<i32> {
+    cx.vendor()?.gateway("http")?;
+    let mut argv = vec!["http".to_owned()];
+    argv.extend(a.args);
+    let mut inv = parse(&argv)?;
+    inv.common.json |= cx.out.json;
+    let request = http_request(&mut inv)?;
     let mut q = args::context(&inv.common);
-    q["request"] = json!(r);
-    purchase(q, &inv.common, stdout, stderr)
+    q["request"] = json!(request);
+    purchase(q, &inv.common, &mut cx.out.stdout, &mut cx.out.stderr)
 }

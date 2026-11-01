@@ -1,7 +1,5 @@
-//! Public Allowit command input. Vendor payment protocols remain on the backend.
-//! Parses the backend command group and its global flags (`--policy`,
-//! `--sandbox`, `--account`, `--request-id`, `--rail` with `--rpc`,
-//! `--max-payment`, `--currency`, `--json`) into an [`Invocation`].
+//! Paid-service command input. Vendor payment protocols remain on the backend.
+//! Parses a service command and its service flags into an [`Invocation`].
 pub(crate) use super::{Common, Money};
 use crate::error::{Error, Result};
 use serde_json::{Value, json};
@@ -13,90 +11,21 @@ pub(crate) const GROUPS: &[&str] = &[
     "call", "curl", "wget", "http", "fetch", "claude", "codex", "whoami", "mcp", "skills", "setup",
 ];
 
-/// Global flags that may precede any command name.
-const GLOBAL_VALUE_FLAGS: &[&str] = &[
-    "--policy",
-    "--account",
-    "--request-id",
-    "--operation-id",
-    "--rail",
-    "--rpc",
-    "--max-payment",
-    "--budget",
-    "--currency",
-    "--network",
-];
-const GLOBAL_SWITCHES: &[&str] = &["--sandbox", "--json"];
-
 #[derive(Debug)]
 pub(crate) struct Invocation {
     pub group: String,
     pub args: Vec<String>,
     pub common: Common,
-    pub help: bool,
 }
 
-/// Index of the first argument that is neither a global flag nor a global flag value.
-/// `None` means that every argument is a global flag.
-pub(crate) fn command_index(args: &[String]) -> Option<usize> {
-    let mut i = 0;
-    while i < args.len() {
-        let arg = args[i].as_str();
-        let (name, inline) = match arg.split_once('=') {
-            Some((name, _)) => (name, true),
-            None => (arg, false),
-        };
-        if GLOBAL_VALUE_FLAGS.contains(&name) {
-            i += if inline { 1 } else { 2 };
-        } else if GLOBAL_SWITCHES.contains(&name) {
-            i += 1;
-        } else {
-            return Some(i);
-        }
-    }
-    None
-}
-
-/// True only when the command name is a backend command group. Global flags
-/// before a local command, such as `--json show`, stay with the local command.
-pub(crate) fn recognizes(args: &[String]) -> bool {
-    match command_index(args) {
-        Some(i) => GROUPS.contains(&args[i].as_str()),
-        // Only global flags: the backend parser reports the missing command.
-        None => !args.is_empty(),
-    }
-}
-
-/// Moves a local command name ahead of the global flags that precede it, so
-/// `allowit --json show POLICY` reads as `allowit show --json POLICY` and
-/// `allowit --json policy status` reads as `allowit policy status --json`.
-/// Backend command groups parse their own leading global flags.
-pub(crate) fn local_command_first(args: &[String]) -> Vec<String> {
-    match command_index(args) {
-        Some(i) if i > 0 && !GROUPS.contains(&args[i].as_str()) => {
-            // Commands with subcommands read flags after the subcommand name.
-            let words = if matches!(args[i].as_str(), "policy" | "wallet" | "tempo" | "paysh")
-                && args.get(i + 1).is_some_and(|s| !s.starts_with('-'))
-            {
-                2
-            } else {
-                1
-            };
-            let mut ordered = Vec::with_capacity(args.len());
-            ordered.extend_from_slice(&args[i..i + words]);
-            ordered.extend_from_slice(&args[..i]);
-            ordered.extend_from_slice(&args[i + words..]);
-            ordered
-        }
-        _ => args.to_vec(),
-    }
-}
-
+/// Parses `GROUP ARGS...` for the paid-service commands. Their service flags
+/// (`--policy`, `--sandbox`, `--account`, `--request-id`, `--rail` with
+/// `--rpc`, `--max-amount`, `--currency`) may appear among the arguments.
+/// `--max-payment` and `--budget` are earlier names of `--max-amount`.
 pub(crate) fn parse(args: &[String]) -> Result<Invocation> {
     let mut common = Common::default();
     let mut rest = Vec::new();
     let mut group = None;
-    let mut help = false;
     let mut i = 0;
     let mut literal = false;
     while i < args.len() {
@@ -124,6 +53,7 @@ pub(crate) fn parse(args: &[String]) -> Result<Invocation> {
                 | "--operation-id"
                 | "--rail"
                 | "--rpc"
+                | "--max-amount"
                 | "--max-payment"
                 | "--budget"
                 | "--currency"
@@ -165,6 +95,11 @@ pub(crate) fn parse(args: &[String]) -> Result<Invocation> {
                         return Err(Error::usage("--currency requires a stablecoin symbol"));
                     }
                     if let Some(money) = &mut common.max_debit {
+                        if money.currency != "USDC" && money.currency != value {
+                            return Err(Error::usage(
+                                "--max-amount names another currency than --currency",
+                            ));
+                        }
                         money.currency = value.clone();
                     }
                     set_once(&mut common.currency, value, name)?;
@@ -173,20 +108,47 @@ pub(crate) fn parse(args: &[String]) -> Result<Invocation> {
                     public_url(&value)?;
                     set_once(&mut common.rpc_url, value, name)?;
                 }
-                "--max-payment" | "--budget" => {
+                "--max-amount" | "--max-payment" | "--budget" => {
                     if common.max_debit.is_some() {
                         return Err(Error::usage("give one payment limit"));
                     }
-                    let amount = value.trim_start_matches('$');
+                    // CODE:DECIMAL names the currency, as `call --max-amount` does.
+                    let (code, amount) = match value.split_once(':') {
+                        Some((code, amount)) if name == "--max-amount" => (Some(code), amount),
+                        _ => (None, value.as_str()),
+                    };
+                    if let Some(code) = code {
+                        if code.is_empty()
+                            || code.len() > 32
+                            || !code
+                                .bytes()
+                                .all(|b| b.is_ascii_alphanumeric() || b"._-".contains(&b))
+                        {
+                            return Err(Error::usage(
+                                "--max-amount requires CODE:DECIMAL or a decimal",
+                            ));
+                        }
+                        if common.currency.as_deref().is_some_and(|c| c != code) {
+                            return Err(Error::usage(
+                                "--max-amount names another currency than --currency",
+                            ));
+                        }
+                    }
+                    let amount = amount.trim_start_matches('$');
                     if amount.is_empty()
                         || !amount.bytes().all(|b| b.is_ascii_digit() || b == b'.')
                         || amount.matches('.').count() > 1
                         || !amount.bytes().any(|b| b.is_ascii_digit())
                     {
-                        return Err(Error::usage("--max-payment requires a decimal USD amount"));
+                        return Err(Error::usage(
+                            "--max-amount requires CODE:DECIMAL or a decimal USD amount",
+                        ));
                     }
                     common.max_debit = Some(Money {
-                        currency: common.currency.clone().unwrap_or_else(|| "USDC".into()),
+                        currency: code
+                            .map(str::to_owned)
+                            .or_else(|| common.currency.clone())
+                            .unwrap_or_else(|| "USDC".into()),
                         amount: amount.into(),
                     });
                 }
@@ -199,8 +161,6 @@ pub(crate) fn parse(args: &[String]) -> Result<Invocation> {
             common.sandbox = true;
         } else if name == "--json" {
             common.json = true;
-        } else if matches!(name, "--help" | "-h") && group.is_some() {
-            help = true;
         } else if group.is_none() && GROUPS.contains(&arg.as_str()) {
             group = Some(arg.clone());
         } else if group.is_none() {
@@ -219,7 +179,6 @@ pub(crate) fn parse(args: &[String]) -> Result<Invocation> {
         group: group.ok_or_else(|| Error::usage("expected an Allowit command"))?,
         args: rest,
         common,
-        help,
     })
 }
 
@@ -303,9 +262,7 @@ pub(crate) fn body_file(path: &str) -> Result<String> {
 
 pub(crate) fn context(common: &Common) -> Value {
     let mut v = json!({"sandbox":common.sandbox});
-    if let Some(n) = crate::routing::selected()
-        && let Ok(n) = crate::routing::caip2(&n)
-    {
+    if let Some(n) = crate::routing::selected() {
         v["network"] = json!(n);
     }
     for (k, val) in [
@@ -366,61 +323,5 @@ mod tests {
                 .policy_selector
                 .is_none()
         );
-    }
-    #[test]
-    fn global_flags_route_by_command_name() {
-        assert!(!recognizes(&args(&["--json", "show", "policy"])));
-        assert!(!recognizes(&args(&[
-            "--request-id",
-            "request-01",
-            "exec",
-            "p"
-        ])));
-        assert!(recognizes(&args(&["--json", "call", "hash"])));
-        assert!(recognizes(&args(&[
-            "--policy=v1@wallet",
-            "--sandbox",
-            "curl"
-        ])));
-        assert!(recognizes(&args(&["--json"])));
-        assert!(!recognizes(&args(&["show", "policy"])));
-        assert!(!recognizes(&args(&["--json", "subscriptions"])));
-    }
-    #[test]
-    fn local_command_moves_ahead_of_global_flags() {
-        assert_eq!(
-            local_command_first(&args(&["--json", "show", "policy"])),
-            args(&["show", "--json", "policy"])
-        );
-        assert_eq!(
-            local_command_first(&args(&[
-                "--network",
-                "solana:devnet",
-                "--json",
-                "status",
-                "policy",
-                "request-01"
-            ])),
-            args(&[
-                "status",
-                "--network",
-                "solana:devnet",
-                "--json",
-                "policy",
-                "request-01"
-            ])
-        );
-        assert_eq!(
-            local_command_first(&args(&["--json", "policy", "status"])),
-            args(&["policy", "status", "--json"])
-        );
-        assert_eq!(
-            local_command_first(&args(&["--json", "policy"])),
-            args(&["policy", "--json"])
-        );
-        let group = args(&["--json", "call", "hash"]);
-        assert_eq!(local_command_first(&group), group);
-        let plain = args(&["show", "--json", "policy"]);
-        assert_eq!(local_command_first(&plain), plain);
     }
 }

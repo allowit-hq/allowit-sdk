@@ -1,18 +1,12 @@
-//! `allowit policy status`: observes the vault and recovers journaled operations.
-//! Reads the chain; needs no signer.
+//! The vault observation behind `allowit wallet show` on Solana: reads the
+//! vault and recovers journaled operations. Reads the chain; needs no signer.
 //!
 //! ```text
-//! ALLOWIT_REQUEST_ID=pay-0001 allowit policy execute RECIPIENT 0.25   # exit 5
-//! allowit policy status --json
+//! allowit --rail solana:devnet wallet show --json
 //! ```
 use super::*;
 
-pub(super) fn run(
-    session: &Session,
-    json: bool,
-    stdout: &mut String,
-    stderr: &mut String,
-) -> Result<i32> {
+pub(super) fn run(session: &Session, out: &mut Out) -> Result<i32> {
     let Session {
         policy,
         owner,
@@ -20,6 +14,7 @@ pub(super) fn run(
         audit,
         journal,
         lifecycle,
+        options,
         ..
     } = *session;
     let records = native(journal.entries::<Record>())?;
@@ -36,39 +31,60 @@ pub(super) fn run(
         .as_ref()
         .and_then(|last| operations.iter().find(|r| r["id"] == last["id"]));
     let state = native(client.state(policy, owner, true, None))?;
-    if json {
-        stdout.push_str(&format!("{}\n",serde_json::json!({"policyId":policy.id,"network":policy.network,"state":state,"operations":operations,"operation":operation})));
-    } else {
-        stdout.push_str(&format!("Policy {}\n", policy.id));
-        if let Some(s) = state {
-            stdout.push_str(&format!(
-                "Vault {}\nTrusted authority: {}\nApproved: {}\nBalance: {}\nPer-action limit: {}\nSpent today counter: {}\n",
-                s.binding.vault,
-                s.binding.authority,
-                s.approved,
-                allowit_native::policy::decimal(native(allowit_native::native::number(
-                    &s.balance
-                ))?),
-                allowit_native::policy::decimal(native(allowit_native::native::number(
-                    &s.action_limit
-                ))?),
-                allowit_native::policy::decimal(native(allowit_native::native::number(
-                    &s.spent
-                ))?)
-            ));
+    let audit_status = audit.as_ref().map(|_| {
+        if audit_pending {
+            "pending"
         } else {
-            stdout.push_str("Not deployed\n");
+            "confirmed"
+        }
+    });
+    // The current commands print the canonical CAIP-2 ID; the hidden verbs
+    // of earlier releases keep the native library's name.
+    let network = if options.legacy {
+        policy.network.clone()
+    } else {
+        crate::routing::normalize(&policy.network)?.to_owned()
+    };
+    if out.json {
+        out.json_value(&serde_json::json!({
+            "policyId": policy.id,
+            "network": network,
+            "state": state,
+            "operations": operations,
+            "operation": operation,
+            "auditStatus": audit_status,
+        }));
+    } else {
+        let amount = |raw: &str| -> Result<String> {
+            Ok(allowit_native::policy::decimal(native(
+                allowit_native::native::number(raw),
+            )?))
+        };
+        let mut view = serde_json::json!({"policyId": policy.id, "network": network});
+        match &state {
+            Some(s) => {
+                view["vault"] = serde_json::json!(s.binding.vault.to_string());
+                view["authority"] = serde_json::json!(s.binding.authority.to_string());
+                view["approved"] = serde_json::json!(s.approved);
+                view["balance"] = serde_json::json!(amount(&s.balance)?);
+                view["actionLimit"] = serde_json::json!(amount(&s.action_limit)?);
+                view["spentToday"] = serde_json::json!(amount(&s.spent)?);
+            }
+            None => view["deployed"] = serde_json::json!(false),
         }
         if let Some(op) = operation {
-            stdout.push_str(&format!(
-                "Last operation: {}\n{}\n",
-                op["status"].as_str().unwrap_or("uncertain"),
-                op["transactionUrl"].as_str().unwrap_or("")
-            ));
+            view["lastOperation"] = op["status"].clone();
+            view["transactionUrl"] = op["transactionUrl"].clone();
         }
+        if let Some(status) = audit_status {
+            view["auditStatus"] = serde_json::json!(status);
+        }
+        out.value(&view);
     }
-    if audit_pending {
-        stderr.push_str("Native SQL audit is pending; retain this journal and run allowit policy status again.\n");
+    if audit_pending && options.legacy {
+        out.progress(
+            "Native SQL audit is pending; retain this journal and run allowit wallet show again.",
+        );
     }
     Ok(if audit_pending { 5 } else { 0 })
 }

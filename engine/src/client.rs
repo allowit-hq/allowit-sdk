@@ -355,28 +355,10 @@ pub(crate) mod tests {
         assert_eq!(server.finish().len(), 1);
     }
     #[test]
-    fn post_once_gateway_errors_are_unknown_without_retry() {
-        for status in [502, 503, 504] {
-            let (mut client, server) = serve(vec![
-                Reply::Status(
-                    status,
-                    r#"{"error":"server-private echo req-private-0001"}"#,
-                ),
-                Reply::Status(200, "{}"),
-            ]);
-            let e = client.post_once("run", BODY).unwrap_err();
-            assert_eq!((e.code, e.status), (5, Some(status)));
-            assert!(
-                e.message
-                    .starts_with(&format!("Allowit returned HTTP {status};"))
-            );
-            assert_private(&e);
-            assert_eq!(server.finish().len(), 1);
-        }
-    }
-    #[test]
-    fn post_once_classifies_every_non_200_as_unknown() {
-        for status in [201, 204, 302, 400, 401, 403, 404, 409, 422, 429, 500] {
+    fn post_once_classifies_every_non_200_as_unknown_without_retry() {
+        for status in [
+            201, 204, 302, 400, 401, 403, 404, 409, 422, 429, 500, 502, 503, 504,
+        ] {
             let (mut client, server) = serve(vec![
                 Reply::Status(
                     status,
@@ -386,6 +368,12 @@ pub(crate) mod tests {
             ]);
             let e = client.post_once("run", BODY).unwrap_err();
             assert_eq!((e.code, e.status, e.config), (5, Some(status), false));
+            assert!(
+                e.message
+                    .starts_with(&format!("Allowit returned HTTP {status};")),
+                "{}",
+                e.message
+            );
             assert_private(&e);
             // A redirect is neither followed nor retried.
             assert_eq!(server.finish().len(), 1, "HTTP {status}");

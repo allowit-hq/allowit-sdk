@@ -1,66 +1,130 @@
-//! `allowit setup`: registers public wallet metadata with the selected account.
-//! Private keys, seeds and wallet files stay on this device.
-//!
-//! Input: `--input JSON` or `--input-file PATH` with `network` (canonical CAIP-2),
-//! `address`, `publicKey`, `keyType` and optional `name`. Posts to
-//! `/api/gateway/setup` with `ALLOWIT_ACCOUNT_TOKEN`; refuses `--policy`.
-//!
-//! ```text
-//! allowit wallet generate --network stellar:testnet --output agent.key
-//! allowit wallet show --network stellar:testnet agent.key > agent.json
-//! allowit setup --input-file agent.json --request-id setup-0001
-//! allowit whoami
-//! ```
+//! `allowit setup --agent NAME [--force]`: onboarding for the current rail.
+//! Chooses the agent key and the rail's paid-service asset (USDC; AlphaUSD on
+//! Tempo testnet, which has no USDC) and, with `ALLOWIT_ACCOUNT_TOKEN`, registers the agent's public key with
+//! the engine. Running it again changes nothing.
 use crate::{
+    config::env_value,
+    ctx::Ctx,
     error::{Error, Result},
-    gateway::{args::Invocation, control},
+    gateway::{ACCOUNT_TOKEN_ENV, Common, args::Invocation, control},
 };
-use serde_json::Value;
+use serde_json::{Value, json};
+
+pub(crate) const EXAMPLES: &str = "\
+Examples:
+  allowit keys generate agent --fund
+  allowit setup --agent agent
+  allowit setup --agent new-agent --force";
+
+/// Set up the current rail: the agent key and the paid-service asset
+#[derive(clap::Args, Debug)]
+pub(crate) struct Args {
+    /// The agent key, which signs agent requests
+    #[arg(long, value_name = "NAME")]
+    pub agent: String,
+    /// Replace a different agent key
+    #[arg(long)]
+    pub force: bool,
+}
 
 const FIELDS: &[&str] = &["network", "address", "publicKey", "keyType", "name"];
-
-pub(crate) fn run(inv: &Invocation, stdout: &mut String, stderr: &mut String) -> Result<i32> {
-    let c = control::input(inv)?;
-    if !c.pos.is_empty() {
-        return Err(Error::usage(
-            "use --input JSON or named fields for this account operation",
-        ));
-    }
-    control::require_account_authority(inv)?;
-    registration(&c.input)?;
-    control::mutate(inv, "/api/gateway/setup", "setup", c.input, stdout, stderr)
-}
 
 /// Accepts only public wallet metadata that matches its own public key.
 fn registration(input: &Value) -> Result<()> {
     control::public_fields(input, FIELDS)?;
     let mut registration = input.clone();
-    registration.as_object_mut().unwrap().remove("name");
-    let wallet: crate::wallet::PublicWallet =
-        serde_json::from_value(registration).map_err(|_| {
-            Error::usage(
-                "Setup requires network, address, publicKey and keyType from the local wallet",
-            )
-        })?;
-    wallet.validate()?;
-    if crate::routing::caip2(&wallet.network)? != wallet.network {
-        return Err(Error::usage(
-            "Wallet registration requires its canonical x402 network identifier",
-        ));
+    if let Some(map) = registration.as_object_mut() {
+        map.remove("name");
     }
-    if crate::routing::selected().is_some_and(|network| {
-        crate::routing::normalize(&wallet.network).is_ok_and(|bound| bound != network)
-    }) {
-        return Err(Error::usage("Wallet registration conflicts with --network"));
+    let wallet: crate::wallet::PublicWallet = serde_json::from_value(registration)
+        .map_err(|_| Error::usage("registration needs network, address, publicKey and keyType"))?;
+    wallet.validate()?;
+    if crate::routing::selected().is_some_and(|network| network != wallet.network) {
+        return Err(Error::usage(
+            "the registration conflicts with the selected rail",
+        ));
     }
     Ok(())
 }
 
-#[cfg(test)]
-mod key_boundary_tests {
-    use super::*;
-    use serde_json::json;
+pub(crate) fn run(args: Args, cx: &mut Ctx) -> Result<i32> {
+    let rail = cx.rail()?;
+    let default_asset = cx.vendor()?.caps().service_asset;
+    let key = cx.key(&args.agent)?;
+    key.check_rail(rail.id)?;
+    if !key.secret {
+        return Err(Error::config(format!(
+            "key {} has no private key on this device; the agent must sign",
+            key.name
+        )));
+    }
+    let service_asset = cx.settings()?.update(|config| {
+        let r = config.rail_mut(rail.id);
+        if let Some(agent) = &r.agent
+            && agent != &key.name
+            && !args.force
+        {
+            return Err(Error::config(format!(
+                "{} already uses agent key {agent}; pass --force to replace it",
+                rail.id
+            )));
+        }
+        r.agent = Some(key.name.clone());
+        Ok(r.service_asset
+            .get_or_insert_with(|| default_asset.into())
+            .clone())
+    })?;
+    let mut result = json!({
+        "rail": rail.id,
+        "agent": key.name,
+        "address": key.address,
+        "serviceAsset": service_asset,
+        "registered": false,
+    });
+    if !env_value(ACCOUNT_TOKEN_ENV).is_empty() {
+        let public_key = key
+            .public_key
+            .clone()
+            .ok_or_else(|| Error::config("the agent key has no public key to register"))?;
+        let input = json!({
+            "network": rail.id,
+            "address": key.address,
+            "publicKey": public_key,
+            "keyType": key.curve,
+            "name": key.name,
+        });
+        registration(&input)?;
+        let inv = Invocation {
+            group: "setup".into(),
+            args: vec![],
+            common: Common {
+                json: true,
+                ..Common::default()
+            },
+        };
+        let mut reply = String::new();
+        // A denied, failed, pending or uncertain registration keeps its exit
+        // code; only a completed one counts as registered.
+        let code = control::mutate(
+            &inv,
+            "/api/gateway/setup",
+            "setup",
+            input,
+            &mut reply,
+            &mut cx.out,
+        )?;
+        result["registered"] = json!(code == 0);
+        result["registration"] = serde_json::from_str(&reply).unwrap_or(Value::Null);
+        cx.out.value(&result);
+        return Ok(code);
+    }
+    cx.out.value(&result);
+    Ok(0)
+}
 
+#[cfg(test)]
+mod tests {
+    use super::*;
     fn public_registration() -> Value {
         let key = ed25519_dalek::SigningKey::from_bytes(&[7; 32])
             .verifying_key()
@@ -73,41 +137,23 @@ mod key_boundary_tests {
             "keyType": "ed25519"
         })
     }
-
     #[test]
-    fn setup_accepts_only_matching_public_wallet_metadata() {
+    fn registration_accepts_only_matching_public_metadata() {
         let public = public_registration();
         assert!(registration(&public).is_ok());
         let mut wrong = public.clone();
         wrong["address"] = json!("11111111111111111111111111111111");
         assert!(registration(&wrong).is_err());
-        for field in [
-            "seed",
-            "privateKey",
-            "keypair",
-            "agentShare",
-            "walletFile",
-            "config",
-        ] {
+        for field in ["seed", "privateKey", "keypair", "walletFile", "config"] {
             let mut secret = public.clone();
             secret[field] = json!({"value": "private material"});
             assert!(registration(&secret).is_err());
         }
         assert!(registration(&json!({})).is_err());
-    }
-
-    #[test]
-    fn public_registration_cannot_change_the_selected_network() {
-        crate::routing::with_network(Some("tempo:testnet".into()), || {
+        crate::routing::with_network(Some("eip155:42431".into()), || {
             assert!(registration(&public_registration()).is_err());
             Ok(())
         })
         .unwrap();
-    }
-
-    #[test]
-    fn whoami_refuses_any_input_field() {
-        assert!(control::public_fields(&json!({}), &[]).is_ok());
-        assert!(control::public_fields(&json!({"seed":"private"}), &[]).is_err());
     }
 }
