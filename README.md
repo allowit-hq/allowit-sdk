@@ -211,8 +211,6 @@ All packages share one Cargo workspace, one `Cargo.lock` and one version, and de
 
 `[workspace.metadata.allowit.track]` says which commit each pin must be: the default branch tip or a named branch.
 
-`allowit-stellar-wallet` pins allowit-core at e68ad4b, an earlier commit than the other rails, so its typed-workflow types are distinct from the ones this SDK uses. The Stellar command converts the execution request between the two through JSON and refuses any request that does not convert unchanged.
-
 ## How this fits the Allowit system
 
 Allowit is a small constellation of repositories, and this one sits in the middle.

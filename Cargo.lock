@@ -20,14 +20,14 @@ dependencies = [
 [[package]]
 name = "allowit"
 version = "0.1.0"
-source = "git+https://github.com/allowit-hq/allowit-contracts-stellar.git?rev=5cbef8d2195d3b4f5865f3f68cf28ce6d832e899#5cbef8d2195d3b4f5865f3f68cf28ce6d832e899"
+source = "git+https://github.com/allowit-hq/allowit-contracts-stellar.git?rev=c9a85574ef040ea10f7b885d50124c7935f4a5c7#c9a85574ef040ea10f7b885d50124c7935f4a5c7"
 
 [[package]]
 name = "allowit-cli"
 version = "0.3.0"
 dependencies = [
  "allowit-native",
- "allowit-sdk 0.1.0 (git+https://github.com/allowit-hq/allowit-core.git?rev=6aa00597a0796acf6f6fa911a86c0fe57c055b67)",
+ "allowit-sdk",
  "allowit-sdk-engine",
  "allowit-stellar-wallet",
  "allowit-tempo",
@@ -73,7 +73,7 @@ dependencies = [
 name = "allowit-policy-template"
 version = "0.3.0"
 dependencies = [
- "allowit-sdk 0.1.0 (git+https://github.com/allowit-hq/allowit-core.git?rev=6aa00597a0796acf6f6fa911a86c0fe57c055b67)",
+ "allowit-sdk",
 ]
 
 [[package]]
@@ -96,27 +96,11 @@ dependencies = [
 ]
 
 [[package]]
-name = "allowit-sdk"
-version = "0.1.0"
-source = "git+https://github.com/allowit-hq/allowit-core.git?rev=e68ad4be5e4d1c28b8435982a2a208d2f872ba4e#e68ad4be5e4d1c28b8435982a2a208d2f872ba4e"
-dependencies = [
- "proc-macro2",
- "serde",
- "serde_json",
- "sha2 0.10.9",
- "solana-sha256-hasher",
- "syn 2.0.119",
- "unicode-ident",
- "unicode-normalization",
- "unicode-script",
-]
-
-[[package]]
 name = "allowit-sdk-engine"
 version = "0.3.0"
 dependencies = [
  "allowit-native",
- "allowit-sdk 0.1.0 (git+https://github.com/allowit-hq/allowit-core.git?rev=6aa00597a0796acf6f6fa911a86c0fe57c055b67)",
+ "allowit-sdk",
  "allowit-solana-delegated-x402",
  "allowit-solana-paysh-cooperating",
  "allowit-solana-service-rpc",
@@ -148,7 +132,7 @@ version = "0.1.0"
 source = "git+https://github.com/allowit-hq/allowit-contracts-solana.git?rev=13bb5a4dd5e0bf6bc22bf4ae79fb5645903f0c82#13bb5a4dd5e0bf6bc22bf4ae79fb5645903f0c82"
 dependencies = [
  "allowit-native",
- "allowit-sdk 0.1.0 (git+https://github.com/allowit-hq/allowit-core.git?rev=6aa00597a0796acf6f6fa911a86c0fe57c055b67)",
+ "allowit-sdk",
  "base64 0.22.1",
  "bs58",
  "reqwest",
@@ -161,7 +145,7 @@ name = "allowit-solana-paysh-cooperating"
 version = "0.1.0"
 source = "git+https://github.com/allowit-hq/allowit-contracts-solana.git?rev=13bb5a4dd5e0bf6bc22bf4ae79fb5645903f0c82#13bb5a4dd5e0bf6bc22bf4ae79fb5645903f0c82"
 dependencies = [
- "allowit-sdk 0.1.0 (git+https://github.com/allowit-hq/allowit-core.git?rev=6aa00597a0796acf6f6fa911a86c0fe57c055b67)",
+ "allowit-sdk",
  "reqwest",
  "serde_json",
 ]
@@ -171,7 +155,7 @@ name = "allowit-solana-service-rpc"
 version = "0.1.0"
 source = "git+https://github.com/allowit-hq/allowit-contracts-solana.git?rev=13bb5a4dd5e0bf6bc22bf4ae79fb5645903f0c82#13bb5a4dd5e0bf6bc22bf4ae79fb5645903f0c82"
 dependencies = [
- "allowit-sdk 0.1.0 (git+https://github.com/allowit-hq/allowit-core.git?rev=6aa00597a0796acf6f6fa911a86c0fe57c055b67)",
+ "allowit-sdk",
  "serde_json",
 ]
 
@@ -180,7 +164,7 @@ name = "allowit-solana-service-upstreams"
 version = "0.1.0"
 source = "git+https://github.com/allowit-hq/allowit-contracts-solana.git?rev=13bb5a4dd5e0bf6bc22bf4ae79fb5645903f0c82#13bb5a4dd5e0bf6bc22bf4ae79fb5645903f0c82"
 dependencies = [
- "allowit-sdk 0.1.0 (git+https://github.com/allowit-hq/allowit-core.git?rev=6aa00597a0796acf6f6fa911a86c0fe57c055b67)",
+ "allowit-sdk",
  "allowit-vendor-google-air-quality",
  "allowit-vendor-open-meteo",
  "allowit-vendor-paysh-catalog",
@@ -190,10 +174,10 @@ dependencies = [
 [[package]]
 name = "allowit-stellar-wallet"
 version = "0.1.0"
-source = "git+https://github.com/allowit-hq/allowit-contracts-stellar.git?rev=5cbef8d2195d3b4f5865f3f68cf28ce6d832e899#5cbef8d2195d3b4f5865f3f68cf28ce6d832e899"
+source = "git+https://github.com/allowit-hq/allowit-contracts-stellar.git?rev=c9a85574ef040ea10f7b885d50124c7935f4a5c7#c9a85574ef040ea10f7b885d50124c7935f4a5c7"
 dependencies = [
  "allowit",
- "allowit-sdk 0.1.0 (git+https://github.com/allowit-hq/allowit-core.git?rev=e68ad4be5e4d1c28b8435982a2a208d2f872ba4e)",
+ "allowit-sdk",
  "base64 0.22.1",
  "ed25519-dalek",
  "reqwest",
@@ -209,7 +193,7 @@ name = "allowit-tempo"
 version = "0.1.0"
 source = "git+https://github.com/allowit-hq/allowit-contracts-tempo.git?rev=ac94e4551af251e3a31e8247ddcaaf9a2535fa9b#ac94e4551af251e3a31e8247ddcaaf9a2535fa9b"
 dependencies = [
- "allowit-sdk 0.1.0 (git+https://github.com/allowit-hq/allowit-core.git?rev=6aa00597a0796acf6f6fa911a86c0fe57c055b67)",
+ "allowit-sdk",
  "base64 0.22.1",
  "chrono",
  "k256",
@@ -232,7 +216,7 @@ name = "allowit-tempo-services"
 version = "0.1.0"
 source = "git+https://github.com/allowit-hq/allowit-contracts-tempo.git?rev=ac94e4551af251e3a31e8247ddcaaf9a2535fa9b#ac94e4551af251e3a31e8247ddcaaf9a2535fa9b"
 dependencies = [
- "allowit-sdk 0.1.0 (git+https://github.com/allowit-hq/allowit-core.git?rev=6aa00597a0796acf6f6fa911a86c0fe57c055b67)",
+ "allowit-sdk",
  "k256",
  "serde",
  "serde_json",
@@ -244,7 +228,7 @@ name = "allowit-vendor-google-air-quality"
 version = "0.1.0"
 source = "git+https://github.com/allowit-hq/allowit-contracts-solana.git?rev=13bb5a4dd5e0bf6bc22bf4ae79fb5645903f0c82#13bb5a4dd5e0bf6bc22bf4ae79fb5645903f0c82"
 dependencies = [
- "allowit-sdk 0.1.0 (git+https://github.com/allowit-hq/allowit-core.git?rev=6aa00597a0796acf6f6fa911a86c0fe57c055b67)",
+ "allowit-sdk",
  "reqwest",
  "serde_json",
 ]
@@ -254,7 +238,7 @@ name = "allowit-vendor-open-meteo"
 version = "0.1.0"
 source = "git+https://github.com/allowit-hq/allowit-contracts-solana.git?rev=13bb5a4dd5e0bf6bc22bf4ae79fb5645903f0c82#13bb5a4dd5e0bf6bc22bf4ae79fb5645903f0c82"
 dependencies = [
- "allowit-sdk 0.1.0 (git+https://github.com/allowit-hq/allowit-core.git?rev=6aa00597a0796acf6f6fa911a86c0fe57c055b67)",
+ "allowit-sdk",
  "reqwest",
  "serde_json",
 ]
@@ -264,7 +248,7 @@ name = "allowit-vendor-paysh-catalog"
 version = "0.1.0"
 source = "git+https://github.com/allowit-hq/allowit-contracts-solana.git?rev=13bb5a4dd5e0bf6bc22bf4ae79fb5645903f0c82#13bb5a4dd5e0bf6bc22bf4ae79fb5645903f0c82"
 dependencies = [
- "allowit-sdk 0.1.0 (git+https://github.com/allowit-hq/allowit-core.git?rev=6aa00597a0796acf6f6fa911a86c0fe57c055b67)",
+ "allowit-sdk",
  "serde_json",
 ]
 
@@ -274,7 +258,7 @@ version = "0.1.0"
 source = "git+https://github.com/allowit-hq/allowit-contracts-solana.git?rev=13bb5a4dd5e0bf6bc22bf4ae79fb5645903f0c82#13bb5a4dd5e0bf6bc22bf4ae79fb5645903f0c82"
 dependencies = [
  "allowit-native",
- "allowit-sdk 0.1.0 (git+https://github.com/allowit-hq/allowit-core.git?rev=6aa00597a0796acf6f6fa911a86c0fe57c055b67)",
+ "allowit-sdk",
  "base64 0.22.1",
  "chrono",
  "serde",

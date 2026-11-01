@@ -26,7 +26,7 @@ allowit-vendor-paysh-stock = { git = "https://github.com/allowit-hq/allowit-cont
 allowit-solana-paysh-cooperating = { git = "https://github.com/allowit-hq/allowit-contracts-solana.git", rev = "13bb5a4dd5e0bf6bc22bf4ae79fb5645903f0c82" }
 allowit-tempo = { git = "https://github.com/allowit-hq/allowit-contracts-tempo.git", rev = "ac94e4551af251e3a31e8247ddcaaf9a2535fa9b" }
 allowit-tempo-services = { git = "https://github.com/allowit-hq/allowit-contracts-tempo.git", rev = "ac94e4551af251e3a31e8247ddcaaf9a2535fa9b" }
-allowit-stellar-wallet = { git = "https://github.com/allowit-hq/allowit-contracts-stellar.git", rev = "5cbef8d2195d3b4f5865f3f68cf28ce6d832e899" }
+allowit-stellar-wallet = { git = "https://github.com/allowit-hq/allowit-contracts-stellar.git", rev = "c9a85574ef040ea10f7b885d50124c7935f4a5c7" }
 
 [profile.release]
 lto = true
