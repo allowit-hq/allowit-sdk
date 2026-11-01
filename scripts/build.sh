@@ -127,15 +127,22 @@ if [ -n "$stale" ]; then
       sed -i.orig "s/${pair%%:*}/${pair##*:}/g" "$manifest" && rm "$manifest.orig"
     done
   done
-  # Only packages whose requirements changed move in the locks.
-  [ -z "$moves" ] || for m in $workspaces; do cargo update --workspace --manifest-path "$m"; done
+fi
+# Refresh every lock, also after an interrupted update whose pins already
+# moved. Only packages whose requirements changed move in the locks.
+if [ "$mode" = update ]; then
+  for m in $workspaces; do cargo update --workspace --manifest-path "$m"; done
 fi
 
 # Each lock holds one copy of every git package, so an update that moves
 # allowit-core ahead of a pinned dependency cannot add a second allowit-core.
 for m in $workspaces; do
   lock=$(dirname "$m")/Cargo.lock
-  [ -f "$lock" ] || continue
+  if [ ! -f "$lock" ]; then
+    echo "$lock: missing" >&2
+    failed=1
+    continue
+  fi
   dups=$(awk '/^name = /{n=$3} /^source = "git\+/{print n}' "$lock" | sort | uniq -d | tr -d '"' | xargs)
   if [ -n "$dups" ]; then
     echo "$lock: more than one copy of git package $dups" >&2
