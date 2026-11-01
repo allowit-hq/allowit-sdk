@@ -358,6 +358,9 @@ mod tests {
     }
     #[test]
     fn max_minimum_and_bad_input() {
+        let huge = decimal_units(&u128::MAX.to_string(), 7).unwrap_err();
+        assert_eq!(huge.code, 2);
+        assert!(huge.message.contains("is too large"), "{}", huge.message);
         let max = parse(Family::Stellar, STELLAR, "XLM:max", Use::Withdraw).unwrap();
         assert_eq!(max.quantity, Quantity::Max);
         assert!(parse(Family::Stellar, STELLAR, "XLM:max", Use::Spend).is_err());

@@ -391,6 +391,22 @@ fn json_errors_are_one_object_on_stderr() {
 }
 
 #[test]
+fn stdout_escapes_display_controls_and_redacts_the_engine_token() {
+    let secret = "s".repeat(40);
+    let mut sandbox = Sandbox::new("stdout-safe");
+    sandbox
+        .set("ALLOWIT_TOKEN", &secret)
+        .set("ALLOWIT_URL", format!("https://x/\u{202e}{secret}"));
+    let output = sandbox.run(&["config", "show"]);
+    assert_eq!(code(&output), Some(0));
+    let text = stdout(&output);
+    assert!(!text.contains('\u{202e}'), "{text}");
+    assert!(text.contains("\\u{202e}"), "{text}");
+    assert!(!text.contains(&secret), "{text}");
+    assert!(text.contains("[redacted]"), "{text}");
+}
+
+#[test]
 fn verbs_without_a_backend_exit_3_as_not_available() {
     let mut sandbox = Sandbox::new("unavailable");
     let mock = Mock::new();

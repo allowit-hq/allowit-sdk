@@ -98,5 +98,9 @@ mod tests {
         assert_eq!(Exit::from_code(99), Exit::Internal);
         assert_eq!(not_available("wallet close", "stellar:testnet").code, 3);
         assert_eq!(no_rail().code, 3);
+        assert_eq!(Exit::Denied.name(), "denied");
+        for (status, code) in [(401, 3), (403, 3), (404, 4), (500, 4)] {
+            assert_eq!(Error::api(status, "x").code, code, "HTTP {status}");
+        }
     }
 }

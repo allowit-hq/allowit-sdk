@@ -171,12 +171,22 @@ mod tests {
         record(&dir, &entry("pay-0001", 10)).unwrap();
         record(&dir, &entry("pay-0002", 20)).unwrap();
         record(&dir, &entry("pay-0001", 99)).unwrap();
-        let mut other = entry("pay-0001", 10);
-        other.amount = "XLM:6".into();
-        assert_eq!(record(&dir, &other).unwrap_err().code, 2);
-        let mut moved = entry("pay-0001", 10);
-        moved.policy = Some("policy-2@digest".into());
-        assert_eq!(record(&dir, &moved).unwrap_err().code, 2);
+        type Change = (&'static str, fn(&mut Entry));
+        let changes: [Change; 7] = [
+            ("command", |e| e.command = "status".into()),
+            ("rail", |e| e.rail = "stellar:pubnet".into()),
+            ("wallet", |e| e.wallet = Some("COTHER".into())),
+            ("policy", |e| e.policy = Some("policy-2@digest".into())),
+            ("op", |e| e.op = "swap".into()),
+            ("to", |e| e.to = "GOTHER".into()),
+            ("amount", |e| e.amount = "XLM:6".into()),
+        ];
+        for (field, change) in changes {
+            let mut other = entry("pay-0001", 10);
+            change(&mut other);
+            let err = record(&dir, &other).unwrap_err();
+            assert_eq!(err.code, 2, "a changed {field} must not reuse the ID");
+        }
         finish(&dir, "pay-0001", 0).unwrap();
         let all = entries(&dir).unwrap();
         assert_eq!(all[0].request_id, "pay-0002");
