@@ -5,4 +5,5 @@ edition = "2024"
 publish = false
 
 [dependencies]
-allowit = { package = "allowit-sdk", git = "https://github.com/allowit-hq/allowit-core.git", rev = "6aa00597a0796acf6f6fa911a86c0fe57c055b67" }
+# TODO: replace rev with tag = "v0.1.0" together with the root allowit-sdk entry.
+allowit = { package = "allowit-sdk", git = "https://github.com/allowit-hq/allowit-core.git", rev = "6aa00597a0796acf6f6fa911a86c0fe57c055b67", version = "0.1" }
