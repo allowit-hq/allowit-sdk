@@ -296,8 +296,9 @@ fn failed_exit(
 
 /// The flags that repeat or replace an unfinished operation of command
 /// NAME, among the flags that its current command takes: `wallet fund` and
-/// `wallet withdraw` take `--request-id` and `--additional`; `wallet create`
-/// and `exec` take only `--request-id`; the other owner verbs take neither.
+/// `wallet withdraw` take `--request-id` and `--additional`; `wallet create`,
+/// `exec` and `policy params set` take only `--request-id`; the other owner
+/// verbs take neither.
 fn retry_flags(
     name: &str,
     id: &str,
@@ -305,6 +306,11 @@ fn retry_flags(
     unexecuted: bool,
     audit_pending: bool,
 ) -> Option<String> {
+    // A parameter change sets a value, so a new change after an unfinished
+    // one is safe. Its ID is ID.KEY, so the hint cannot name the ID to reuse.
+    if matches!(name, "tune" | "tune-action") {
+        return (expired || unexecuted).then(|| "--request-id NEW_ID".into());
+    }
     let request_id = matches!(name, "fund" | "withdraw" | "deploy" | "execute");
     if !request_id {
         return None;
@@ -358,8 +364,17 @@ mod tests {
             retry_flags("execute", "pay-0001", false, true, false).unwrap(),
             "--request-id NEW_ID"
         );
-        // wallet pause, wallet close and policy params set take no retry flag.
-        for name in ["revoke", "close", "tune", "tune-action"] {
+        for name in ["tune", "tune-action"] {
+            for (expired, unexecuted) in [(true, false), (false, true)] {
+                assert_eq!(
+                    retry_flags(name, "x", expired, unexecuted, false).unwrap(),
+                    "--request-id NEW_ID"
+                );
+            }
+            assert!(retry_flags(name, "x", false, false, true).is_none());
+        }
+        // wallet pause and wallet close take no retry flag.
+        for name in ["revoke", "close"] {
             for (expired, unexecuted, pending) in [
                 (true, false, false),
                 (false, true, false),

@@ -506,4 +506,40 @@ fn vault_operations_refuse_a_selected_wallet_of_another_vault() {
     ]);
     assert_eq!(code(&output), Some(3), "{}", stderr(&output));
     assert!(stderr(&output).contains("--wait"), "{}", stderr(&output));
+    // A parameter change takes a new request ID; a retry passes the printed
+    // one. Each change runs as ID.KEY, which must fit 100 characters.
+    let set = [
+        "--rpc-url",
+        "http://127.0.0.1:1",
+        "policy",
+        "params",
+        "set",
+        "day_spent_cap=3000000",
+        "--sign-with-key",
+        "owner",
+    ];
+    let output = sandbox.run(&set);
+    let first = stderr(&output)
+        .lines()
+        .next()
+        .unwrap_or_default()
+        .to_owned();
+    assert!(first.starts_with("req-"), "{}", stderr(&output));
+    assert_ne!(
+        stderr(&sandbox.run(&set)).lines().next(),
+        Some(first.as_str())
+    );
+    let mut retry = set.to_vec();
+    retry.extend(["--request-id", "caps-0001"]);
+    assert!(!stderr(&sandbox.run(&retry)).contains("req-"));
+    let long = "c".repeat(90);
+    let mut too_long = set.to_vec();
+    too_long.extend(["--request-id", long.as_str()]);
+    let output = sandbox.run(&too_long);
+    assert_eq!(code(&output), Some(2), "{}", stderr(&output));
+    assert!(stderr(&output).contains("ID.KEY"), "{}", stderr(&output));
+    // A refused signing mode prints no request ID.
+    let output = sandbox.run(&["policy", "params", "set", "day_spent_cap=3000000"]);
+    assert_eq!(code(&output), Some(3), "{}", stderr(&output));
+    assert!(!stderr(&output).contains("req-"), "{}", stderr(&output));
 }

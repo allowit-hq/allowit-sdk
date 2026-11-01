@@ -87,7 +87,7 @@ pub(crate) fn run(args: Args, cx: &mut Ctx) -> Result<i32> {
         vendor.status(cx, &args.id, wallet.as_deref(), args.wait)
     })?;
     if entry.is_some() {
-        journal::finish(&dir, &args.id, code)?;
+        super::exec::finish(cx, &dir, &args.id, code);
     }
     Ok(code)
 }

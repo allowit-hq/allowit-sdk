@@ -7,7 +7,7 @@ use crate::{
     settings::journal,
     vendors::{ExecRequest, Mode, asset::Use},
 };
-use std::time::Duration;
+use std::{path::Path, time::Duration};
 
 pub(crate) const EXAMPLES: &str = "\
 Examples:
@@ -87,6 +87,9 @@ pub(crate) fn submit(mode: Mode, a: RequestArgs, build_only: bool, cx: &mut Ctx)
     // Refuse what the rail cannot serve before a request ID is spent.
     if !vendor.caps().verbs.contains(&mode.name()) {
         return Err(vendor.na(mode.name()));
+    }
+    if build_only && !vendor.caps().exec_build_only {
+        return Err(vendor.na("exec --build-only"));
     }
     crate::vendors::require_op(vendor.as_ref(), &a.op)?;
     // Input checks come before any settings, journal or network access.
@@ -170,13 +173,58 @@ pub(crate) fn submit(mode: Mode, a: RequestArgs, build_only: bool, cx: &mut Ctx)
             Ok(code) => *code,
             Err(e) => e.code,
         };
-        journal::finish(&dir, &request_id, code)?;
+        finish(cx, &dir, &request_id, code);
     }
     result
 }
 
+/// Records a request's last exit code. A journal failure never replaces the
+/// command's result; it is reported as a warning.
+pub(crate) fn finish(cx: &mut Ctx, dir: &Path, id: &str, code: i32) {
+    if let Err(e) = journal::finish(dir, id, code) {
+        cx.out.warning(format!(
+            "the journal did not record the result of {id}: {}",
+            e.message
+        ));
+    }
+}
+
 #[cfg(test)]
 mod tests {
+    use super::*;
+    use crate::{commands::Global, term::Out};
+
+    #[test]
+    fn a_locked_journal_keeps_the_result_and_warns() {
+        let dir = crate::settings::temp_dir("finish");
+        let mut cx = Ctx::new(Global::default(), Out::new(false, true, false, true));
+        let entry = journal::Entry {
+            request_id: "pay-0001".into(),
+            command: "exec".into(),
+            rail: "stellar:testnet".into(),
+            wallet: None,
+            policy: None,
+            op: "transfer".into(),
+            to: "G".into(),
+            amount: "1".into(),
+            created_at: 0,
+            exit: None,
+        };
+        journal::record(&dir, &entry).unwrap();
+        let held = journal::lock(&dir, "pay-0001").unwrap();
+        finish(&mut cx, &dir, "pay-0001", 4);
+        assert_eq!(
+            cx.out.stderr,
+            "warning: the journal did not record the result of pay-0001: the request journal is unsafe or locked\n"
+        );
+        drop(held);
+        finish(&mut cx, &dir, "pay-0001", 4);
+        assert_eq!(
+            journal::load(&dir, "pay-0001").unwrap().unwrap().exit,
+            Some(4)
+        );
+    }
+
     #[test]
     fn op_syntax() {
         for ok in [

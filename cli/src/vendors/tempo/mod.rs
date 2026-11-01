@@ -237,7 +237,8 @@ impl Tempo {
         Ok(settings)
     }
     /// Runs one crate command with `--json` and returns its exit code and
-    /// JSON result.
+    /// JSON result. The command's own request ID, or none, replaces an
+    /// `ALLOWIT_REQUEST_ID` left in the environment.
     fn run(
         &self,
         cx: &mut Ctx,
@@ -246,9 +247,11 @@ impl Tempo {
         settings: &[(&'static str, String)],
     ) -> Result<(i32, Option<Value>)> {
         args.push("--json".into());
+        let mut settings = settings.to_vec();
+        settings.push(("ALLOWIT_REQUEST_ID", id.unwrap_or_default().to_owned()));
         let (mut stdout, mut stderr) = (String::new(), String::new());
         crate::flush_stderr(&mut cx.out.stderr);
-        let code = config::with_settings(settings, || {
+        let code = config::with_settings(&settings, || {
             without_crate_progress(|| {
                 allowit_tempo::run_with_request_id(&args, id, &mut stdout, &mut stderr)
             })
@@ -306,6 +309,7 @@ impl Rail for Tempo {
             // Tempo testnet has no USDC; AlphaUSD is its TIP-20 USD token.
             service_asset: if self.0.testnet { "AlphaUSD" } else { "USDC" },
             ops: &["transfer"],
+            exec_build_only: true,
             param_keys: &[],
             signing: &[],
             verbs: if self.0.testnet {
@@ -443,8 +447,12 @@ impl Rail for Tempo {
         }
     }
     fn call(&self, cx: &mut Ctx, c: &CallRequest) -> Result<Option<i32>> {
-        if !c.target.starts_with("https://") || !self.0.testnet {
+        // A target without a URL scheme is a catalog service.
+        if !self.0.testnet || !c.target.contains("://") {
             return Ok(None);
+        }
+        if !c.target.starts_with("https://") {
+            return Err(Error::usage("an MPP call needs an https:// URL"));
         }
         if c.input.is_some() {
             return Err(Error::usage("an MPP call is one GET without --input"));

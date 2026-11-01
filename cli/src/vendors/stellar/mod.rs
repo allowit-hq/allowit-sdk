@@ -122,6 +122,7 @@ impl Rail for Stellar {
             address_is_key: true,
             service_asset: "USDC",
             ops: &["transfer"],
+            exec_build_only: true,
             // No `policy params set` backend yet.
             param_keys: &[],
             signing: &[],

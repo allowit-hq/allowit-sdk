@@ -20,7 +20,7 @@ pub(crate) mod policy;
 use super::{
     Binding, Caps, ExecRequest, Mode, Param, Rail, SignWith, Signing, WalletCreate,
     asset::{Amount, Asset, Token},
-    require_op, require_signing,
+    param_request_id, require_op, require_signing,
 };
 use crate::{
     config,
@@ -226,6 +226,22 @@ impl Solana {
     }
 }
 
+/// Runs the changes of one command in order. A settled replay (exit 6) is a
+/// completed change, so a retry reaches the changes that did not finish.
+/// Any other failure stops the batch with its code. The batch exits 6 only
+/// when every change was a replay.
+fn batch<T>(items: Vec<T>, mut run: impl FnMut(usize, T) -> Result<i32>) -> Result<i32> {
+    let mut code = 6;
+    for (i, item) in items.into_iter().enumerate() {
+        match run(i, item)? {
+            0 => code = 0,
+            6 => {}
+            other => return Ok(other),
+        }
+    }
+    Ok(code)
+}
+
 /// Joins the JSON documents printed after START into one array when there
 /// are several.
 fn one_document(stdout: &mut String, start: usize, compact: bool) {
@@ -301,6 +317,8 @@ impl Rail for Solana {
             address_is_key: true,
             service_asset: "USDC",
             ops: &["transfer"],
+            // The engine harness signs and submits every request itself.
+            exec_build_only: false,
             // SetDailyLimit counts transferred amounts without gas.
             param_keys: &["transaction_cap", "day_spent_cap"],
             // The vault program takes its first deposit from a signing link;
@@ -577,7 +595,7 @@ impl Rail for Solana {
     }
     fn policy_params_set(&self, cx: &mut Ctx, params: &[Param], s: &Signing) -> Result<i32> {
         let signer = self.owner_signer(cx, "policy params set", s)?;
-        let mut operations = vec![];
+        let mut amounts = vec![];
         for p in params {
             let method = match p.key.as_str() {
                 "day_spent_cap" => "tune",
@@ -588,27 +606,38 @@ impl Rail for Solana {
                 .amount
                 .as_ref()
                 .ok_or_else(|| Error::usage(format!("{} needs an amount", p.key)))?;
-            operations.push((method, self.vault_amount(amount)?));
+            amounts.push((method, self.vault_amount(amount)?, &p.key));
         }
         let options = self.vault_options(cx, Some(s))?;
+        // A new change gets a new ID; a retry passes the printed one.
+        let id = match &s.request_id {
+            Some(id) => id.clone(),
+            None => {
+                let id = crate::settings::journal::new_id()?;
+                cx.out.generated_id(&id);
+                id
+            }
+        };
+        cx.out.request_id = Some(id.clone());
+        let operations: Vec<_> = amounts
+            .into_iter()
+            .map(|(method, value, key)| (method, value, param_request_id(&id, key)))
+            .collect();
         // Each operation prints one result; several results become one JSON
         // array, or text blocks separated by a blank line.
         let start = cx.out.stdout.len();
-        let run = || -> Result<i32> {
-            let mut code = 0;
-            for (i, (method, value)) in operations.into_iter().enumerate() {
-                let before = cx.out.stdout.len();
-                code = self.native(cx, method, &[value], &options, vec![signer.clone()])?;
-                if i > 0 && !cx.out.json && cx.out.stdout.len() > before {
-                    cx.out.stdout.insert(before, '\n');
-                }
-                if code != 0 {
-                    break;
-                }
+        let result = batch(operations, |i, (method, value, request_id)| {
+            let before = cx.out.stdout.len();
+            let options = RunOptions {
+                request_id: Some(request_id),
+                ..options.clone()
+            };
+            let code = self.native(cx, method, &[value], &options, vec![signer.clone()])?;
+            if i > 0 && !cx.out.json && cx.out.stdout.len() > before {
+                cx.out.stdout.insert(before, '\n');
             }
             Ok(code)
-        };
-        let result = run();
+        });
         if cx.out.json {
             one_document(&mut cx.out.stdout, start, cx.out.compact);
         }
@@ -654,9 +683,6 @@ impl Solana {
     fn request(&self, cx: &mut Ctx, r: &ExecRequest) -> Result<i32> {
         require_op(self, &r.op)?;
         self.harness_wallet(r.wallet.as_deref())?;
-        if r.build_only {
-            return Err(self.na("exec --build-only"));
-        }
         if r.token_out.is_some() || r.args.is_some() {
             return Err(Error::usage(
                 "--token-out and --args apply to swap and custom operations, not transfer",
@@ -724,6 +750,25 @@ mod tests {
         assert_eq!(vault_amount(&plain, Some(test_mint)).unwrap_err().code, 4);
         let other = p(TESTNET, &format!("USDC:{}:5", MAINNET[1].issuer.unwrap()));
         assert_eq!(vault_amount(&other, Some(test_mint)).unwrap_err().code, 4);
+    }
+
+    #[test]
+    fn a_batch_continues_after_a_settled_replay() {
+        let run = |codes: Vec<i32>| {
+            let mut ran = vec![];
+            let code = batch(codes, |i, c| {
+                ran.push(i);
+                Ok(c)
+            })
+            .unwrap();
+            (code, ran)
+        };
+        assert_eq!(run(vec![6, 0]), (0, vec![0, 1]));
+        assert_eq!(run(vec![0, 6]), (0, vec![0, 1]));
+        assert_eq!(run(vec![6, 6]), (6, vec![0, 1]));
+        assert_eq!(run(vec![6, 4, 0]), (4, vec![0, 1]));
+        assert_eq!(run(vec![5, 0]), (5, vec![0]));
+        assert_eq!(run(vec![0]), (0, vec![0]));
     }
 
     #[test]

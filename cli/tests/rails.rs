@@ -969,6 +969,21 @@ fn tempo_bundle_serves_only_its_rail_and_vault() {
         "{}",
         stderr(&output)
     );
+    // The command's request ID, given or generated, replaces an
+    // ALLOWIT_REQUEST_ID left in the environment.
+    sandbox.set("ALLOWIT_REQUEST_ID", "tempo-old-0001");
+    let mut generated = build.clone();
+    generated.drain(7..9);
+    for args in [build.clone(), generated] {
+        let output = sandbox.run(&args);
+        assert_ne!(code(&output), Some(2), "{args:?}: {}", stderr(&output));
+        assert!(
+            !stderr(&output).contains("ALLOWIT_REQUEST_ID"),
+            "{args:?}: {}",
+            stderr(&output)
+        );
+    }
+    sandbox.set("ALLOWIT_REQUEST_ID", "");
     let mut long = pay.to_vec();
     long.extend(["--wait", "11m"]);
     assert_eq!(code(&sandbox.run(&long)), Some(2));
@@ -1220,4 +1235,68 @@ fn verbose_details_are_data_lines() {
     assert!(text.lines().any(|l| l == "rail  stellar:testnet"), "{text}");
     assert!(text.lines().any(|l| l.starts_with("config  ")), "{text}");
     common::assert_data(&text, "rail show -v");
+}
+
+#[test]
+fn a_rail_refuses_what_it_cannot_serve_before_a_request_id_or_credential() {
+    let sandbox = Sandbox::new("refusals");
+    sandbox.ok(&["rail", "use", "solana:devnet"]);
+    // The engine harness signs and submits itself: no build-only request.
+    let build = [
+        "exec",
+        "--op",
+        "transfer",
+        "--to",
+        "9hSR6S7WPtxmTojgo6GG3k4yDPecgJY292j7xrsUGWBu",
+        "--amount",
+        "USDC:1",
+        "--build-only",
+    ];
+    let output = sandbox.run(&build);
+    assert_eq!(code(&output), Some(3), "{}", stderr(&output));
+    assert_eq!(
+        stderr(&output),
+        "error: exec --build-only is not available on solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1 yet\n"
+    );
+    assert!(output.stdout.is_empty());
+    let mut json = vec!["--json"];
+    json.extend(build);
+    let output = sandbox.run(&json);
+    assert_eq!(code(&output), Some(3), "{}", stderr(&output));
+    let error: Value = serde_json::from_str(&stderr(&output)).unwrap();
+    assert_eq!(error["error"]["request_id"], Value::Null);
+    // An MPP call names its real requirement: an https:// URL.
+    let output = sandbox.run(&[
+        "--rail",
+        "tempo:testnet",
+        "call",
+        "http://api.example/v1",
+        "--max-amount",
+        "0.05",
+    ]);
+    assert_eq!(code(&output), Some(2), "{}", stderr(&output));
+    assert_eq!(
+        stderr(&output),
+        "error: an MPP call needs an https:// URL\n"
+    );
+    // The hidden commands of earlier releases refuse an unknown rail.
+    let bundle = sandbox.private_file("executor.json", "{}");
+    for args in [
+        vec![
+            "--rail",
+            "tempo:tesnet",
+            "tempo",
+            "import",
+            bundle.to_str().unwrap(),
+        ],
+        vec!["--rail", "solana:tesnet", "policy", "status"],
+    ] {
+        let output = sandbox.run(&args);
+        assert_eq!(code(&output), Some(2), "{args:?}: {}", stderr(&output));
+        assert!(
+            stderr(&output).contains("unknown rail"),
+            "{args:?}: {}",
+            stderr(&output)
+        );
+    }
 }

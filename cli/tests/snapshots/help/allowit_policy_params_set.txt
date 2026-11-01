@@ -7,12 +7,14 @@ Usage: allowit policy params set [OPTIONS] <KEY=VALUE>...
 Examples:
   allowit --rail solana:devnet policy params set day_spent_cap=USDC:50 --sign-with-key owner
   allowit --rail solana:devnet policy params set transaction_cap=USDC:10 day_spent_cap=USDC:100 --sign-with-key owner
+  allowit --rail solana:devnet policy params set day_spent_cap=USDC:50 --sign-with-key owner --request-id caps-0001
 
 Arguments:
   <KEY=VALUE>...  KEY=VALUE pairs; a list value replaces the old list
 
 Options:
-  -h, --help  Print help
+      --request-id <ID>  Operation ID (ID.KEY per change); a retry reuses it [default: a new ID]
+  -h, --help             Print help
 
 Signing:
       --sign-with-link       Print the owner signing link as the signingUrl field (the default)

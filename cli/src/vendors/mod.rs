@@ -73,6 +73,8 @@ pub(crate) struct Caps {
     pub service_asset: &'static str,
     /// `exec --op` values that work.
     pub ops: &'static [&'static str],
+    /// True when `exec --build-only` works.
+    pub exec_build_only: bool,
     /// `policy params set` keys that the rail can change.
     pub param_keys: &'static [&'static str],
     /// Owner signing modes that work, per owner verb: `key`, `link`,
@@ -195,6 +197,12 @@ pub(crate) struct Param {
     pub value: String,
     /// The parsed amount for an amount-kind key.
     pub amount: Option<Amount>,
+}
+
+/// The request ID of one parameter change: `ID.KEY`, so that each change of
+/// a `policy params set` command has its own ID and a retry reuses all.
+pub(crate) fn param_request_id(id: &str, key: &str) -> String {
+    format!("{id}.{key}")
 }
 
 /// A paid call: `call SERVICE|URL`.

@@ -45,6 +45,12 @@ fn open(dir: &Path, id: &str) -> Result<Store> {
     open_shard(dir, &shard(id))
 }
 
+/// Holds the lock of a request's folder, as another process does.
+#[cfg(test)]
+pub(crate) fn lock(dir: &Path, id: &str) -> Result<Store> {
+    open(dir, id)
+}
+
 pub(crate) fn now() -> u64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)

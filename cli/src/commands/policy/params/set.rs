@@ -4,13 +4,15 @@ use crate::{
     ctx::Ctx,
     error::{Error, Result, quoted},
     exit::not_available,
-    vendors::{PARAM_KEYS, Param, Rail, address, asset::Use},
+    request::request_id_valid,
+    vendors::{PARAM_KEYS, Param, Rail, address, asset::Use, param_request_id},
 };
 
 pub(crate) const EXAMPLES: &str = "\
 Examples:
   allowit --rail solana:devnet policy params set day_spent_cap=USDC:50 --sign-with-key owner
-  allowit --rail solana:devnet policy params set transaction_cap=USDC:10 day_spent_cap=USDC:100 --sign-with-key owner";
+  allowit --rail solana:devnet policy params set transaction_cap=USDC:10 day_spent_cap=USDC:100 --sign-with-key owner
+  allowit --rail solana:devnet policy params set day_spent_cap=USDC:50 --sign-with-key owner --request-id caps-0001";
 
 /// Change parameters. Keys: transaction_cap, spent_cap, day_spent_cap,
 /// day_total_cap (amounts), call_cap (a count), recipients (addresses),
@@ -20,6 +22,9 @@ pub(crate) struct Args {
     /// KEY=VALUE pairs; a list value replaces the old list
     #[arg(required = true, value_name = "KEY=VALUE")]
     pub params: Vec<String>,
+    /// Operation ID (ID.KEY per change); a retry reuses it [default: a new ID]
+    #[arg(long, value_name = "ID")]
+    pub request_id: Option<String>,
     #[command(flatten)]
     pub signing: SigningArgs,
 }
@@ -43,7 +48,18 @@ pub(crate) fn run(args: Args, cx: &mut Ctx) -> Result<i32> {
             ));
         }
     }
-    let signing = args.signing.resolve(cx, rail.id)?;
+    if let Some(id) = &args.request_id
+        && (!request_id_valid(id)
+            || !params
+                .iter()
+                .all(|p| request_id_valid(&param_request_id(id, &p.key))))
+    {
+        return Err(Error::usage(
+            "--request-id must be 8 characters or more from A-Z a-z 0-9 . _ : -, and ID.KEY at most 100",
+        ));
+    }
+    let mut signing = args.signing.resolve(cx, rail.id)?;
+    signing.request_id = args.request_id;
     vendor.policy_params_set(cx, &params, &signing)
 }
 

@@ -147,12 +147,12 @@ fn execute(cli: commands::Cli) -> i32 {
         None
     } else if commands::is_legacy(&command) {
         // The hidden commands of earlier releases select a rail only with
-        // --rail or ALLOWIT_RAIL, never with `rail use`.
-        cx.global
-            .rail
-            .as_deref()
-            .and_then(|r| routing::info(r).ok())
-            .map(|r| r.id.to_owned())
+        // --rail or ALLOWIT_RAIL, never with `rail use`. An unknown rail is
+        // refused, never ignored.
+        match cx.global.rail.as_deref().map(routing::info).transpose() {
+            Ok(rail) => rail.map(|r| r.id.to_owned()),
+            Err(e) => return finish(cx.out, Err(e)),
+        }
     } else {
         cx.rail_opt().ok().flatten().map(|r| r.id.to_owned())
     };

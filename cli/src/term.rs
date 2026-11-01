@@ -158,6 +158,19 @@ impl Out {
         self.progress(id);
         self.quiet = quiet;
     }
+    /// A problem that leaves the result unchanged, on stderr. `-q` keeps it.
+    pub(crate) fn warning(&mut self, text: impl AsRef<str>) {
+        let text = text.as_ref();
+        if self.json {
+            let value = serde_json::json!({"warning": {"message": text}});
+            self.stderr.push_str(&format!("{value}\n"));
+        } else if self.color_err {
+            self.stderr
+                .push_str(&format!("\x1b[1;33mwarning:\x1b[0m {text}\n"));
+        } else {
+            self.stderr.push_str(&format!("warning: {text}\n"));
+        }
+    }
     /// Extra diagnostics on stderr with `-v`.
     pub(crate) fn detail(&mut self, text: impl AsRef<str>) {
         if self.verbose {
