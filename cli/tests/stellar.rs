@@ -21,6 +21,12 @@ use stellar_xdr::{
 const POLICY: &str = "stellar-policy";
 const ID: &str = "stellar-run-0001";
 
+/// allowit-stellar-wallet builds against its own allowit-sdk pin until it
+/// depends on allowit-core, so its request type is a distinct copy. The CLI
+/// converts through JSON too (`vendors::stellar::run::convert`).
+fn wallet<T: serde::de::DeserializeOwned>(request: &ExecutionRequest) -> T {
+    serde_json::from_value(serde_json::to_value(request).unwrap()).unwrap()
+}
 fn nonce() -> [u8; 32] {
     let mut v = b"allowit-workflow-operation-v1\0".to_vec();
     v.extend(POLICY.as_bytes());
@@ -204,7 +210,7 @@ fn retain_unsigned(
     now: u64,
 ) {
     use std::os::unix::fs::PermissionsExt;
-    let prepared = sdk::prepare(c, r, state, now, expires(now)).unwrap();
+    let prepared = sdk::prepare(c, &wallet(r), state, now, expires(now)).unwrap();
     let file = journal_file(sandbox, r);
     let dir = file.parent().unwrap();
     std::fs::create_dir_all(dir).unwrap();
@@ -320,7 +326,7 @@ fn two_phase_exec_verifies_real_signatures_and_unknown_retry_only_recovers() {
             b,
             json!({"policyId":POLICY,"requestId":ID,"phase":"prepare","request":request})
         );
-        let prepared = sdk::prepare(&c, &request, &s, now, expires(now)).unwrap();
+        let prepared = sdk::prepare(&c, &wallet(&request), &s, now, expires(now)).unwrap();
         ok(&mut conn, response(&prepared, None, "prepared"));
         let (mut conn, _) = listener.accept().unwrap();
         let (_, b) = read(&mut conn);
@@ -392,7 +398,7 @@ fn changed_prepared_request_never_reaches_signing_or_submit() {
     let server = std::thread::spawn(move || {
         let (mut conn, _) = listener.accept().unwrap();
         read(&mut conn);
-        let p = sdk::prepare(&c, &r, &s, now, expires(now)).unwrap();
+        let p = sdk::prepare(&c, &wallet(&r), &s, now, expires(now)).unwrap();
         let mut v = response(&p, None, "prepared");
         v["prepared"]["request"]["operation"]["nonce"][0] = json!(99);
         ok(&mut conn, v);
@@ -509,7 +515,7 @@ fn substituted_receipt_never_becomes_a_confirmed_cli_result() {
     let server = std::thread::spawn(move || {
         let (mut conn, _) = listener.accept().unwrap();
         read(&mut conn);
-        let p = sdk::prepare(&c, &r, &s, now, expires(now)).unwrap();
+        let p = sdk::prepare(&c, &wallet(&r), &s, now, expires(now)).unwrap();
         let mut value = response(&p, None, "prepared");
         value["receipt"] = json!({"transactionHash":vec![0u8;32],"status":"confirmed","ledger":777,"envelopeXdr":"substituted","resultXdr":"substituted"});
         ok(&mut conn, value);
@@ -532,7 +538,7 @@ fn signed_packet_without_terminal_receipt_never_proves_settlement() {
         let (head, body) = read(&mut conn);
         assert!(head.starts_with("POST /api/native/execute/status "));
         assert_eq!(body["requestId"], ID);
-        let prepared = sdk::prepare(&c, &r, &s, now, expires(now)).unwrap();
+        let prepared = sdk::prepare(&c, &wallet(&r), &s, now, expires(now)).unwrap();
         let signed = sdk::authorize(
             &prepared,
             &[
@@ -573,7 +579,7 @@ fn never_prepared_intent_retries_only_same_identity_after_status_404() {
         let (mut retry, _) = listener.accept().unwrap();
         let (_, body) = read(&mut retry);
         assert_eq!(body, original);
-        let prepared = sdk::prepare(&c, &request, &state, now, expires(now)).unwrap();
+        let prepared = sdk::prepare(&c, &wallet(&request), &state, now, expires(now)).unwrap();
         ok(&mut retry, response(&prepared, None, "prepared"));
         let (mut submit, _) = listener.accept().unwrap();
         let signed = signed_from_submit(&mut submit, &prepared, now);
@@ -593,7 +599,7 @@ fn unsigned_prepared_resumes_exact_packet_only_on_explicit_exec() {
     retain_unsigned(&sandbox, &c, &request, &state, now);
     let listener = mock.listener;
     let server = std::thread::spawn(move || {
-        let prepared = sdk::prepare(&c, &request, &state, now, expires(now)).unwrap();
+        let prepared = sdk::prepare(&c, &wallet(&request), &state, now, expires(now)).unwrap();
         for _ in 0..2 {
             let (mut status, _) = listener.accept().unwrap();
             let (head, body) = read(&mut status);
@@ -639,7 +645,7 @@ fn unsigned_resume_rejects_changed_server_packet_before_signing() {
     let server = std::thread::spawn(move || {
         let mut changed = state;
         changed.source.sequence += 1;
-        let changed = sdk::prepare(&c, &request, &changed, now, expires(now)).unwrap();
+        let changed = sdk::prepare(&c, &wallet(&request), &changed, now, expires(now)).unwrap();
         let (mut status, _) = listener.accept().unwrap();
         let (head, _) = read(&mut status);
         assert!(head.starts_with("POST /api/native/execute/status "));
@@ -658,7 +664,7 @@ fn imported_unknown_signed_operation_never_authorizes_from_unsigned_local_state(
     let sandbox = setup(&c, 2, &mock);
     let listener = mock.listener;
     let server = std::thread::spawn(move || {
-        let prepared = sdk::prepare(&c, &request, &state, now, expires(now)).unwrap();
+        let prepared = sdk::prepare(&c, &wallet(&request), &state, now, expires(now)).unwrap();
         let signed = sdk::authorize(
             &prepared,
             &[
@@ -691,7 +697,7 @@ fn expired_unsigned_packet_observation_prevents_repreparation_after_404() {
     let server = std::thread::spawn(move || {
         let created = (now / 86400 - 1) * 86400 + 1;
         state.spent_day = created / 86400;
-        let prepared = sdk::prepare(&c, &request, &state, created, created + 120).unwrap();
+        let prepared = sdk::prepare(&c, &wallet(&request), &state, created, created + 120).unwrap();
         let (mut first, _) = listener.accept().unwrap();
         read(&mut first);
         drop(first);
@@ -715,7 +721,7 @@ fn expired_unsigned_packet_observation_prevents_repreparation_after_404() {
 #[test]
 fn replacement_agent_key_recovers_original_receipt_and_exact_journal_without_signing() {
     let (config, request, state, now) = fixture();
-    let prepared = sdk::prepare(&config, &request, &state, now, expires(now)).unwrap();
+    let prepared = sdk::prepare(&config, &wallet(&request), &state, now, expires(now)).unwrap();
     let agent = sdk::sign(&prepared, &[2; 32], now).unwrap();
     let signed = sdk::authorize(
         &prepared,
@@ -777,7 +783,7 @@ fn status_uses_the_journaled_rail_and_refuses_another() {
         let (mut conn, _) = listener.accept().unwrap();
         let (head, _) = read(&mut conn);
         assert!(head.starts_with("POST /api/native/execute/status "));
-        let prepared = sdk::prepare(&config, &r, &s, now, expires(now)).unwrap();
+        let prepared = sdk::prepare(&config, &wallet(&r), &s, now, expires(now)).unwrap();
         ok(&mut conn, response(&prepared, None, "prepared"));
     });
     assert_eq!(code(&exec(&sandbox)), Some(4));

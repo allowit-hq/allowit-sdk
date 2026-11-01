@@ -165,7 +165,7 @@ pub(crate) fn transfer(
         evidence: vec![],
     };
     // The wallet library decodes exactly what the engine will check.
-    sdk::transfer_from_request(config, &request)
+    sdk::transfer_from_request(config, &super::run::convert(&request)?)
         .map_err(|e| Error::usage(format!("the transfer does not fit this wallet: {e}")))?;
     TypedRequest::new(policy_id, request_id, request)
 }
@@ -215,7 +215,11 @@ mod tests {
         ] {
             let c = config(route.clone(), usdc);
             let typed = transfer("policy-1", "request-0001", &c, &to, 1_000_000).unwrap();
-            let t = sdk::transfer_from_request(&c, &typed.request).unwrap();
+            let t = sdk::transfer_from_request(
+                &c,
+                &super::super::run::convert(&typed.request).unwrap(),
+            )
+            .unwrap();
             assert_eq!(t.amount, 1_000_000);
             assert_eq!(t.recipient, to);
             assert_eq!(t.native, !usdc, "{route:?}");

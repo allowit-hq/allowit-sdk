@@ -113,7 +113,7 @@ fn checked<T>(v: sdk::Result<T>) -> Result<T> {
 /// allowit-stellar-wallet builds against its own allowit-sdk pin, so its
 /// typed-workflow types are distinct from this crate's. Convert through JSON
 /// and fail closed unless the value survives unchanged.
-fn convert<T: Serialize, U: Serialize + DeserializeOwned>(value: &T) -> Result<U> {
+pub(super) fn convert<T: Serialize, U: Serialize + DeserializeOwned>(value: &T) -> Result<U> {
     let changed = || Error::config("Stellar request does not match the wallet request format");
     let json = serde_json::to_value(value).map_err(|_| changed())?;
     let out: U = serde_json::from_value(json.clone()).map_err(|_| changed())?;
