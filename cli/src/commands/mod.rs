@@ -216,7 +216,7 @@ pub(crate) enum Command {
 #[derive(Args, Debug, Clone, Default)]
 #[command(next_help_heading = "Signing")]
 pub(crate) struct SigningArgs {
-    /// Print the owner signing link on stderr (the default)
+    /// Print the owner signing link as the signingUrl field (the default)
     #[arg(long, conflicts_with_all = ["sign_with_key", "build_only"])]
     pub sign_with_link: bool,
     /// Sign with a local key (testnet and development)

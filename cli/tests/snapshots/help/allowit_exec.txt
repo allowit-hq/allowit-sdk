@@ -15,8 +15,8 @@ Options:
       --args <JSON>            Call arguments as a JSON object, for custom operations
       --request-id <ID>        Request ID; a retry reuses it [default: a new ID, printed on stderr]
       --wait <DUR>             Wait up to DUR for a final result [default: 60s]
-      --build-only             Print the unsigned request and send nothing; a signer outside the CLI
-                               signs and submits it
+      --build-only             Print the unsigned request as JSON and never sign or submit it; a
+                               signer outside the CLI submits it
   -h, --help                   Print help
 
 Global options:

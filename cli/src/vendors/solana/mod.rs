@@ -11,6 +11,8 @@
 //!   `ALLOWIT_TOKEN`. The harness names no vault, so these refuse a selected
 //!   wallet.
 pub(crate) mod audit;
+pub(crate) mod contract;
+pub(crate) mod formats;
 pub mod handoff;
 pub(crate) mod harness;
 pub(crate) mod policy;
@@ -105,7 +107,9 @@ impl Solana {
             settings.push(("ALLOWIT_RPC_URL", url));
         }
         let out = &mut cx.out;
-        config::with_settings(&settings, || policy::run(name, pos, options, out))
+        contract::mapped(config::with_settings(&settings, || {
+            policy::run(name, pos, options, out)
+        }))
     }
     /// The options of a vault operation: the selected wallet, which must be
     /// the vault of the loaded policy.
@@ -638,11 +642,11 @@ impl Rail for Solana {
             )));
         }
         let options = RunOptions::from_environment(cx.wallet(self.0)?);
-        policy::run(name, args, &options, &mut cx.out)
+        contract::mapped(policy::run(name, args, &options, &mut cx.out))
     }
     fn status(&self, cx: &mut Ctx, id: &str, wallet: Option<&str>, wait: Duration) -> Result<i32> {
         self.harness_wallet(wallet)?;
-        harness::status(id, wait, &mut cx.out)
+        contract::mapped(harness::status(id, wait, &mut cx.out))
     }
 }
 
@@ -664,7 +668,13 @@ impl Solana {
             Mode::Exec => "exec",
             Mode::Eval => "eval",
         };
-        harness::submit(command, &flags, &r.request_id, r.wait, &mut cx.out)
+        contract::mapped(harness::submit(
+            command,
+            &flags,
+            &r.request_id,
+            r.wait,
+            &mut cx.out,
+        ))
     }
 }
 

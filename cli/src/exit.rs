@@ -76,43 +76,6 @@ impl Exit {
     }
 }
 
-/// The exit code of a contract rejection that an error message names: a
-/// paused wallet, an unapproved vault or a wrong asset exits 4, a stale
-/// request exits 5. The forms are the Soroban contract error of the Stellar
-/// policy wallet and the custom program error of the Solana vault.
-pub(crate) fn contract_exit(message: &str) -> Option<Exit> {
-    // Stellar policy wallet: UnsupportedAsset 3, StaleRequest 5, Paused 6.
-    const STELLAR: &[(u32, Exit)] = &[
-        (3, Exit::Rejected),
-        (5, Exit::Uncertain),
-        (6, Exit::Rejected),
-    ];
-    // Solana vault: StaleRequest 101, NotApproved 104.
-    const SOLANA: &[(u32, Exit)] = &[(101, Exit::Uncertain), (104, Exit::Rejected)];
-    let compact: String = message.chars().filter(|c| !c.is_whitespace()).collect();
-    STELLAR
-        .iter()
-        .find(|(n, _)| compact.contains(&format!("Error(Contract,#{n})")))
-        .or_else(|| {
-            SOLANA.iter().find(|(n, _)| {
-                token(&compact, &format!("customprogramerror:{n:#x}"))
-                    || compact.contains(&format!("\"Custom\":{n}}}"))
-                    || compact.contains(&format!("Custom({n})"))
-            })
-        })
-        .map(|(_, exit)| *exit)
-}
-
-/// True when `needle` occurs in `hay` and no letter or digit follows it.
-fn token(hay: &str, needle: &str) -> bool {
-    hay.match_indices(needle).any(|(at, _)| {
-        !hay[at + needle.len()..]
-            .chars()
-            .next()
-            .is_some_and(|c| c.is_ascii_alphanumeric())
-    })
-}
-
 /// The error for a verb whose backend is not ready on this rail.
 pub(crate) fn not_available(verb: &str, rail: &str) -> Error {
     Error::unsupported(format!("{verb} is not available on {rail} yet"))
@@ -135,30 +98,5 @@ mod tests {
         assert_eq!(Exit::from_code(99), Exit::Internal);
         assert_eq!(not_available("wallet close", "stellar:testnet").code, 3);
         assert_eq!(no_rail().code, 3);
-    }
-    #[test]
-    fn contract_rejections_map_to_the_table() {
-        for (message, exit) in [
-            ("HostError: Error(Contract, #6)", Some(Exit::Rejected)),
-            (
-                "simulation failed: Error(Contract, #5)",
-                Some(Exit::Uncertain),
-            ),
-            ("Error(Contract, #3)", Some(Exit::Rejected)),
-            ("Error(Contract, #13)", None),
-            ("Error(Contract, #60)", None),
-            ("custom program error: 0x68", Some(Exit::Rejected)),
-            ("custom program error: 0x65", Some(Exit::Uncertain)),
-            ("custom program error: 0x650", None),
-            (
-                r#"{"InstructionError":[0,{"Custom":104}]}"#,
-                Some(Exit::Rejected),
-            ),
-            (r#"{"InstructionError":[0,{"Custom":1040}]}"#, None),
-            ("InstructionError(0, Custom(101))", Some(Exit::Uncertain)),
-            ("the vault is paused", None),
-        ] {
-            assert_eq!(contract_exit(message), exit, "{message}");
-        }
     }
 }

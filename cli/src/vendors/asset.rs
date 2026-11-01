@@ -202,9 +202,11 @@ fn named_asset(
     code: &str,
     issuer: Option<&str>,
 ) -> Result<(Asset, u8)> {
-    if family == Family::Stellar && issuer.is_none() && super::address::is_stellar_contract(code) {
-        // Stellar asset contracts use the classic seven decimals.
-        return Ok((Asset::Contract(code.into()), 7));
+    let formats = super::formats(family);
+    if issuer.is_none()
+        && let Some(decimals) = (formats.asset_contract)(code)
+    {
+        return Ok((Asset::Contract(code.into()), decimals));
     }
     let native = tokens.iter().find(|t| t.native);
     if code.eq_ignore_ascii_case("native") || native.is_some_and(|t| t.code == code) {
@@ -241,16 +243,11 @@ fn named_asset(
             super::address::check_token(family, issuer)?;
             let decimals = match known {
                 Some(t) if t.issuer.is_none_or(|i| i == issuer) => t.decimals,
-                _ => match family {
-                    // Classic Stellar assets and TIP-20 USD tokens have fixed decimals.
-                    Family::Stellar => 7,
-                    Family::Tempo => 6,
-                    Family::Solana => {
-                        return Err(Error::usage(format!(
-                            "the decimals of mint {issuer} are unknown; give the amount in base units"
-                        )));
-                    }
-                },
+                _ => formats.issuer_decimals.ok_or_else(|| {
+                    Error::usage(format!(
+                        "the decimals of token {issuer} are unknown; give the amount in base units"
+                    ))
+                })?,
             };
             Ok((
                 Asset::Token {

@@ -1,113 +1,55 @@
-//! Address format checks per chain family. A wallet is identified only by its
-//! address, so every command checks that an address matches the rail.
+//! Address format checks. A wallet is identified only by its address, so
+//! every command checks that an address matches the rail. Each rail defines
+//! its formats in `vendors/<rail>/formats.rs`.
+use super::{Check, FAMILIES, formats};
 use crate::{
     error::{Error, Result, quoted},
     routing::Family,
 };
 
-fn stellar_account(s: &str) -> bool {
-    s.starts_with('G') && allowit_stellar_wallet::account_key(s).is_ok()
-}
-fn stellar_contract(s: &str) -> bool {
-    s.starts_with('C') && allowit_stellar_wallet::address(s).is_ok()
-}
-fn solana(s: &str) -> bool {
-    crate::request::solana_address(s)
-}
-fn evm(s: &str) -> bool {
-    s.len() == 42 && s.starts_with("0x") && s[2..].bytes().all(|b| b.is_ascii_hexdigit())
-}
-
-fn bad(what: &str, family: Family, s: &str, expected: &str) -> Error {
-    Error::usage(format!(
+fn check(what: &str, family: Family, (ok, expected): Check, s: &str) -> Result<()> {
+    if ok(s) {
+        return Ok(());
+    }
+    Err(Error::usage(format!(
         "{} is not a {} {what} ({expected})",
         quoted(s),
         family.name()
-    ))
+    )))
 }
 
 /// An account that holds a key: a Stellar G account, a Solana base58 key or
 /// a Tempo 0x account.
 pub(crate) fn check_account(family: Family, s: &str) -> Result<()> {
-    let (ok, expected) = match family {
-        Family::Stellar => (stellar_account(s), "a G… strkey"),
-        Family::Solana => (solana(s), "a base58 public key"),
-        Family::Tempo => (evm(s), "a 0x address"),
-    };
-    if ok {
-        Ok(())
-    } else {
-        Err(bad("account", family, s, expected))
-    }
+    check("account", family, formats(family).account, s)
 }
 
 /// A policy wallet: a Stellar C contract, a Solana vault address or a Tempo
 /// 0x vault.
 pub(crate) fn check_wallet(family: Family, s: &str) -> Result<()> {
-    let (ok, expected) = match family {
-        Family::Stellar => (stellar_contract(s), "a C… contract strkey"),
-        Family::Solana => (solana(s), "a base58 vault address"),
-        Family::Tempo => (evm(s), "a 0x vault address"),
-    };
-    if ok {
-        Ok(())
-    } else {
-        Err(bad("wallet address", family, s, expected))
-    }
+    check("wallet address", family, formats(family).wallet, s)
 }
 
 /// A transfer recipient: a Stellar G or C address, a Solana base58 address or
 /// a Tempo 0x address.
 pub(crate) fn check_recipient(family: Family, s: &str) -> Result<()> {
-    let (ok, expected) = match family {
-        Family::Stellar => (
-            stellar_account(s) || stellar_contract(s),
-            "a G… or C… strkey",
-        ),
-        Family::Solana => (solana(s), "a base58 address"),
-        Family::Tempo => (evm(s), "a 0x address"),
-    };
-    if ok {
-        Ok(())
-    } else {
-        Err(bad("recipient", family, s, expected))
-    }
+    check("recipient", family, formats(family).recipient, s)
 }
 
 /// A token identity: a Stellar G issuer or C contract, a Solana mint or a
 /// Tempo 0x token.
 pub(crate) fn check_token(family: Family, s: &str) -> Result<()> {
-    let (ok, expected) = match family {
-        Family::Stellar => (
-            stellar_account(s) || stellar_contract(s),
-            "a G… issuer or C… contract",
-        ),
-        Family::Solana => (solana(s), "a base58 mint"),
-        Family::Tempo => (evm(s), "a 0x token"),
-    };
-    if ok {
-        Ok(())
-    } else {
-        Err(bad("token", family, s, expected))
-    }
-}
-
-/// True for a Stellar C contract strkey.
-pub(crate) fn is_stellar_contract(s: &str) -> bool {
-    stellar_contract(s)
+    check("token", family, formats(family).token, s)
 }
 
 /// The family that an address format names, when it names exactly one.
 pub(crate) fn infer_family(s: &str) -> Option<Family> {
-    if stellar_account(s) || stellar_contract(s) {
-        Some(Family::Stellar)
-    } else if evm(s) {
-        Some(Family::Tempo)
-    } else if solana(s) {
-        Some(Family::Solana)
-    } else {
-        None
-    }
+    FAMILIES.iter().copied().find(|family| {
+        let f = formats(*family);
+        [f.account, f.wallet, f.recipient, f.token]
+            .iter()
+            .any(|(ok, _)| ok(s))
+    })
 }
 
 #[cfg(test)]

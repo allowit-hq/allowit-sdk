@@ -1,6 +1,7 @@
-//! Terminal output. Data goes to stdout; progress, links, hints and prompts go
-//! to stderr. Text is the default, also when piped; `--json` (or
-//! `--output json`) selects JSON. Policy source and JSON documents are
+//! Terminal output. Data goes to stdout, including an owner signing link as
+//! the `signingUrl` field; progress, hints and prompts go to stderr. Text is
+//! the default, also when piped; `--json` (or `--output json`) selects JSON,
+//! and policy source prints as a `source` field. Policy source and JSON documents are
 //! syntax-highlighted only when stdout is a terminal, and never with `--json`,
 //! `NO_COLOR`, `TERM=dumb` or `--no-color`. `CLICOLOR_FORCE` forces color.
 use serde_json::Value;
@@ -104,8 +105,13 @@ impl Out {
             self.kind = Kind::Json;
         }
     }
-    /// Rust policy source, highlighted on a terminal.
+    /// Rust policy source, highlighted on a terminal. With `--json` it is the
+    /// `source` field of one JSON object, so stdout stays one JSON document.
     pub(crate) fn source(&mut self, rust: &str) {
+        if self.json {
+            self.json_value(&serde_json::json!({ "source": rust }));
+            return;
+        }
         self.stdout.push_str(rust);
         if !rust.ends_with('\n') {
             self.stdout.push('\n');
@@ -365,6 +371,13 @@ mod tests {
         assert_eq!(out.rendered_stdout(out.stdout.clone()), source);
         out.color_out = true;
         assert!(out.rendered_stdout(out.stdout.clone()).contains("\x1b["));
+    }
+    #[test]
+    fn json_mode_prints_source_as_one_json_object() {
+        let mut out = plain(true);
+        out.source("fn main() {}\n");
+        let value: Value = serde_json::from_str(&out.stdout).unwrap();
+        assert_eq!(value, json!({"source": "fn main() {}\n"}));
     }
     #[test]
     fn live_progress_leaves_at_once() {

@@ -14,6 +14,10 @@ pub(crate) struct Args {
 
 pub(crate) fn run(args: Args, cx: &mut Ctx) -> Result<i32> {
     let vendor = cx.vendor()?;
+    // Refuse what the rail cannot serve before reading any input.
+    if !vendor.caps().verbs.contains(&"tx send") {
+        return Err(vendor.na("tx send"));
+    }
     let bytes = read_input(&args.file)?;
     vendor.tx_send(cx, &bytes)
 }

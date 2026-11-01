@@ -2,8 +2,9 @@
 //!
 //! - `keys import`: the owner-exported executor bundle.
 //! - `exec --op transfer`: one vault payment signed by the agent key that
-//!   `setup --agent` chose; `--build-only` prints the authority-signed wallet
-//!   plan and sends nothing.
+//!   `setup --agent` chose; `--build-only` asks the engine for the
+//!   authority-signed wallet plan and prints it as JSON, unsigned by the
+//!   agent and unsubmitted.
 //! - `status`, `wallet show`, `policy show`: the bundle and its engine.
 //! - `call URL`: one MPP-paid HTTPS GET. `--max-amount` takes a decimal of
 //!   the vault token or the vault token's `CODE:DECIMAL`.
@@ -14,6 +15,8 @@
 //! the adapter renders it through the output module and passes the agent key,
 //! `--rpc-url` (or the rail's `rpc_url`) and `--wait` as the crate's
 //! settings. The hidden `tempo` group keeps the commands of earlier releases.
+pub(crate) mod formats;
+
 use super::{
     Binding, CallRequest, Caps, ExecRequest, Mode, Rail,
     asset::{Amount, Asset, Token},
@@ -269,6 +272,19 @@ impl Tempo {
             }),
         }
     }
+    /// Renders an `execute` result for `exec --build-only`. The crate exits
+    /// 10 when the engine returns the authority-signed wallet plan; that plan
+    /// is what build-only asks for, so it prints as JSON and exits 0. A
+    /// denial, an owner-input request or a settled request keeps its code.
+    fn show_plan(cx: &mut Ctx, code: i32, value: Option<Value>) -> Result<i32> {
+        match (code, value) {
+            (10, Some(plan)) => {
+                cx.out.json_value(&plan);
+                Ok(0)
+            }
+            (code, value) => Self::show(cx, code, value),
+        }
+    }
     /// The public policy with its canonical rail ID.
     fn view(&self, mut policy: Value) -> Value {
         policy["network"] = Value::String(self.0.id.into());
@@ -406,6 +422,9 @@ impl Rail for Tempo {
         };
         let args = vec![verb.into(), r.to.clone(), amount];
         let (code, value) = self.run(cx, args, Some(&r.request_id), &settings)?;
+        if r.build_only {
+            return Self::show_plan(cx, code, value);
+        }
         Self::show(cx, code, value)
     }
     fn status(&self, cx: &mut Ctx, id: &str, wallet: Option<&str>, wait: Duration) -> Result<i32> {
@@ -517,6 +536,23 @@ mod tests {
         });
         assert_eq!(identity(2), before);
         assert_eq!(SAVED_STDERR.load(std::sync::atomic::Ordering::SeqCst), -1);
+    }
+    #[test]
+    fn a_build_only_plan_prints_json_and_exits_0() {
+        let mut cx = super::super::tests::ctx();
+        let plan = serde_json::json!({"decision": "allow", "requestId": "plan-0001"});
+        assert_eq!(
+            Tempo::show_plan(&mut cx, 10, Some(plan.clone())).unwrap(),
+            0
+        );
+        let printed: Value = serde_json::from_str(&cx.out.stdout).unwrap();
+        assert_eq!(printed, plan);
+        let mut cx = super::super::tests::ctx();
+        let denied = serde_json::json!({"decision": "deny"});
+        assert_eq!(Tempo::show_plan(&mut cx, 20, Some(denied)).unwrap(), 20);
+        assert_eq!(cx.out.stdout, "decision  deny\n");
+        let mut cx = super::super::tests::ctx();
+        assert_eq!(Tempo::show_plan(&mut cx, 10, None).unwrap_err().code, 10);
     }
     #[test]
     fn tokens_are_tip20_addresses_with_six_decimals() {

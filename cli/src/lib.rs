@@ -184,12 +184,7 @@ fn execute(cli: commands::Cli) -> i32 {
 fn finish(mut out: Out, result: error::Result<i32>) -> i32 {
     let code = match result {
         Ok(code) => code,
-        Err(mut e) => {
-            if e.code != Exit::Usage.code()
-                && let Some(exit) = exit::contract_exit(&e.message)
-            {
-                e.code = exit.code();
-            }
+        Err(e) => {
             render_error(&mut out, &e);
             e.code
         }

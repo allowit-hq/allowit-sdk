@@ -67,5 +67,6 @@ name the same asset.
 
 ## Output
 
-Text is the default. Add `--json` for JSON. Data goes to stdout; links, hints
-and request IDs go to stderr.
+Text is the default. Add `--json` for JSON. Data goes to stdout, including an
+owner signing link, which is the `signingUrl` field. Hints and request IDs go
+to stderr.

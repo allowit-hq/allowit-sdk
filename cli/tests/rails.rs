@@ -438,6 +438,8 @@ fn verbs_without_a_backend_exit_3_as_not_available() {
         ("stellar:testnet", vec!["wallet", "close", "--yes"]),
         ("stellar:testnet", vec!["wallet", "pause"]),
         ("stellar:testnet", vec!["tx", "send", "-"]),
+        // Availability comes before the input file is read.
+        ("eip155:42431", vec!["tx", "send", "missing.json"]),
         ("solana:devnet", vec!["wallet", "update", "--x402", "on"]),
         ("eip155:42431", vec!["policy", "params"]),
         (
@@ -492,6 +494,21 @@ fn verbs_without_a_backend_exit_3_as_not_available() {
         solana["paramKeys"],
         json!(["transaction_cap", "day_spent_cap"])
     );
+    // Text and JSON name the same keys.
+    let text = sandbox.ok(&["rail", "show", "solana:devnet"]);
+    let mut text_keys: Vec<&str> = text
+        .lines()
+        .filter_map(|l| l.split_whitespace().next())
+        .collect();
+    text_keys.sort_unstable();
+    let mut json_keys: Vec<&str> = solana
+        .as_object()
+        .unwrap()
+        .keys()
+        .map(String::as_str)
+        .collect();
+    json_keys.sort_unstable();
+    assert_eq!(text_keys, json_keys, "{text}");
 }
 
 fn stellar_approval_fixture() -> Value {
@@ -1065,6 +1082,9 @@ fn solana_harness_results_print_only_data_lines() {
     assert!(!text.contains("Allowit policy:"), "{text}");
     let source = sandbox.run(&["--rail", "solana:devnet", "policy", "show", "--source"]);
     assert_eq!(stdout(&source), "fn policy() {}\n");
+    // With --json the source is one JSON object.
+    let source = sandbox.json(&["--rail", "solana:devnet", "policy", "show", "--source"]);
+    assert_eq!(source, json!({"source": "fn policy() {}"}));
     let status = sandbox.run(&["--rail", "solana:devnet", "status", "pay-0001"]);
     assert_eq!(code(&status), Some(20), "{}", stderr(&status));
     common::assert_data(&stdout(&status), "solana status");

@@ -69,15 +69,13 @@ pub(crate) fn run(args: Args, cx: &mut Ctx) -> Result<i32> {
         }
     };
     let codes: Vec<&str> = vendor.tokens().iter().map(|t| t.code).collect();
+    // The same keys as the JSON form, in its order; lists print joined.
     let rows = vec![
         vec!["rail".to_owned(), info.id.into()],
         vec!["aliases".into(), info.aliases.join(", ")],
-        vec![
-            "network".into(),
-            if info.testnet { "testnet" } else { "mainnet" }.into(),
-        ],
+        vec!["family".into(), info.family.name().into()],
+        vec!["testnet".into(), info.testnet.to_string()],
         vec!["curve".into(), caps.curve.into()],
-        vec!["tokens".into(), list(&codes)],
         vec!["ops".into(), list(caps.ops)],
         vec!["paramKeys".into(), list(caps.param_keys)],
         vec![
@@ -94,11 +92,16 @@ pub(crate) fn run(args: Args, cx: &mut Ctx) -> Result<i32> {
         ],
         vec!["available".into(), list(caps.verbs)],
         vec!["notAvailable".into(), list(&unavailable)],
+        vec!["tokens".into(), list(&codes)],
         vec![
             "wallet".into(),
             settings.wallet.unwrap_or_else(|| "-".into()),
         ],
         vec!["agent".into(), settings.agent.unwrap_or_else(|| "-".into())],
+        vec![
+            "serviceAsset".into(),
+            settings.service_asset.unwrap_or_else(|| "-".into()),
+        ],
     ];
     cx.out.table(&rows);
     Ok(0)

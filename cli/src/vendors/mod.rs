@@ -322,6 +322,40 @@ pub(crate) fn restore_stderr() {
     tempo::restore_stderr();
 }
 
+/// One address check: the test and the expected form that its error names.
+pub(crate) type Check = (fn(&str) -> bool, &'static str);
+
+/// The address and asset formats of a chain family. Each rail defines its
+/// own in `vendors/<rail>/formats.rs`; [`formats`] picks it.
+pub(crate) struct Formats {
+    /// An account that holds a key.
+    pub account: Check,
+    /// A policy wallet.
+    pub wallet: Check,
+    /// A transfer recipient.
+    pub recipient: Check,
+    /// A token identity: an issuer, mint or token address.
+    pub token: Check,
+    /// The decimals of an asset contract given in place of a token code, or
+    /// `None` when the input is not one.
+    pub asset_contract: fn(&str) -> Option<u8>,
+    /// The decimals of a token that its issuer names and the rail's table
+    /// does not list, when the family fixes them.
+    pub issuer_decimals: Option<u8>,
+}
+
+/// The families in the order that address inference tries them.
+pub(crate) const FAMILIES: &[Family] = &[Family::Stellar, Family::Tempo, Family::Solana];
+
+/// The address and asset formats of a family.
+pub(crate) fn formats(family: Family) -> &'static Formats {
+    match family {
+        Family::Stellar => &stellar::formats::FORMATS,
+        Family::Solana => &solana::formats::FORMATS,
+        Family::Tempo => &tempo::formats::FORMATS,
+    }
+}
+
 /// The adapter for a rail.
 pub(crate) fn rail(info: &'static RailInfo) -> Box<dyn Rail> {
     match info.family {
@@ -362,11 +396,11 @@ pub(crate) fn require_signing(rail: &dyn Rail, verb: &str, signing: &Signing) ->
 }
 
 #[cfg(test)]
-mod tests {
+pub(super) mod tests {
     use super::*;
     use crate::{commands::Global, routing::RAILS, term::Out};
 
-    fn ctx() -> Ctx {
+    pub(super) fn ctx() -> Ctx {
         let dir = crate::settings::temp_dir("vendors");
         let global = Global {
             config_dir: Some(dir),

@@ -287,7 +287,7 @@ fn failed_exit(
         .get("error")
         .map(ToString::to_string)
         .unwrap_or_default();
-    match crate::exit::contract_exit(&error) {
+    match super::super::contract::exit(&error) {
         Some(exit) => exit.code(),
         None if name == "execute" => Exit::Denied.code(),
         None => Exit::Rejected.code(),
