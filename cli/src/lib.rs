@@ -284,4 +284,17 @@ mod display_tests {
         );
         assert_eq!(super::safe_output("plain\n".into()), "plain\n");
     }
+    #[test]
+    fn an_error_keeps_the_exit_code_that_its_command_set() {
+        // Contract error numbers are mapped only inside their rail, so a
+        // message that names one keeps its code here.
+        for message in [
+            "simulation failed: Error(Contract, #5)",
+            "send failed: custom program error: 0x68",
+        ] {
+            let out = crate::term::Out::new(true, true, false, true);
+            let error = crate::error::Error::config(message);
+            assert_eq!(super::finish(out, Err(error)), 3, "{message}");
+        }
+    }
 }

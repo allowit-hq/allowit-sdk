@@ -575,6 +575,13 @@ fn public_stellar_profile_shows_without_agent_key_or_engine() {
         fixture["policy"]["code"].as_str().unwrap().trim_end()
     );
     assert!(!source.contains('\x1b'));
+    // With --json the source is one JSON object.
+    let source = sandbox.json(&["--rail", "stellar:testnet", "policy", "show", "--source"]);
+    assert_eq!(
+        source["source"].as_str().unwrap().trim_end(),
+        fixture["policy"]["code"].as_str().unwrap().trim_end()
+    );
+    assert_eq!(source.as_object().unwrap().len(), 1, "{source}");
     // A wallet selection is a C… contract. The classic route's G account
     // needs no selection and cannot be selected.
     let classic = profile["wallet"].as_str().unwrap();
@@ -1091,6 +1098,59 @@ fn solana_harness_results_print_only_data_lines() {
     common::assert_data(&stderr(&status), "solana status");
     assert!(!stdout(&status).contains("network"), "{}", stdout(&status));
     server.join().unwrap();
+}
+
+#[test]
+fn a_solana_vault_error_sets_the_exit_code_and_the_journal_records_it() {
+    let mut sandbox = Sandbox::new("solana-vault-error");
+    let mock = Mock::new();
+    sandbox
+        .set("ALLOWIT_URL", &mock.url)
+        .set("ALLOWIT_TOKEN", format!("owner.policy.{}", "s".repeat(32)));
+    let listener = mock.listener.try_clone().unwrap();
+    let server = std::thread::spawn(move || {
+        let skill = json!({
+            "policyId": "policy",
+            "owner": "owner",
+            "title": "Research spend",
+            "network": "solana:devnet",
+            "status": "active",
+            "policy": "fn policy() {}",
+        });
+        for stream in listener.incoming() {
+            let mut stream = stream.unwrap();
+            let (head, _) = read_request(&mut stream);
+            if head.starts_with("POST") {
+                // The vault's StaleRequest custom error (101).
+                reply(
+                    &mut stream,
+                    400,
+                    &json!({"error": "send failed: custom program error: 0x65"}),
+                );
+                return;
+            }
+            reply(&mut stream, 200, &skill);
+        }
+    });
+    let output = sandbox.run(&[
+        "--rail",
+        "solana:devnet",
+        "exec",
+        "--op",
+        "transfer",
+        "--to",
+        "9hSR6S7WPtxmTojgo6GG3k4yDPecgJY292j7xrsUGWBu",
+        "--amount",
+        "USDC:1",
+        "--request-id",
+        "pay-0001",
+    ]);
+    assert_eq!(code(&output), Some(5), "{}", stderr(&output));
+    server.join().unwrap();
+    // history shows the exit code that the process returned.
+    let history = sandbox.json(&["history"]);
+    assert_eq!(history[0]["requestId"], "pay-0001", "{history}");
+    assert_eq!(history[0]["exit"], 5, "{history}");
 }
 
 #[test]

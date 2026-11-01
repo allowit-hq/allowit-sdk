@@ -142,7 +142,7 @@ impl Out {
             self.line(line.trim_end());
         }
     }
-    /// Progress or a link on stderr. `-q` drops it.
+    /// Progress on stderr. `-q` drops it.
     pub(crate) fn progress(&mut self, text: impl AsRef<str>) {
         if !self.quiet {
             self.stderr.push_str(text.as_ref());

@@ -46,7 +46,7 @@ pub(crate) struct RequestArgs {
 pub(crate) struct Args {
     #[command(flatten)]
     pub request: RequestArgs,
-    /// Print the unsigned request as JSON and never sign or submit it; a signer outside the CLI submits it
+    /// Print the request as JSON for a signer outside the CLI; the CLI never signs or submits it
     #[arg(long)]
     pub build_only: bool,
 }

@@ -145,6 +145,37 @@ fn global_flags_in_any_position_leave_compiler_output_unchanged() {
     assert_eq!(old.status.code(), new.status.code());
     assert_eq!(old.stdout, new.stdout);
     assert_eq!(old.stderr, new.stderr);
+    // With --json the generated source is one JSON object.
+    let policy = std::env::temp_dir().join(format!("allowit-native-{}.rs", std::process::id()));
+    std::fs::write(
+        &policy,
+        r#"use allowit::v1::prelude::*; async fn _execute(ctx: &Context) -> PolicyResult { allowit::cap_per_transaction(ctx, "2", "USDC")?; Ok(()) }"#,
+    )
+    .unwrap();
+    let policy_path = policy.to_str().unwrap();
+    let text = allowit(
+        &["--rail", "stellar:testnet", "policy", "build", policy_path],
+        &[],
+    );
+    let json = allowit(
+        &[
+            "--rail",
+            "stellar:testnet",
+            "policy",
+            "build",
+            policy_path,
+            "--json",
+        ],
+        &[],
+    );
+    std::fs::remove_file(&policy).unwrap();
+    assert_eq!(text.status.code(), Some(0), "{:?}", text.stderr);
+    assert_eq!(json.status.code(), Some(0), "{:?}", json.stderr);
+    let value: serde_json::Value = serde_json::from_slice(&json.stdout).unwrap();
+    assert_eq!(
+        value,
+        serde_json::json!({"source": String::from_utf8(text.stdout).unwrap()})
+    );
     let other = allowit(
         &["--rail", "solana:devnet", "policy", "build", approval],
         &[],
