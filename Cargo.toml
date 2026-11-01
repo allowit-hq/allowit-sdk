@@ -22,15 +22,15 @@ allowit-contracts-stellar = { branch = "stellar-core" }
 # and the rail crates depend on Allowit core.
 [workspace.dependencies]
 allowit-sdk = { git = "https://github.com/allowit-hq/allowit-core.git", rev = "e68ad4be5e4d1c28b8435982a2a208d2f872ba4e", default-features = false }
-allowit-native = { git = "https://github.com/allowit-hq/allowit-contracts-solana.git", rev = "51cf9a6543e96811482e78d4a56f1b711d787dbd" }
-allowit-solana-vendor = { git = "https://github.com/allowit-hq/allowit-contracts-solana.git", rev = "51cf9a6543e96811482e78d4a56f1b711d787dbd" }
-allowit-solana-service-upstreams = { git = "https://github.com/allowit-hq/allowit-contracts-solana.git", rev = "51cf9a6543e96811482e78d4a56f1b711d787dbd" }
-allowit-solana-service-rpc = { git = "https://github.com/allowit-hq/allowit-contracts-solana.git", rev = "51cf9a6543e96811482e78d4a56f1b711d787dbd" }
-allowit-solana-delegated-x402 = { git = "https://github.com/allowit-hq/allowit-contracts-solana.git", rev = "51cf9a6543e96811482e78d4a56f1b711d787dbd" }
-allowit-vendor-paysh-stock = { git = "https://github.com/allowit-hq/allowit-contracts-solana.git", rev = "51cf9a6543e96811482e78d4a56f1b711d787dbd" }
-allowit-solana-paysh-cooperating = { git = "https://github.com/allowit-hq/allowit-contracts-solana.git", rev = "51cf9a6543e96811482e78d4a56f1b711d787dbd" }
-allowit-tempo = { git = "https://github.com/allowit-hq/allowit-contracts-tempo.git", rev = "a04ac42178cb32aab10badf029f102385a29d3e2" }
-allowit-tempo-services = { git = "https://github.com/allowit-hq/allowit-contracts-tempo.git", rev = "a04ac42178cb32aab10badf029f102385a29d3e2" }
+allowit-native = { git = "https://github.com/allowit-hq/allowit-contracts-solana.git", rev = "9932753d721a53b75882ea79d10ac2b997fffdd8" }
+allowit-solana-vendor = { git = "https://github.com/allowit-hq/allowit-contracts-solana.git", rev = "9932753d721a53b75882ea79d10ac2b997fffdd8" }
+allowit-solana-service-upstreams = { git = "https://github.com/allowit-hq/allowit-contracts-solana.git", rev = "9932753d721a53b75882ea79d10ac2b997fffdd8" }
+allowit-solana-service-rpc = { git = "https://github.com/allowit-hq/allowit-contracts-solana.git", rev = "9932753d721a53b75882ea79d10ac2b997fffdd8" }
+allowit-solana-delegated-x402 = { git = "https://github.com/allowit-hq/allowit-contracts-solana.git", rev = "9932753d721a53b75882ea79d10ac2b997fffdd8" }
+allowit-vendor-paysh-stock = { git = "https://github.com/allowit-hq/allowit-contracts-solana.git", rev = "9932753d721a53b75882ea79d10ac2b997fffdd8" }
+allowit-solana-paysh-cooperating = { git = "https://github.com/allowit-hq/allowit-contracts-solana.git", rev = "9932753d721a53b75882ea79d10ac2b997fffdd8" }
+allowit-tempo = { git = "https://github.com/allowit-hq/allowit-contracts-tempo.git", rev = "43519fe55549ceef69ba731027b63535c2b5a591" }
+allowit-tempo-services = { git = "https://github.com/allowit-hq/allowit-contracts-tempo.git", rev = "43519fe55549ceef69ba731027b63535c2b5a591" }
 allowit-stellar-wallet = { git = "https://github.com/allowit-hq/allowit-contracts-stellar.git", rev = "2415bff42c972281fd4648bdbdc44dcf3cfccf82" }
 
 [profile.release]
