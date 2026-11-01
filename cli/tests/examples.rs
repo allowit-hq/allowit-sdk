@@ -9,8 +9,17 @@ const CORE_SOURCE: &str = "git+https://github.com/allowit-hq/allowit-core.git";
 #[test]
 fn examples_match_the_pinned_allowit_core() {
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
+    // Resolve for the host only: offline, a clean runner has no crates for
+    // other platforms.
+    let version = Command::new(env!("CARGO")).arg("-vV").output().unwrap();
+    let version = String::from_utf8(version.stdout).unwrap();
+    let host = version
+        .lines()
+        .find_map(|l| l.strip_prefix("host: "))
+        .expect("cargo -vV prints the host triple");
     let output = Command::new(env!("CARGO"))
         .args(["metadata", "--format-version", "1", "--locked", "--offline"])
+        .args(["--filter-platform", host])
         .current_dir(&root)
         .output()
         .unwrap();
