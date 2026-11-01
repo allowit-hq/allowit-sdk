@@ -207,11 +207,11 @@ All packages share one Cargo workspace, one `Cargo.lock` and one version, and de
 | [allowit-core](https://github.com/allowit-hq/allowit-core) | `allowit-sdk`: the compiler, interpreter, registry, workflow projection, protocol, LSP, and the client, service, transport and contract modules |
 | [allowit-contracts-solana](https://github.com/allowit-hq/allowit-contracts-solana) | `allowit-native` and the Solana service and PaySH crates |
 | [allowit-contracts-tempo](https://github.com/allowit-hq/allowit-contracts-tempo) | `allowit-tempo` and `allowit-tempo-services` |
-| [allowit-contracts-stellar](https://github.com/allowit-hq/allowit-contracts-stellar) | `allowit-stellar-wallet` from `stellar/core`, on the `stellar-core` branch |
+| [allowit-contracts-stellar](https://github.com/allowit-hq/allowit-contracts-stellar) | `allowit-stellar-wallet` from `stellar/core` |
 
 `[workspace.metadata.allowit.track]` says which commit each pin must be: the default branch tip or a named branch.
 
-`allowit-stellar-wallet` on `stellar-core` depends on its own `allowit-sdk` pin from this repository, so its typed-workflow types are distinct from Allowit core's. The Stellar command converts the execution request between the two through JSON and refuses any request that does not convert unchanged.
+`allowit-stellar-wallet` pins allowit-core at e68ad4b, an earlier commit than the other rails, so its typed-workflow types are distinct from the ones this SDK uses. The Stellar command converts the execution request between the two through JSON and refuses any request that does not convert unchanged.
 
 ## How this fits the Allowit system
 

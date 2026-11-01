@@ -21,8 +21,8 @@ use stellar_xdr::{
 const POLICY: &str = "stellar-policy";
 const ID: &str = "stellar-run-0001";
 
-/// allowit-stellar-wallet builds against its own allowit-sdk pin until it
-/// depends on allowit-core, so its request type is a distinct copy. The CLI
+/// allowit-stellar-wallet pins an earlier allowit-core commit than the other
+/// rails, so its request type is a distinct copy. The CLI
 /// converts through JSON too (`vendors::stellar::run::convert`).
 fn wallet<T: serde::de::DeserializeOwned>(request: &ExecutionRequest) -> T {
     serde_json::from_value(serde_json::to_value(request).unwrap()).unwrap()
@@ -60,7 +60,11 @@ fn fixture() -> (WalletConfig, ExecutionRequest, TrustedState, u64) {
         agent: agent.clone(),
         server: engine.clone(),
         route: WalletRoute::Native,
-        policy_engine: None,
+        tier: None,
+        language: Default::default(),
+        rules: vec![],
+        params: Default::default(),
+        source_digest: [0; 32],
         asset: String::new(),
         asset_symbol: "XLM".into(),
         asset_issuer: None,

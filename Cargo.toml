@@ -9,29 +9,24 @@ version = "0.3.0"
 # The revision each git repository must be pinned to. scripts/build.sh checks
 # every git dependency against this table and fails on a stale pin.
 [workspace.metadata.allowit.track]
-# These branches carry the split until their pull requests merge: allowit-core
-# cli-settings-overrides (the core part of #44), allowit-contracts-solana#14
-# and allowit-contracts-tempo#8. Then track "head" and run
-# scripts/build.sh --update allowit-core allowit-contracts-solana allowit-contracts-tempo.
-allowit-core = { branch = "cli-settings-overrides" }
-allowit-contracts-solana = { branch = "build-script-pins" }
-allowit-contracts-tempo = { branch = "build-script-pins" }
-# allowit-stellar-wallet exists only on stellar-core until that branch merges.
-allowit-contracts-stellar = { branch = "stellar-core" }
+allowit-core = "head"
+allowit-contracts-solana = "head"
+allowit-contracts-tempo = "head"
+allowit-contracts-stellar = "head"
 
 # Pins point one way: this SDK depends on Allowit core and on the rail crates,
 # and the rail crates depend on Allowit core.
 [workspace.dependencies]
-allowit-sdk = { git = "https://github.com/allowit-hq/allowit-core.git", rev = "897b1b4c16f3e5a4e8e7c5de082b41d2d600ff6e", default-features = false }
-allowit-native = { git = "https://github.com/allowit-hq/allowit-contracts-solana.git", rev = "3686313db4f1e7048b86951ca4cc6f462d78cc9c" }
-allowit-solana-service-upstreams = { git = "https://github.com/allowit-hq/allowit-contracts-solana.git", rev = "3686313db4f1e7048b86951ca4cc6f462d78cc9c" }
-allowit-solana-service-rpc = { git = "https://github.com/allowit-hq/allowit-contracts-solana.git", rev = "3686313db4f1e7048b86951ca4cc6f462d78cc9c" }
-allowit-solana-delegated-x402 = { git = "https://github.com/allowit-hq/allowit-contracts-solana.git", rev = "3686313db4f1e7048b86951ca4cc6f462d78cc9c" }
-allowit-vendor-paysh-stock = { git = "https://github.com/allowit-hq/allowit-contracts-solana.git", rev = "3686313db4f1e7048b86951ca4cc6f462d78cc9c" }
-allowit-solana-paysh-cooperating = { git = "https://github.com/allowit-hq/allowit-contracts-solana.git", rev = "3686313db4f1e7048b86951ca4cc6f462d78cc9c" }
-allowit-tempo = { git = "https://github.com/allowit-hq/allowit-contracts-tempo.git", rev = "6a6ce3f6d5a0c1d8b6101f5dc441881e53c13d5b" }
-allowit-tempo-services = { git = "https://github.com/allowit-hq/allowit-contracts-tempo.git", rev = "6a6ce3f6d5a0c1d8b6101f5dc441881e53c13d5b" }
-allowit-stellar-wallet = { git = "https://github.com/allowit-hq/allowit-contracts-stellar.git", rev = "2415bff42c972281fd4648bdbdc44dcf3cfccf82" }
+allowit-sdk = { git = "https://github.com/allowit-hq/allowit-core.git", rev = "6aa00597a0796acf6f6fa911a86c0fe57c055b67", default-features = false }
+allowit-native = { git = "https://github.com/allowit-hq/allowit-contracts-solana.git", rev = "13bb5a4dd5e0bf6bc22bf4ae79fb5645903f0c82" }
+allowit-solana-service-upstreams = { git = "https://github.com/allowit-hq/allowit-contracts-solana.git", rev = "13bb5a4dd5e0bf6bc22bf4ae79fb5645903f0c82" }
+allowit-solana-service-rpc = { git = "https://github.com/allowit-hq/allowit-contracts-solana.git", rev = "13bb5a4dd5e0bf6bc22bf4ae79fb5645903f0c82" }
+allowit-solana-delegated-x402 = { git = "https://github.com/allowit-hq/allowit-contracts-solana.git", rev = "13bb5a4dd5e0bf6bc22bf4ae79fb5645903f0c82" }
+allowit-vendor-paysh-stock = { git = "https://github.com/allowit-hq/allowit-contracts-solana.git", rev = "13bb5a4dd5e0bf6bc22bf4ae79fb5645903f0c82" }
+allowit-solana-paysh-cooperating = { git = "https://github.com/allowit-hq/allowit-contracts-solana.git", rev = "13bb5a4dd5e0bf6bc22bf4ae79fb5645903f0c82" }
+allowit-tempo = { git = "https://github.com/allowit-hq/allowit-contracts-tempo.git", rev = "ac94e4551af251e3a31e8247ddcaaf9a2535fa9b" }
+allowit-tempo-services = { git = "https://github.com/allowit-hq/allowit-contracts-tempo.git", rev = "ac94e4551af251e3a31e8247ddcaaf9a2535fa9b" }
+allowit-stellar-wallet = { git = "https://github.com/allowit-hq/allowit-contracts-stellar.git", rev = "5cbef8d2195d3b4f5865f3f68cf28ce6d832e899" }
 
 [profile.release]
 lto = true

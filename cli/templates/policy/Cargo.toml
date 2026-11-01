@@ -5,4 +5,4 @@ edition = "2024"
 publish = false
 
 [dependencies]
-allowit = { package = "allowit-sdk", git = "https://github.com/allowit-hq/allowit-core.git", rev = "897b1b4c16f3e5a4e8e7c5de082b41d2d600ff6e" }
+allowit = { package = "allowit-sdk", git = "https://github.com/allowit-hq/allowit-core.git", rev = "6aa00597a0796acf6f6fa911a86c0fe57c055b67" }

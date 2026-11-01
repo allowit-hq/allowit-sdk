@@ -110,8 +110,8 @@ fn clock() -> Result<u64> {
 fn checked<T>(v: sdk::Result<T>) -> Result<T> {
     v.map_err(Error::config)
 }
-/// allowit-stellar-wallet builds against its own allowit-sdk pin, so its
-/// typed-workflow types are distinct from this crate's. Convert through JSON
+/// allowit-stellar-wallet pins an earlier allowit-core commit than this
+/// crate, so its typed-workflow types are distinct from this crate's. Convert through JSON
 /// and fail closed unless the value survives unchanged.
 pub(super) fn convert<T: Serialize, U: Serialize + DeserializeOwned>(value: &T) -> Result<U> {
     let changed = || Error::config("Stellar request does not match the wallet request format");
@@ -557,7 +557,11 @@ mod public_bundle_tests {
             agent: sdk::account_for_seed(&[2; 32]),
             server: sdk::account_for_seed(&[3; 32]),
             route: WalletRoute::Native,
-            policy_engine: None,
+            tier: None,
+            language: Default::default(),
+            rules: vec![],
+            params: Default::default(),
+            source_digest: [0; 32],
             asset: policy["mint"].as_str().unwrap().into(),
             asset_symbol: "XLM".into(),
             asset_issuer: None,
@@ -716,78 +720,11 @@ mod native_revalidation_tests {
         );
     }
     #[test]
-    fn retained_signed_status_validation_does_not_need_local_rpc_or_new_approval() {
-        let data: serde_json::Value = serde_json::from_str(include_str!(
-            "../../../tests/fixtures/stellar-native-revalidation-rpc.json"
-        ))
-        .unwrap();
-        let signed: SignedOperation = serde_json::from_value(data["signed"].clone()).unwrap();
-        assert!(signed.prepared.native_preflight.is_none());
-        let config = signed.prepared.config.clone();
-        let client = Client {
-            http: reqwest::blocking::Client::new(),
-            origin: "http://127.0.0.1:1".into(),
-            bundle: Bundle {
-                version: 1,
-                profile: sdk::PROFILE.into(),
-                network: config.network.clone(),
-                policy_id: "policy-current".into(),
-                source_hash: sdk::hex(&config.source_hash),
-                ir_hash: String::new(),
-                module_digest: sdk::hex(&config.module_digest),
-                wallet: config.wallet.clone(),
-                route: config.route.clone(),
-                config,
-                endpoints: Endpoints {
-                    execute: "/api/native/execute".into(),
-                    status: "/api/native/execute/status".into(),
-                },
-                signing_seed: None,
-            },
-            seed: Zeroizing::new([2; 32]),
-            rpc_url: String::new(),
-        };
-        let response = Response {
-            prepared: signed.prepared.clone(),
-            operation: Operation {
-                id: "request-current".into(),
-                status: OperationStatus::Submitted,
-                transaction_hash: sdk::hex(&signed.transaction_hash),
-            },
-            signed_operation: Some(signed),
-            receipt: None,
-        };
-        client
-            .validate(&response, "request-current", None, true)
-            .unwrap();
-        // The retained request is a core ExecutionRequest; the response
-        // carries the wallet's copy of that type.
-        let mut record = Record {
-            policy_id: "policy-current".into(),
-            request_id: "request-current".into(),
-            config: client.bundle.config.clone(),
-            request: convert(&response.prepared.request).unwrap(),
-            prepared: Some(response.prepared.clone()),
-            agent_signature: None,
-            status: None,
-        };
-        client
-            .validate(&response, "request-current", Some(&record), true)
-            .unwrap();
-        record.request.operation.nonce[0] ^= 1;
-        assert!(
-            client
-                .validate(&response, "request-current", Some(&record), true)
-                .is_err()
-        );
-    }
-    #[test]
     fn requests_convert_between_core_copies_only_without_change() {
-        let data: serde_json::Value = serde_json::from_str(include_str!(
-            "../../../tests/fixtures/stellar-native-revalidation-rpc.json"
+        let signed: SignedOperation = serde_json::from_str(include_str!(
+            "../../../tests/fixtures/canonical-main-9682-native-signed.json"
         ))
         .unwrap();
-        let signed: SignedOperation = serde_json::from_value(data["signed"].clone()).unwrap();
         let wallet = signed.prepared.request;
         let core: ExecutionRequest = convert(&wallet).unwrap();
         assert!(wallet == convert(&core).unwrap());

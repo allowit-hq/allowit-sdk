@@ -32,9 +32,10 @@ Update the rail repositories to a new core commit before this SDK, so that
 `Cargo.lock` holds one allowit-core revision; the build script fails
 otherwise.
 
-`allowit-stellar-wallet` on `stellar-core` still depends on `allowit-sdk` from
-this repository at 67f5d69. `cli/src/vendors/stellar/run.rs` converts the
-execution request between the two core copies and fails closed, and
-`cli/tests/stellar.rs` converts its requests the same way. Remove both
-conversions when the wallet depends on allowit-core. Until then `Cargo.lock`
-holds two copies of package `allowit-sdk`, and `scripts/build.sh` fails.
+`allowit-stellar-wallet` at allowit-contracts-stellar main pins allowit-core
+at e68ad4b, while the Solana and Tempo rails pin 6aa0059.
+`cli/src/vendors/stellar/run.rs` converts the execution request between the
+two core copies and fails closed, and `cli/tests/stellar.rs` converts its
+requests the same way. Remove both conversions when the Stellar rail pins the
+same allowit-core commit. Until then `Cargo.lock` holds two copies of package
+`allowit-sdk`, and `scripts/build.sh` and `cli/tests/examples.rs` fail.
