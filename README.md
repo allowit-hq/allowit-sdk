@@ -183,7 +183,8 @@ Cargo features select how much of the SDK you take along:
 To type-check policy source in an ordinary Rust project, depend on the facade:
 
 ```toml
-allowit = { package = "allowit-sdk", git = "https://github.com/allowit-hq/allowit-core.git", tag = "v0.1.0", version = "0.1" }
+# TODO: replace rev with tag = "v0.1.0" once allowit-core releases it.
+allowit = { package = "allowit-sdk", git = "https://github.com/allowit-hq/allowit-core.git", rev = "6aa00597a0796acf6f6fa911a86c0fe57c055b67", version = "0.1" }
 ```
 
 The facade is for your editor. Compilation and evaluation still go through the SDK.
