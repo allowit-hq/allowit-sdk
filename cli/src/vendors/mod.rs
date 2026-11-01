@@ -434,6 +434,20 @@ mod unbuilt {
     }
 }
 
+/// Refuses a rail that this build leaves out, before any file is written.
+pub(crate) fn require_built(info: &RailInfo, verb: &str) -> Result<()> {
+    let built = match info.family {
+        Family::Stellar => true,
+        Family::Solana => cfg!(feature = "solana"),
+        Family::Tempo => cfg!(feature = "tempo"),
+    };
+    if built {
+        Ok(())
+    } else {
+        Err(not_available(verb, info.id))
+    }
+}
+
 /// Refuses an operation other than those the rail lists.
 pub(crate) fn require_op(rail: &dyn Rail, op: &str) -> Result<()> {
     if rail.caps().ops.contains(&op) {

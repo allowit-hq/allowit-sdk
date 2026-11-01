@@ -146,6 +146,7 @@ fn refuse_existing(dir: &Path, name: &str) -> Result<()> {
 
 /// Generates a key with the rail's curve and stores its private key.
 pub(crate) fn generate(dir: &Path, name: &str, rail: &str) -> Result<Key> {
+    crate::vendors::require_built(routing::info(rail)?, "keys generate")?;
     let _lock = super::lock(dir)?;
     refuse_existing(dir, name)?;
     super::private_dir(&dir.join("secrets"))?;
@@ -167,6 +168,7 @@ pub(crate) fn add(dir: &Path, name: &str, rail: &str, address: &str) -> Result<K
     let _lock = super::lock(dir)?;
     refuse_existing(dir, name)?;
     let info = routing::info(rail)?;
+    crate::vendors::require_built(info, "keys add")?;
     crate::vendors::address::check_account(info.family, address)?;
     let caps = crate::vendors::rail(info).caps();
     let key = Key {
@@ -183,6 +185,7 @@ pub(crate) fn add(dir: &Path, name: &str, rail: &str, address: &str) -> Result<K
 
 /// Stores an existing private key in the rail's signer format.
 pub(crate) fn import_secret(dir: &Path, name: &str, rail: &str, secret: &[u8]) -> Result<Key> {
+    crate::vendors::require_built(routing::info(rail)?, "keys import")?;
     let _lock = super::lock(dir)?;
     refuse_existing(dir, name)?;
     super::private_dir(&dir.join("secrets"))?;
@@ -288,6 +291,20 @@ pub(crate) fn resolve_address(dir: &Path, value: &str, rail: &str) -> Result<Str
 #[cfg(all(test, unix))]
 mod tests {
     use super::*;
+    #[test]
+    #[cfg(not(feature = "solana"))]
+    fn unbuilt_rail_writes_no_key() {
+        let dir = crate::settings::temp_dir("unbuilt-keys");
+        let secret = b"[0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0]";
+        assert_eq!(generate(&dir, "a", "solana:devnet").unwrap_err().code, 3);
+        assert_eq!(
+            import_secret(&dir, "b", "solana:devnet", secret)
+                .unwrap_err()
+                .code,
+            3
+        );
+        assert!(!dir.join("secrets").exists() && !dir.join("keys").exists());
+    }
     #[test]
     #[cfg_attr(
         not(all(feature = "solana", feature = "tempo")),
