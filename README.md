@@ -183,7 +183,8 @@ Cargo features select how much of the SDK you take along:
 To type-check policy source in an ordinary Rust project, depend on the facade:
 
 ```toml
-allowit = { package = "allowit-sdk", git = "https://github.com/allowit-hq/allowit-core.git", rev = "<commit>" }
+# TODO: replace rev with tag = "v0.1.0" once allowit-core releases it.
+allowit = { package = "allowit-sdk", git = "https://github.com/allowit-hq/allowit-core.git", rev = "6aa00597a0796acf6f6fa911a86c0fe57c055b67", version = "0.1" }
 ```
 
 The facade is for your editor. Compilation and evaluation still go through the SDK.
@@ -197,10 +198,9 @@ The facade is for your editor. Compilation and evaluation still go through the S
 | [`cli/templates/policy/`](cli/templates/policy/) | `allowit-policy-template` | A Cargo crate to write and type-check your own policy in |
 | [`cli/skills/allowit/`](cli/skills/allowit/SKILL.md) | | Instructions for an AI agent that compiles and evaluates policies |
 | [`docs/`](docs/) | | Policy language reference and execution requirements |
-| [`docs/examples/`](docs/examples/) | | Three policies and two request contexts used throughout this README. They copy the allowit-core test inputs, and `cli/tests/examples.rs` keeps the copies identical at the pinned core revision |
-| [`scripts/build.sh`](scripts/build.sh) | | Checks the cross-repository pins and Cargo.lock, then builds the workspace |
+| [`docs/examples/`](docs/examples/) | | Three policies and two request contexts used throughout this README. They copy the allowit-core test inputs, and `cli/tests/examples.rs` keeps the copies identical at the core release in `Cargo.toml` |
 
-All packages share one Cargo workspace, one `Cargo.lock` and one version, and depend on each other by path. Code from other repositories comes in as git dependencies, each pinned by full commit in the root `Cargo.toml`. Pins point one way: this SDK depends on the rail crates and on Allowit core, and the rail crates depend on Allowit core.
+All packages share one Cargo workspace, one `Cargo.lock` and one version, and depend on each other by path. Code from other repositories comes in as git dependencies on release tags in the root `Cargo.toml`. Dependencies point one way: this SDK depends on the rail crates and on Allowit core, and the rail crates depend on Allowit core. Every crate in the build names the same core release.
 
 | Repository | Crates this SDK uses |
 | --- | --- |
@@ -209,7 +209,7 @@ All packages share one Cargo workspace, one `Cargo.lock` and one version, and de
 | [allowit-contracts-tempo](https://github.com/allowit-hq/allowit-contracts-tempo) | `allowit-tempo` and `allowit-tempo-services` |
 | [allowit-contracts-stellar](https://github.com/allowit-hq/allowit-contracts-stellar) | `allowit-stellar-wallet` from `stellar/core` |
 
-`[workspace.metadata.allowit.track]` says which commit each pin must be: the default branch tip or a named branch.
+Releases of this repository are annotated git tags `vX.Y.Z`: set `version` in `[workspace.package]`, merge, then tag the merge commit with `git tag -a vX.Y.Z -m vX.Y.Z <commit> && git push origin vX.Y.Z`.
 
 ## How this fits the Allowit system
 
@@ -225,17 +225,7 @@ A compiled artifact is bound by its `source_hash` and `ir_hash`, so an owner can
 ## Development
 
 ```sh
-scripts/build.sh            # fail on a stale cross-repository pin or a second copy of a git package in Cargo.lock, then build the workspace
-scripts/build.sh --check    # only check the cross-repository pins and Cargo.lock
-scripts/build.sh --update   # move stale pins to their tracked commit, refresh Cargo.lock, then build
-scripts/build.sh --update allowit-contracts-solana   # move only the pins of the named repositories
-```
-
-Every mode fails when `Cargo.lock` no longer matches the manifests.
-
-A tracking entry is `"head"` (the default branch tip), `{ branch = "name" }` or `{ version = "1.2.3" }` (the commit of tag `v1.2.3`). The build script needs `git`, `cargo` and `jq`.
-
-```sh
+cargo build --workspace --all-targets --locked
 cargo fmt --all --check
 cargo test --locked -p allowit-sdk-engine -p allowit-cli -p allowit-policy-template
 cargo clippy --locked -p allowit-sdk-engine -p allowit-cli --all-targets -- -D warnings
