@@ -11,21 +11,23 @@ validation commands locally, including their feature flags and selectors. Includ
 workflow and test-input changes when selecting checks. Resolve failures before
 pushing. Preserve existing reviews and deployment restrictions.
 
-All crates share one Cargo workspace and one `Cargo.lock`. Select packages with
-`-p allowit-sdk`, `-p allowit-sdk-engine`, `-p allowit-cli` or
-`-p allowit-policy-template`. Test `allowit-sdk` in its own cargo invocation: a
-workspace build unifies the CLI's serde_json features into core. Rail crates
-are git dependencies pinned by exact commit in the root `[workspace.dependencies]`;
-the root `[patch]` maps their `allowit-sdk` dependency to `core/`.
+All packages share one Cargo workspace, one `Cargo.lock` and one version
+(`[workspace.package]`). Packages in this repository depend on each other by
+path and are never pinned. Select them with `-p allowit-sdk-engine`,
+`-p allowit-cli` or `-p allowit-policy-template`.
 
-For changes under `verification/`, including documentation, run:
-
-```sh
-python3 -m unittest discover -s verification/tests
-```
-
-`verification/` holds only the core Lean model. The Solana verification set,
-including the obligation ledger and every hash-bound lock and receipt, lives in
-allowit-contracts-solana `verification/`. Its receipts bind a byte-identical
-copy of `lean/AllowIt.lean`. Keep the model here in step with that copy, and
-record any model change in allowit-contracts-solana with a new receipt there.
+Pins point one way. This SDK depends on Allowit core (package `allowit-sdk`,
+repository allowit-core) and on the rail crates from allowit-contracts-solana,
+allowit-contracts-tempo and allowit-contracts-stellar. The rail crates depend
+on Allowit core. Never move core or rail code into this repository, and never
+add a `[patch]` section. Each git dependency is pinned by full `rev` in the
+root `[workspace.dependencies]` (the policy template repeats the core pin), and
+`[workspace.metadata.allowit.track]` says which revision it must be pinned to.
+Run `scripts/build.sh` before pushing: it fails on a stale pin or on a second
+copy of a git package in `Cargo.lock` or on a `Cargo.lock` that no longer
+matches the manifests, then builds the workspace. `scripts/build.sh --update`
+rewrites stale pins and `Cargo.lock`; `scripts/build.sh --update <repo>...`
+rewrites only the pins of the named repositories.
+Update the rail repositories to a new core commit before this SDK, so that
+`Cargo.lock` holds one allowit-core revision; the build script fails
+otherwise.

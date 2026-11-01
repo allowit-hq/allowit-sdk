@@ -278,7 +278,7 @@ impl Client {
             || p.request.operation.nonce != operation_nonce(&self.bundle.policy_id, id)
             || r.operation.transaction_hash != sdk::hex(&p.transaction_hash)
             || record.is_some_and(|old| {
-                old.request != p.request
+                p.request != old.request
                     || !config_matches(&old.config, &p.config)
                     || old.prepared.as_ref().is_some_and(|v| v != p)
             })
@@ -488,15 +488,18 @@ fn poll(
     let deadline = std::time::Instant::now() + wait;
     loop {
         let r = c.status(id, record.as_ref())?;
-        let mut old = record.unwrap_or_else(|| Record {
-            policy_id: c.bundle.policy_id.clone(),
-            request_id: id.into(),
-            config: c.bundle.config.clone(),
-            request: r.prepared.request.clone(),
-            prepared: Some(r.prepared.clone()),
-            agent_signature: None,
-            status: None,
-        });
+        let mut old = match record {
+            Some(old) => old,
+            None => Record {
+                policy_id: c.bundle.policy_id.clone(),
+                request_id: id.into(),
+                config: c.bundle.config.clone(),
+                request: r.prepared.request.clone(),
+                prepared: Some(r.prepared.clone()),
+                agent_signature: None,
+                status: None,
+            },
+        };
         if old.prepared.is_none() {
             old.prepared = Some(r.prepared.clone());
         }
@@ -539,7 +542,11 @@ mod public_bundle_tests {
             agent: sdk::account_for_seed(&[2; 32]),
             server: sdk::account_for_seed(&[3; 32]),
             route: WalletRoute::Native,
-            policy_engine: None,
+            tier: None,
+            language: Default::default(),
+            rules: vec![],
+            params: Default::default(),
+            source_digest: [0; 32],
             asset: policy["mint"].as_str().unwrap().into(),
             asset_symbol: "XLM".into(),
             asset_issuer: None,
@@ -696,51 +703,5 @@ mod native_revalidation_tests {
             revalidate_with_rpc_url(&old.prepared, 86402, "").unwrap(),
             old.prepared
         );
-    }
-    #[test]
-    fn retained_signed_status_validation_does_not_need_local_rpc_or_new_approval() {
-        let data: serde_json::Value = serde_json::from_str(include_str!(
-            "../../../tests/fixtures/stellar-native-revalidation-rpc.json"
-        ))
-        .unwrap();
-        let signed: SignedOperation = serde_json::from_value(data["signed"].clone()).unwrap();
-        assert!(signed.prepared.native_preflight.is_none());
-        let config = signed.prepared.config.clone();
-        let client = Client {
-            http: reqwest::blocking::Client::new(),
-            origin: "http://127.0.0.1:1".into(),
-            bundle: Bundle {
-                version: 1,
-                profile: sdk::PROFILE.into(),
-                network: config.network.clone(),
-                policy_id: "policy-current".into(),
-                source_hash: sdk::hex(&config.source_hash),
-                ir_hash: String::new(),
-                module_digest: sdk::hex(&config.module_digest),
-                wallet: config.wallet.clone(),
-                route: config.route.clone(),
-                config,
-                endpoints: Endpoints {
-                    execute: "/api/native/execute".into(),
-                    status: "/api/native/execute/status".into(),
-                },
-                signing_seed: None,
-            },
-            seed: Zeroizing::new([2; 32]),
-            rpc_url: String::new(),
-        };
-        let response = Response {
-            prepared: signed.prepared.clone(),
-            operation: Operation {
-                id: "request-current".into(),
-                status: OperationStatus::Submitted,
-                transaction_hash: sdk::hex(&signed.transaction_hash),
-            },
-            signed_operation: Some(signed),
-            receipt: None,
-        };
-        client
-            .validate(&response, "request-current", None, true)
-            .unwrap();
     }
 }

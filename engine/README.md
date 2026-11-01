@@ -2,7 +2,7 @@
 
 *Backend requests and service composition for Allowit hosts and the `allowit` command, with no terminal I/O.*
 
-`allowit-sdk-engine` (library `allowit_sdk_engine`) holds the request side of Allowit that does not depend on a terminal. Callers pass arguments and readers in and get values or `String` output back. The [`allowit` CLI](../cli/) adds argument parsing, standard streams and vendor command code on top. The compiler, evaluator and shared client, service and transport primitives are in [`allowit-sdk`](../core/).
+`allowit-sdk-engine` (library `allowit_sdk_engine`) holds the request side of Allowit that does not depend on a terminal. Callers pass arguments and readers in and get values or `String` output back. The [`allowit` CLI](../cli/) adds argument parsing, standard streams and vendor command code on top. The compiler, evaluator and shared client, service and transport primitives are in [Allowit core](https://github.com/allowit-hq/allowit-core) (package `allowit-sdk`).
 
 ## Modules
 

@@ -2,7 +2,7 @@
 
 *The `allowit` command: rails, local keys, policy wallets, agent requests and the policy compiler tools.*
 
-This crate (`allowit-cli`, library `allowit_cli`) builds the `allowit` binary. It acts for the agent and the owner. It selects the rail, signs with keys that stay on the machine, validates receipts and recovers uncertain submissions. Backend requests come from [`allowit-sdk-engine`](../engine/), which has no terminal I/O. Errors, configuration and private storage are the `client` module of [`allowit-sdk`](../core/), which also holds the compiler and evaluator. Rail crates live in their rail repositories and depend on the same core.
+This crate (`allowit-cli`, library `allowit_cli`) builds the `allowit` binary. It acts for the agent and the owner. It selects the rail, signs with keys that stay on the machine, validates receipts and recovers uncertain submissions. Backend requests come from [`allowit-sdk-engine`](../engine/), which has no terminal I/O. Errors, configuration and private storage are the `client` module of [Allowit core](https://github.com/allowit-hq/allowit-core) (package `allowit-sdk`), which also holds the compiler and evaluator. Rail crates live in their rail repositories and depend on the same core.
 
 ```sh
 cargo run --locked --bin allowit -- --help

@@ -1,6 +1,6 @@
 [package]
 name = "allowit-cli"
-version = "0.3.0-dev"
+version.workspace = true
 edition = "2024"
 rust-version = "1.98"
 license = "MIT"
@@ -15,7 +15,7 @@ name = "allowit"
 path = "src/main.rs"
 
 [dependencies]
-allowit-sdk = { path = "../core", features = ["client"] }
+allowit-sdk = { workspace = true, features = ["default", "client"] }
 allowit-sdk-engine = { path = "../engine" }
 allowit-native.workspace = true
 allowit-stellar-wallet.workspace = true

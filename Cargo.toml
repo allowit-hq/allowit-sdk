@@ -1,19 +1,32 @@
 [workspace]
 resolver = "3"
-members = ["core", "engine", "cli", "cli/templates/policy"]
+members = ["engine", "cli", "cli/templates/policy"]
 
-# Rail crates. Each git dependency pins an exact commit of its rail repository.
+# Every package in this repository builds at this version.
+[workspace.package]
+version = "0.3.0"
+
+# The revision each git repository must be pinned to. scripts/build.sh checks
+# every git dependency against this table and fails on a stale pin.
+[workspace.metadata.allowit.track]
+allowit-core = "head"
+allowit-contracts-solana = "head"
+allowit-contracts-tempo = "head"
+allowit-contracts-stellar = "head"
+
+# Pins point one way: this SDK depends on Allowit core and on the rail crates,
+# and the rail crates depend on Allowit core.
 [workspace.dependencies]
-allowit-native = { git = "https://github.com/allowit-hq/allowit-contracts-solana.git", rev = "3046aaa9143752c1dbf89c739ae7b21f68a3ed84" }
-allowit-solana-vendor = { git = "https://github.com/allowit-hq/allowit-contracts-solana.git", rev = "3046aaa9143752c1dbf89c739ae7b21f68a3ed84" }
-allowit-solana-service-upstreams = { git = "https://github.com/allowit-hq/allowit-contracts-solana.git", rev = "3046aaa9143752c1dbf89c739ae7b21f68a3ed84" }
-allowit-solana-service-rpc = { git = "https://github.com/allowit-hq/allowit-contracts-solana.git", rev = "3046aaa9143752c1dbf89c739ae7b21f68a3ed84" }
-allowit-solana-delegated-x402 = { git = "https://github.com/allowit-hq/allowit-contracts-solana.git", rev = "3046aaa9143752c1dbf89c739ae7b21f68a3ed84" }
-allowit-vendor-paysh-stock = { git = "https://github.com/allowit-hq/allowit-contracts-solana.git", rev = "3046aaa9143752c1dbf89c739ae7b21f68a3ed84" }
-allowit-solana-paysh-cooperating = { git = "https://github.com/allowit-hq/allowit-contracts-solana.git", rev = "3046aaa9143752c1dbf89c739ae7b21f68a3ed84" }
-allowit-tempo = { git = "https://github.com/allowit-hq/allowit-contracts-tempo.git", rev = "b1fc8b99fa5ace5a6c1c9d316760f5ec251ee29f" }
-allowit-tempo-services = { git = "https://github.com/allowit-hq/allowit-contracts-tempo.git", rev = "b1fc8b99fa5ace5a6c1c9d316760f5ec251ee29f" }
-allowit-stellar-wallet = { git = "https://github.com/allowit-hq/allowit-contracts-stellar.git", rev = "3c44a9db63eba0a9017f7a6c3f05e3c7ca483b2f" }
+allowit-sdk = { git = "https://github.com/allowit-hq/allowit-core.git", rev = "6aa00597a0796acf6f6fa911a86c0fe57c055b67", default-features = false }
+allowit-native = { git = "https://github.com/allowit-hq/allowit-contracts-solana.git", rev = "13bb5a4dd5e0bf6bc22bf4ae79fb5645903f0c82" }
+allowit-solana-service-upstreams = { git = "https://github.com/allowit-hq/allowit-contracts-solana.git", rev = "13bb5a4dd5e0bf6bc22bf4ae79fb5645903f0c82" }
+allowit-solana-service-rpc = { git = "https://github.com/allowit-hq/allowit-contracts-solana.git", rev = "13bb5a4dd5e0bf6bc22bf4ae79fb5645903f0c82" }
+allowit-solana-delegated-x402 = { git = "https://github.com/allowit-hq/allowit-contracts-solana.git", rev = "13bb5a4dd5e0bf6bc22bf4ae79fb5645903f0c82" }
+allowit-vendor-paysh-stock = { git = "https://github.com/allowit-hq/allowit-contracts-solana.git", rev = "13bb5a4dd5e0bf6bc22bf4ae79fb5645903f0c82" }
+allowit-solana-paysh-cooperating = { git = "https://github.com/allowit-hq/allowit-contracts-solana.git", rev = "13bb5a4dd5e0bf6bc22bf4ae79fb5645903f0c82" }
+allowit-tempo = { git = "https://github.com/allowit-hq/allowit-contracts-tempo.git", rev = "ac94e4551af251e3a31e8247ddcaaf9a2535fa9b" }
+allowit-tempo-services = { git = "https://github.com/allowit-hq/allowit-contracts-tempo.git", rev = "ac94e4551af251e3a31e8247ddcaaf9a2535fa9b" }
+allowit-stellar-wallet = { git = "https://github.com/allowit-hq/allowit-contracts-stellar.git", rev = "c9a85574ef040ea10f7b885d50124c7935f4a5c7" }
 
 [profile.release]
 lto = true
@@ -21,8 +34,3 @@ opt-level = "s"
 codegen-units = 1
 panic = "abort"
 strip = true
-
-# Rail crates pin allowit-sdk by git revision. This patch resolves those pins
-# to the workspace core, so one allowit-sdk crate serves the whole graph.
-[patch."https://github.com/allowit-hq/allowit-sdk.git"]
-allowit-sdk = { path = "core" }

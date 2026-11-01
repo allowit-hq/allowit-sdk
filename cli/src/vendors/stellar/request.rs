@@ -125,7 +125,9 @@ pub(crate) fn transfer(
         (
             NativeInstruction::StellarCall {
                 contract: token.clone(),
-                schema_digest: sdk::hash(sdk::ARGUMENT_SCHEMA),
+                // The wallet identifies a Stellar call by its contract, function
+                // and arguments and does not read the schema digest.
+                schema_digest: [0; 32],
                 function: "transfer".into(),
                 arguments: vec![
                     AbiValue::Account(wallet.clone()),
@@ -186,8 +188,11 @@ mod tests {
             agent: sdk::account_for_seed(&[2; 32]),
             server: sdk::account_for_seed(&[3; 32]),
             route: route.clone(),
-            policy_engine: (route == WalletRoute::PolicyWallet)
-                .then_some(sdk::PolicyEngine::SimplePolicyEngine),
+            tier: (route == WalletRoute::PolicyWallet).then_some(sdk::PolicyTier::Simple),
+            language: Default::default(),
+            rules: vec![],
+            params: Default::default(),
+            source_digest: [0; 32],
             asset: String::new(),
             asset_symbol: if usdc { "USDC" } else { "XLM" }.into(),
             asset_issuer: usdc.then(|| sdk::account_for_seed(&[9; 32])),
@@ -196,12 +201,25 @@ mod tests {
             module_digest: [5; 32],
             max_fee_stroops: 50_000,
         };
+        c.asset = sdk::sac_address(&c.network, &sdk::asset_xdr(&c).unwrap()).unwrap();
         if route == WalletRoute::PolicyWallet {
             let native = sdk::asset_from_identity("XLM", None).unwrap();
             // Any valid contract strkey serves as the wallet contract.
             c.wallet = sdk::sac_address("stellar:mainnet", &native).unwrap();
+            // Policy wallets run portable source with an empty Simple binding.
+            let source = "use allowit::prelude::*;\npub fn execute(ctx: &AllowitContext) -> allowit::Result {\n    Ok(())\n}\n";
+            c.language = sdk::PolicyLanguage::Portable;
+            c.policy_source = source.into();
+            c.source_hash = sdk::hash(source);
+            c.source_digest = sdk::policy::installed_source_digest(
+                sdk::PolicyTier::Simple,
+                &c.module_digest,
+                &c.asset,
+                &[],
+                source,
+            )
+            .unwrap();
         }
-        c.asset = sdk::sac_address(&c.network, &sdk::asset_xdr(&c).unwrap()).unwrap();
         c
     }
 

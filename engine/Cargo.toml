@@ -1,6 +1,6 @@
 [package]
 name = "allowit-sdk-engine"
-version = "0.3.0-dev"
+version.workspace = true
 edition = "2024"
 rust-version = "1.98"
 license = "MIT"
@@ -22,7 +22,7 @@ services = [
 ]
 
 [dependencies]
-allowit-sdk = { path = "../core", default-features = false, features = ["std", "typed-workflow", "client"] }
+allowit-sdk = { workspace = true, features = ["std", "typed-workflow", "client"] }
 allowit-stellar-wallet.workspace = true
 allowit-tempo = { workspace = true, features = ["client"] }
 allowit-solana-service-upstreams = { workspace = true, optional = true }
