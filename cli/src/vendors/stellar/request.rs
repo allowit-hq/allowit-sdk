@@ -11,7 +11,7 @@ use crate::{
         typed::TypedRequest,
     },
 };
-use allowit_sdk::typed_workflow::AccountKind;
+use allowit_sdk::typed_workflow::{AccountKind, ExecutionRequest};
 use allowit_stellar_wallet::{self as sdk, AccountState, TrustedState, WalletConfig, WalletRoute};
 
 /// Checks the operation flags alone, before any profile, journal or network
@@ -79,38 +79,27 @@ pub(crate) fn build(
     TypedRequest::new(policy_id, &r.request_id, request)
 }
 
+/// The request of a retried request ID: rebuilt from its flags with the
+/// retained fee bounds. The fee payer was chain state at the first attempt, so
+/// the journal compares only the operator's intent, and a retry reads no RPC.
+pub(crate) fn rebuild(
+    policy_id: &str,
+    config: &WalletConfig,
+    r: &ExecRequest,
+    retained: &ExecutionRequest,
+) -> Result<TypedRequest> {
+    let mut typed = build(policy_id, config, r, || Ok(profile_state(config)))?;
+    typed.request.fee_bounds.clone_from(&retained.fee_bounds);
+    Ok(typed)
+}
+
 /// The chain state that the builders read: the fee payer. A policy wallet pays
 /// fees from its current agent account, which Stellar RPC reports. Classic
 /// custody pays them from the wallet and the builders read no state for it, so
 /// the profile fills it; the engine checks every request against its own.
 pub(crate) fn state(c: &WalletConfig, rpc_url: Option<&str>) -> Result<TrustedState> {
     if c.route == WalletRoute::Native {
-        return Ok(TrustedState {
-            contract_version: None,
-            policy_state: None,
-            source: AccountState {
-                address: c.wallet.clone(),
-                sequence: 0,
-                master_weight: 0,
-                low_threshold: 0,
-                medium_threshold: 0,
-                high_threshold: 0,
-                signers: vec![],
-            },
-            nonce: 0,
-            deployment_version: 0,
-            spent_daily: 0,
-            spent_total: 0,
-            spent_day: 0,
-            calls: 0,
-            ledger: 0,
-            module_digest: c.module_digest,
-            source_hash: c.source_hash,
-            owner: c.owner.clone(),
-            agent: c.agent.clone(),
-            server: c.server.clone(),
-            policy_instance: c.policy_instance,
-        });
+        return Ok(profile_state(c));
     }
     let url = rpc_url.filter(|u| !u.is_empty()).ok_or_else(|| {
         Error::config(
@@ -121,6 +110,36 @@ pub(crate) fn state(c: &WalletConfig, rpc_url: Option<&str>) -> Result<TrustedSt
     sdk::rpc::trusted_state_for_discovery(&rpc, c, None)
         .map(|found| found.state)
         .map_err(Error::config)
+}
+
+/// The profile's view of the state: the configured agent account pays.
+fn profile_state(c: &WalletConfig) -> TrustedState {
+    TrustedState {
+        contract_version: None,
+        policy_state: None,
+        source: AccountState {
+            address: c.agent.clone(),
+            sequence: 0,
+            master_weight: 0,
+            low_threshold: 0,
+            medium_threshold: 0,
+            high_threshold: 0,
+            signers: vec![],
+        },
+        nonce: 0,
+        deployment_version: 0,
+        spent_daily: 0,
+        spent_total: 0,
+        spent_day: 0,
+        calls: 0,
+        ledger: 0,
+        module_digest: c.module_digest,
+        source_hash: c.source_hash,
+        owner: c.owner.clone(),
+        agent: c.agent.clone(),
+        server: c.server.clone(),
+        policy_instance: c.policy_instance,
+    }
 }
 
 /// Checks that the amount names the wallet's installed asset and returns its
@@ -182,7 +201,6 @@ mod tests {
             asset::{exec_uses, parse},
         },
     };
-    use allowit_sdk::typed_workflow::ExecutionRequest;
     use std::time::Duration;
 
     fn config(route: WalletRoute, usdc: bool) -> WalletConfig {
@@ -318,6 +336,19 @@ mod tests {
     }
     fn fee_payer(r: &ExecutionRequest) -> allowit_sdk::typed_workflow::AccountId {
         r.fee_bounds.as_ref().unwrap()[0].payer.clone()
+    }
+
+    #[test]
+    fn a_retry_keeps_the_retained_fee_payer() {
+        let c = config(WalletRoute::PolicyWallet, true);
+        let r = request("deposit", &vault(1), "USDC:5", Some("4900000"));
+        let mut first = state(&config(WalletRoute::Native, false), None).unwrap();
+        first.source.address = sdk::account_for_seed(&[8; 32]);
+        let old = build("policy-1", &c, &r, || Ok(first)).unwrap().request;
+        // The agent account changed since; the same flags rebuild the same request.
+        assert_eq!(rebuild("policy-1", &c, &r, &old).unwrap().request, old);
+        let more = request("deposit", &vault(1), "USDC:6", Some("4900000"));
+        assert_ne!(rebuild("policy-1", &c, &more, &old).unwrap().request, old);
     }
 
     #[test]

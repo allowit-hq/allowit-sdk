@@ -347,6 +347,17 @@ impl Client {
 fn open_journal(path: &Path) -> Result<Store> {
     Store::open(path).map_err(journal_error)
 }
+/// The request retained under this policy and request ID, if any. `exec`
+/// checks the rest of the record.
+pub(crate) fn retained_request(
+    journal: &Path,
+    policy: &str,
+    id: &str,
+) -> Result<Option<ExecutionRequest>> {
+    let name = sdk::hex(&operation_nonce(policy, id));
+    let old: Option<Record> = open_journal(journal)?.load(&name).map_err(journal_error)?;
+    Ok(old.map(|r| r.request))
+}
 /// Reads one request by its ID without creating another.
 pub(crate) fn status(c: &Client, journal: &Path, id: &str, wait: Duration) -> Result<(Value, i32)> {
     let journal = open_journal(journal)?;

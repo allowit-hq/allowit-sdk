@@ -268,13 +268,23 @@ pub fn inspect_wallet(network: &str, path: &Path) -> Result<PublicWallet> {
     bytes.zeroize();
     Ok(metadata)
 }
+/// The networks whose keys this build generates.
+#[cfg(test)]
+fn built_networks() -> Vec<&'static str> {
+    let mut networks = vec!["solana:devnet", "stellar:testnet"];
+    if cfg!(feature = "tempo") {
+        networks.push("eip155:42431");
+    }
+    networks
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     #[test]
     fn public_metadata_cannot_serialize_secret() {
         let seed = [7u8; 32];
-        for network in ["solana:devnet", "stellar:testnet", "eip155:42431"] {
+        for network in built_networks() {
             let p = public(network, &seed).unwrap();
             let v = serde_json::to_value(p).unwrap();
             assert_eq!(v.as_object().unwrap().len(), 4);
@@ -292,12 +302,15 @@ mod tests {
         assert_eq!(stellar.public_key, stellar.address);
         assert!(stellar.public_key.starts_with('G'));
         stellar.validate().unwrap();
-        let mut seed = [0; 32];
-        seed[31] = 1;
-        assert_eq!(
-            public("eip155:42431", &seed).unwrap().address,
-            "0x7e5f4552091a69125d5dfcb7b8c2659029395bdf"
-        );
+        #[cfg(feature = "tempo")]
+        {
+            let mut seed = [0; 32];
+            seed[31] = 1;
+            assert_eq!(
+                public("eip155:42431", &seed).unwrap().address,
+                "0x7e5f4552091a69125d5dfcb7b8c2659029395bdf"
+            );
+        }
     }
 }
 
@@ -363,7 +376,7 @@ mod storage_tests {
     }
     #[test]
     fn generated_files_are_usable_private_and_never_replaced() {
-        for n in ["solana:devnet", "stellar:testnet", "eip155:42431"] {
+        for n in built_networks() {
             let p = path();
             let public = generate_wallet(n, &p).unwrap();
             public.validate().unwrap();
@@ -396,6 +409,13 @@ mod storage_tests {
             }
             std::fs::remove_dir_all(p.parent().unwrap()).unwrap();
         }
+    }
+    #[cfg(not(feature = "tempo"))]
+    #[test]
+    fn tempo_keys_are_refused_when_tempo_is_left_out() {
+        let p = path();
+        assert_eq!(generate_wallet("eip155:42431", &p).unwrap_err().code, 3);
+        assert!(!p.exists());
     }
     #[test]
     fn symlink_hardlink_and_insecure_files_are_refused() {

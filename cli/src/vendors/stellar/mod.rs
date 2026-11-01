@@ -244,10 +244,20 @@ impl Rail for Stellar {
         super::address::check_recipient(self.0.family, &r.to)?;
         request::check(&r.op, &r.to, r.token_out.as_ref(), r.args.is_some())?;
         let bundle = self.profile(cx, r.wallet.as_deref())?;
-        let rpc = cx.rpc_url(self.0)?;
-        let typed = request::build(&bundle.policy_id, &bundle.config, r, || {
-            request::state(&bundle.config, rpc.as_deref())
-        })?;
+        // A retry keeps its retained fee payer and reads no RPC.
+        let retained = if r.build_only {
+            None
+        } else {
+            run::retained_request(&self.journal(cx)?, &bundle.policy_id, &r.request_id)?
+        };
+        let typed = if let Some(old) = &retained {
+            request::rebuild(&bundle.policy_id, &bundle.config, r, old)?
+        } else {
+            let rpc = cx.rpc_url(self.0)?;
+            request::build(&bundle.policy_id, &bundle.config, r, || {
+                request::state(&bundle.config, rpc.as_deref())
+            })?
+        };
         if r.build_only {
             // The unsigned request is a document for a signer and submitter
             // outside the CLI: always JSON.
