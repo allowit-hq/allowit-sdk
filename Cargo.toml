@@ -2,22 +2,18 @@
 resolver = "3"
 members = ["engine", "cli", "cli/templates/policy"]
 
-# Every package in this repository builds at this version.
+# Every package in this repository releases at this version.
 [workspace.package]
 version = "0.3.0"
+repository = "https://github.com/allowit-hq/allowit-sdk"
 
-# The revision each git repository must be pinned to. scripts/build.sh checks
-# every git dependency against this table and fails on a stale pin.
-[workspace.metadata.allowit.track]
-allowit-core = "head"
-allowit-contracts-solana = "head"
-allowit-contracts-tempo = "head"
-allowit-contracts-stellar = "head"
-
-# Pins point one way: this SDK depends on Allowit core and on the rail crates,
-# and the rail crates depend on Allowit core.
+# Dependencies point one way: this SDK depends on Allowit core and on the rail
+# crates, and the rail crates depend on Allowit core. Every crate in the build
+# must name the same core release, so Cargo builds one copy of core.
 [workspace.dependencies]
-allowit-sdk = { git = "https://github.com/allowit-hq/allowit-core.git", rev = "6aa00597a0796acf6f6fa911a86c0fe57c055b67", default-features = false }
+# TODO: replace rev with tag = "v0.1.0" once allowit-core releases it and the
+# Solana and Tempo crates below name that tag too.
+allowit-sdk = { git = "https://github.com/allowit-hq/allowit-core.git", rev = "6aa00597a0796acf6f6fa911a86c0fe57c055b67", version = "0.1", default-features = false }
 allowit-native = { git = "https://github.com/allowit-hq/allowit-contracts-solana.git", rev = "13bb5a4dd5e0bf6bc22bf4ae79fb5645903f0c82" }
 allowit-solana-service-upstreams = { git = "https://github.com/allowit-hq/allowit-contracts-solana.git", rev = "13bb5a4dd5e0bf6bc22bf4ae79fb5645903f0c82" }
 allowit-solana-service-rpc = { git = "https://github.com/allowit-hq/allowit-contracts-solana.git", rev = "13bb5a4dd5e0bf6bc22bf4ae79fb5645903f0c82" }
@@ -26,11 +22,24 @@ allowit-vendor-paysh-stock = { git = "https://github.com/allowit-hq/allowit-cont
 allowit-solana-paysh-cooperating = { git = "https://github.com/allowit-hq/allowit-contracts-solana.git", rev = "13bb5a4dd5e0bf6bc22bf4ae79fb5645903f0c82" }
 allowit-tempo = { git = "https://github.com/allowit-hq/allowit-contracts-tempo.git", rev = "ac94e4551af251e3a31e8247ddcaaf9a2535fa9b" }
 allowit-tempo-services = { git = "https://github.com/allowit-hq/allowit-contracts-tempo.git", rev = "ac94e4551af251e3a31e8247ddcaaf9a2535fa9b" }
-allowit-stellar-wallet = { git = "https://github.com/allowit-hq/allowit-contracts-stellar.git", rev = "6583beb6bd628a0734320e1adcb3542b45341f8c" }
+# TODO: replace rev with tag = "v0.1.0" together with the allowit-sdk entry above.
+allowit-stellar-wallet = { git = "https://github.com/allowit-hq/allowit-contracts-stellar.git", rev = "6583beb6bd628a0734320e1adcb3542b45341f8c", version = "0.1" }
+
+# Every Allowit workspace uses this profile block, so a shared target directory
+# builds each shared crate once. Release builds keep overflow checks, which the
+# portable policy library requires, and the Soroban contract settings; the Wasm
+# targets abort on panic by default.
+[profile.dev]
+debug = "line-tables-only"
+incremental = false
+
+[profile.test]
+debug = "line-tables-only"
+incremental = false
 
 [profile.release]
-lto = true
-opt-level = "s"
 codegen-units = 1
-panic = "abort"
-strip = true
+lto = true
+opt-level = "z"
+overflow-checks = true
+strip = "symbols"

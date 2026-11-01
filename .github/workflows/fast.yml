@@ -10,12 +10,12 @@ concurrency:
   group: focused-${{ github.repository }}-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 jobs:
-  pins:
-    name: Pins and build
+  build:
+    name: Build
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@1.98.0
       - uses: Swatinem/rust-cache@v2
-      - run: scripts/build.sh
+      - run: cargo build --workspace --all-targets --locked

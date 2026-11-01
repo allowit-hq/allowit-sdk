@@ -16,18 +16,11 @@ All packages share one Cargo workspace, one `Cargo.lock` and one version
 path and are never pinned. Select them with `-p allowit-sdk-engine`,
 `-p allowit-cli` or `-p allowit-policy-template`.
 
-Pins point one way. This SDK depends on Allowit core (package `allowit-sdk`,
-repository allowit-core) and on the rail crates from allowit-contracts-solana,
-allowit-contracts-tempo and allowit-contracts-stellar. The rail crates depend
-on Allowit core. Never move core or rail code into this repository, and never
-add a `[patch]` section. Each git dependency is pinned by full `rev` in the
-root `[workspace.dependencies]` (the policy template repeats the core pin), and
-`[workspace.metadata.allowit.track]` says which revision it must be pinned to.
-Run `scripts/build.sh` before pushing: it fails on a stale pin or on a second
-copy of a git package in `Cargo.lock` or on a `Cargo.lock` that no longer
-matches the manifests, then builds the workspace. `scripts/build.sh --update`
-rewrites stale pins and `Cargo.lock`; `scripts/build.sh --update <repo>...`
-rewrites only the pins of the named repositories.
-Update the rail repositories to a new core commit before this SDK, so that
-`Cargo.lock` holds one allowit-core revision; the build script fails
-otherwise.
+Dependencies point one way. This SDK depends on Allowit core (package
+`allowit-sdk`, repository allowit-core) and on the rail crates from
+allowit-contracts-solana, allowit-contracts-tempo and allowit-contracts-stellar.
+The rail crates depend on Allowit core. Never move core or rail code into this
+repository, and never add a `[patch]` section. Each git dependency names a
+release tag `vX.Y.Z` in the root `[workspace.dependencies]` (the policy template
+repeats the core tag). Every crate in the build must name the same core tag:
+release the rail repositories on a new core tag before this SDK moves to it.
