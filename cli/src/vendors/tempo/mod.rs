@@ -488,6 +488,23 @@ impl Rail for Tempo {
     }
 }
 
+/// The bundle path of `tempo import`: the first word that is not `--json`,
+/// or the word after a literal `--`.
+fn import_path(args: &[String]) -> Result<&str> {
+    let mut literal = false;
+    for value in &args[1..] {
+        if !literal && value == "--" {
+            literal = true;
+            continue;
+        }
+        if !literal && value == "--json" {
+            continue;
+        }
+        return Ok(value);
+    }
+    Err(Error::usage("tempo import needs a bundle path"))
+}
+
 /// The hidden `tempo` group of earlier releases. With a selected rail, the
 /// bundle must belong to it.
 pub(crate) fn legacy(args: &[String], stdout: &mut String, stderr: &mut String) -> Result<i32> {
@@ -499,11 +516,7 @@ pub(crate) fn legacy(args: &[String], stdout: &mut String, stderr: &mut String) 
     }
     if let Some(selected) = selected() {
         let path = if args.first().is_some_and(|s| s == "import") {
-            args.iter()
-                .skip(1)
-                .find(|a| *a != "--json")
-                .cloned()
-                .ok_or_else(|| Error::usage("tempo import needs a bundle path"))?
+            import_path(args)?.to_owned()
         } else {
             bundle_path()
         };
@@ -523,6 +536,20 @@ pub(crate) fn legacy(args: &[String], stdout: &mut String, stderr: &mut String) 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn import_path_skips_json_and_honours_the_separator() {
+        for (words, path) in [
+            (&["import", "--json", "b.json"][..], "b.json"),
+            (&["import", "b.json", "--json"][..], "b.json"),
+            (&["import", "--", "b.json"][..], "b.json"),
+            (&["import", "--", "--json"][..], "--json"),
+        ] {
+            let args: Vec<String> = words.iter().map(|w| (*w).to_owned()).collect();
+            assert_eq!(import_path(&args).unwrap(), path, "{words:?}");
+        }
+        assert_eq!(import_path(&["import".to_owned()]).unwrap_err().code, 2);
+    }
 
     /// A panic report while the crate's progress is silenced reaches the
     /// original stderr.

@@ -653,7 +653,7 @@ impl Rail for Solana {
         self.harness_wallet(wallet)?;
         Ok(Binding {
             wallet: None,
-            policy: Some(harness::policy()?),
+            policy: Some(harness::identity()?),
         })
     }
     fn legacy(&self, cx: &mut Ctx, verb: &str, args: &[String]) -> Result<i32> {

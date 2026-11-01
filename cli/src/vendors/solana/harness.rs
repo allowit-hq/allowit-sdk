@@ -28,6 +28,13 @@ pub(crate) fn policy() -> Result<String> {
     }
 }
 
+/// The engine origin, owner and policy that a request goes to. A request ID
+/// binds to all three, so a changed token or engine never reuses it.
+pub(crate) fn identity() -> Result<String> {
+    let c = Config::load(&policy()?)?;
+    Ok(format!("{}/{}/{}", c.origin, c.owner, c.policy))
+}
+
 fn client() -> Result<Client> {
     Client::new(Config::load(&policy()?)?)
 }
@@ -343,5 +350,24 @@ mod tests {
             Ok(())
         })
         .unwrap();
+    }
+
+    /// A request ID binds to the engine, the owner and the policy.
+    #[test]
+    fn identity_names_engine_owner_and_policy() {
+        let secret = "s".repeat(16);
+        let identity = |url: &str, owner: &str| {
+            let token = format!("{owner}.p.{secret}");
+            crate::config::with_settings(
+                &[("ALLOWIT_URL", url.into()), ("ALLOWIT_TOKEN", token)],
+                identity,
+            )
+            .unwrap()
+        };
+        let alice = identity("https://a.example", "alice");
+        assert_eq!(alice, "https://a.example/alice/p");
+        assert!(!alice.contains(&secret));
+        assert_ne!(identity("https://a.example", "bob"), alice);
+        assert_ne!(identity("https://b.example", "alice"), alice);
     }
 }
