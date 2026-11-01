@@ -30,13 +30,14 @@ pub(crate) fn run(args: Args, cx: &mut Ctx) -> Result<i32> {
         )));
     }
     address::check_wallet(rail.family, &args.address)?;
-    let settings = cx.settings()?;
-    let r = settings.rail_mut(rail.id);
-    r.wallet = Some(args.address.clone());
-    if !r.wallets.contains(&args.address) {
-        r.wallets.push(args.address.clone());
-    }
-    settings.save()?;
+    cx.settings()?.update(|config| {
+        let r = config.rail_mut(rail.id);
+        r.wallet = Some(args.address.clone());
+        if !r.wallets.contains(&args.address) {
+            r.wallets.push(args.address.clone());
+        }
+        Ok(())
+    })?;
     cx.out
         .value(&serde_json::json!({"rail": rail.id, "wallet": args.address}));
     Ok(0)

@@ -146,6 +146,7 @@ fn refuse_existing(dir: &Path, name: &str) -> Result<()> {
 
 /// Generates a key with the rail's curve and stores its private key.
 pub(crate) fn generate(dir: &Path, name: &str, rail: &str) -> Result<Key> {
+    let _lock = super::lock(dir)?;
     refuse_existing(dir, name)?;
     super::private_dir(&dir.join("secrets"))?;
     let public = crate::wallet::generate_wallet(rail, &secret_path(dir, name))?;
@@ -163,6 +164,7 @@ pub(crate) fn generate(dir: &Path, name: &str, rail: &str) -> Result<Key> {
 
 /// Records a public address that this device cannot sign for.
 pub(crate) fn add(dir: &Path, name: &str, rail: &str, address: &str) -> Result<Key> {
+    let _lock = super::lock(dir)?;
     refuse_existing(dir, name)?;
     let info = routing::info(rail)?;
     crate::vendors::address::check_account(info.family, address)?;
@@ -181,6 +183,7 @@ pub(crate) fn add(dir: &Path, name: &str, rail: &str, address: &str) -> Result<K
 
 /// Stores an existing private key in the rail's signer format.
 pub(crate) fn import_secret(dir: &Path, name: &str, rail: &str, secret: &[u8]) -> Result<Key> {
+    let _lock = super::lock(dir)?;
     refuse_existing(dir, name)?;
     super::private_dir(&dir.join("secrets"))?;
     let path = secret_path(dir, name);
@@ -251,6 +254,7 @@ pub(crate) fn signer_path(dir: &Path, key: &Key) -> Result<PathBuf> {
 }
 
 pub(crate) fn remove(dir: &Path, name: &str) -> Result<()> {
+    let _lock = super::lock(dir)?;
     let key = load(dir, name)?;
     if key.secret {
         match std::fs::remove_file(secret_path(dir, name)) {

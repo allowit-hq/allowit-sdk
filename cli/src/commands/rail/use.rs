@@ -17,9 +17,10 @@ pub(crate) struct Args {
 
 pub(crate) fn run(args: Args, cx: &mut Ctx) -> Result<i32> {
     let info = routing::info(&args.name)?;
-    let settings = cx.settings()?;
-    settings.config.rail = Some(info.id.into());
-    settings.save()?;
+    cx.settings()?.update(|config| {
+        config.rail = Some(info.id.into());
+        Ok(())
+    })?;
     cx.out.value(&serde_json::json!({"rail": info.id}));
     Ok(0)
 }

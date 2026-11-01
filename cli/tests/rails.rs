@@ -196,6 +196,75 @@ fn keys_use_the_rail_curve_and_print_only_public_metadata() {
 }
 
 #[test]
+fn concurrent_commands_keep_every_config_edit_and_one_owner_per_key_name() {
+    let sandbox = Sandbox::new("concurrent");
+    let addr = |n: u8| format!("0x{}", format!("{n:02x}").repeat(20));
+    let spawn_all = |args: &dyn Fn(&str) -> Vec<String>| {
+        let children: Vec<_> = (1..=8u8)
+            .map(|n| {
+                let address = addr(n);
+                let child = sandbox
+                    .command()
+                    .args(args(&address))
+                    .stdout(std::process::Stdio::null())
+                    .stderr(std::process::Stdio::null())
+                    .spawn()
+                    .unwrap();
+                (address, child)
+            })
+            .collect();
+        children
+            .into_iter()
+            .map(|(address, mut child)| (address, child.wait().unwrap().code()))
+            .collect::<Vec<_>>()
+    };
+    // Each wallet use reads and rewrites config.toml; none loses another's wallet.
+    for (_, exit) in spawn_all(&|a| {
+        ["--rail", "eip155:42431", "wallet", "use", a]
+            .map(Into::into)
+            .into()
+    }) {
+        assert_eq!(exit, Some(0));
+    }
+    let config = sandbox.json(&["config", "show"]);
+    let mut wallets: Vec<_> = config["config"]["rails"]["eip155:42431"]["wallets"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|w| w.as_str().unwrap().to_owned())
+        .collect();
+    wallets.sort();
+    assert_eq!(wallets, (1..=8).map(addr).collect::<Vec<_>>());
+    // Only one keys add claims a name; the stored address is the winner's.
+    let results = spawn_all(&|a| {
+        [
+            "--rail",
+            "eip155:42431",
+            "keys",
+            "add",
+            "owner",
+            "--public-key",
+            a,
+        ]
+        .map(Into::into)
+        .into()
+    });
+    let winners: Vec<_> = results
+        .iter()
+        .filter(|(_, exit)| *exit == Some(0))
+        .collect();
+    assert_eq!(winners.len(), 1, "{results:?}");
+    assert!(
+        results.iter().all(|(_, exit)| matches!(exit, Some(0 | 3))),
+        "{results:?}"
+    );
+    assert_eq!(
+        sandbox.json(&["keys", "show", "owner"])["address"],
+        winners[0].0
+    );
+}
+
+#[test]
 fn faucet_funding_goes_through_the_rail_vendor() {
     let mut sandbox = Sandbox::new("fund");
     let mock = Mock::new();

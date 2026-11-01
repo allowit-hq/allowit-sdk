@@ -27,16 +27,13 @@ pub(crate) fn run(args: Args, cx: &mut Ctx) -> Result<i32> {
     let dir = cx.dir()?;
     keys::remove(&dir, &key.name)?;
     // A rail whose agent was this key has no agent now.
-    let settings = cx.settings()?;
-    let mut changed = false;
-    for rail in settings.config.rails.values_mut() {
-        if rail.agent.as_deref() == Some(key.name.as_str()) {
-            rail.agent = None;
-            changed = true;
+    cx.settings()?.update(|config| {
+        for rail in config.rails.values_mut() {
+            if rail.agent.as_deref() == Some(key.name.as_str()) {
+                rail.agent = None;
+            }
         }
-    }
-    if changed {
-        settings.save()?;
-    }
+        Ok(())
+    })?;
     Ok(0)
 }

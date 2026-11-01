@@ -58,29 +58,22 @@ pub(crate) fn run(args: Args, cx: &mut Ctx) -> Result<i32> {
             key.name
         )));
     }
-    let settings = cx.settings()?;
-    let current = settings.rail(rail.id);
-    if let Some(agent) = &current.agent
-        && agent != &key.name
-        && !args.force
-    {
-        return Err(Error::config(format!(
-            "{} already uses agent key {agent}; pass --force to replace it",
-            rail.id
-        )));
-    }
-    let service_asset = current
-        .service_asset
-        .clone()
-        .unwrap_or_else(|| default_asset.into());
-    let changed = current.agent.as_deref() != Some(key.name.as_str())
-        || current.service_asset.as_deref() != Some(service_asset.as_str());
-    if changed {
-        let r = settings.rail_mut(rail.id);
+    let service_asset = cx.settings()?.update(|config| {
+        let r = config.rail_mut(rail.id);
+        if let Some(agent) = &r.agent
+            && agent != &key.name
+            && !args.force
+        {
+            return Err(Error::config(format!(
+                "{} already uses agent key {agent}; pass --force to replace it",
+                rail.id
+            )));
+        }
         r.agent = Some(key.name.clone());
-        r.service_asset = Some(service_asset.clone());
-        settings.save()?;
-    }
+        Ok(r.service_asset
+            .get_or_insert_with(|| default_asset.into())
+            .clone())
+    })?;
     let mut result = json!({
         "rail": rail.id,
         "agent": key.name,
