@@ -65,10 +65,9 @@ fn offline_help_examples_run_and_print_only_data() {
     let example_rail = rails
         .as_array()
         .unwrap()
-        .iter()
-        .find(|rail| rail["testnet"] == true)
+        .first()
         .and_then(|rail| rail["rail"].as_str())
-        .expect("the build needs a Testnet rail for offline key examples");
+        .expect("the build needs a registered rail for offline key examples");
     let rail_use = format!("allowit rail use {example_rail}");
     let rail_show = format!("allowit rail show {example_rail} --json");
     let run_all = [
