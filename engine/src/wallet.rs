@@ -1,12 +1,12 @@
 //! Local agent keys. PublicWallet is the only serializable registration value.
 use crate::{
     error::{Error, Result},
-    routing::{self, Family},
+    routing,
 };
 use allowit_sdk::client::store::Store;
 use serde::{Deserialize, Serialize};
 use std::path::Path;
-use zeroize::Zeroizing;
+use zeroize::{Zeroize, Zeroizing};
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct PublicWallet {
@@ -16,72 +16,17 @@ pub struct PublicWallet {
     pub key_type: String,
 }
 fn public(network: &str, seed: &[u8; 32]) -> Result<PublicWallet> {
-    let family = routing::family(network)?;
-    let (address, public_key, key_type) = if family == Family::Tempo {
-        let (address, public_key) = tempo::public_key(seed)?;
-        (address, public_key, "secp256k1".to_owned())
-    } else {
-        let key = ed25519_dalek::SigningKey::from_bytes(seed)
-            .verifying_key()
-            .to_bytes();
-        // A Stellar public key is its G strkey; Solana uses base58.
-        let address = if family == Family::Stellar {
-            stellar_address(&key)
-        } else {
-            bs58::encode(key).into_string()
-        };
-        (address.clone(), address, "ed25519".to_owned())
-    };
+    let network = routing::normalize(network)?;
+    let address = allowit_stellar_wallet::account_for_seed(seed);
     Ok(PublicWallet {
-        network: routing::normalize(network)?.into(),
+        network: network.into(),
+        public_key: address.clone(),
         address,
-        public_key,
-        key_type,
+        key_type: "ed25519".into(),
     })
 }
-/// Tempo (eip155) secp256k1 keys. A build without the `tempo` feature refuses
-/// them with exit 3.
-#[cfg(feature = "tempo")]
-mod tempo {
-    use crate::error::{Error, Result};
-    pub(super) fn public_key(seed: &[u8; 32]) -> Result<(String, String)> {
-        allowit_tempo::wallet::public_key(seed)
-            .map_err(|_| Error::config("Invalid Tempo wallet seed"))
-    }
-    pub(super) fn validate_public(address: &str, public_key: &str) -> Result<()> {
-        allowit_tempo::wallet::validate_public(address, public_key)
-            .map_err(|_| Error::usage("Invalid Tempo public wallet"))
-    }
-}
-#[cfg(not(feature = "tempo"))]
-mod tempo {
-    use crate::error::{Error, Result};
-    pub(super) fn unbuilt() -> Error {
-        Error::unsupported("Tempo keys are not built into this binary")
-    }
-    pub(super) fn public_key(_: &[u8; 32]) -> Result<(String, String)> {
-        Err(unbuilt())
-    }
-    pub(super) fn validate_public(_: &str, _: &str) -> Result<()> {
-        Err(unbuilt())
-    }
-}
 fn stellar_address(key: &[u8; 32]) -> String {
-    let mut bytes = vec![6 << 3];
-    bytes.extend_from_slice(key);
-    let mut crc = 0u16;
-    for b in &bytes {
-        crc ^= (*b as u16) << 8;
-        for _ in 0..8 {
-            crc = if crc & 0x8000 != 0 {
-                (crc << 1) ^ 0x1021
-            } else {
-                crc << 1
-            };
-        }
-    }
-    bytes.extend_from_slice(&crc.to_le_bytes());
-    data_encoding::BASE32_NOPAD.encode(&bytes)
+    stellar_strkey::ed25519::PublicKey(*key).to_string()
 }
 fn storage(path: &Path) -> Result<(Store, String)> {
     let name = path
@@ -103,48 +48,15 @@ fn storage(path: &Path) -> Result<(Store, String)> {
 }
 /// Generates an executor key in the rail's existing private-file format.
 pub fn generate_wallet(network: &str, path: &Path) -> Result<PublicWallet> {
-    let family = routing::family(network)?;
-    // The seed loop below retries only invalid seeds.
-    #[cfg(not(feature = "tempo"))]
-    if family == Family::Tempo {
-        return Err(tempo::unbuilt());
-    }
+    routing::info(network)?;
     let (_lock, _name) = storage(path)?;
     let mut seed = Zeroizing::new([0u8; 32]);
-    let metadata = loop {
-        getrandom::fill(seed.as_mut())
-            .map_err(|_| Error::config("Operating-system randomness unavailable"))?;
-        if let Ok(p) = public(network, &seed) {
-            break p;
-        }
-    };
-    let secret = if family == Family::Tempo {
-        seed.iter().map(|b| format!("{b:02x}")).collect::<String>()
-    } else if family == Family::Solana {
-        let key = ed25519_dalek::SigningKey::from_bytes(&seed);
-        serde_json::to_string(&key.to_keypair_bytes().as_slice())
-            .map_err(|_| Error::config("Cannot encode signer"))?
-    } else {
-        let mut bytes = vec![18 << 3];
-        bytes.extend_from_slice(seed.as_ref());
-        let mut crc = 0u16;
-        for b in &bytes {
-            crc ^= (*b as u16) << 8;
-            for _ in 0..8 {
-                crc = if crc & 0x8000 != 0 {
-                    (crc << 1) ^ 0x1021
-                } else {
-                    crc << 1
-                };
-            }
-        }
-        bytes.extend_from_slice(&crc.to_le_bytes());
-        let out = data_encoding::BASE32_NOPAD.encode(&bytes);
-        use zeroize::Zeroize;
-        bytes.zeroize();
-        out
-    };
-    let secret = Zeroizing::new(secret);
+    getrandom::fill(seed.as_mut())
+        .map_err(|_| Error::config("Operating-system randomness unavailable"))?;
+    let metadata = public(network, &seed)?;
+    let mut private = stellar_strkey::ed25519::PrivateKey(*seed);
+    let secret = Zeroizing::new(private.to_string());
+    private.0.zeroize();
     write_new(path, secret.as_bytes())?;
     Ok(metadata)
 }
@@ -229,53 +141,12 @@ pub fn stellar_signing_seed(path: &Path) -> Result<Zeroizing<[u8; 32]>> {
 }
 /// Inspect a native signer file without returning its secret.
 pub fn inspect_wallet(network: &str, path: &Path) -> Result<PublicWallet> {
-    let text = read_signer(path)?;
-    let family = routing::family(network)?;
-    let mut bytes = Zeroizing::new(if family == Family::Solana {
-        serde_json::from_str::<Vec<u8>>(&text)
-            .map_err(|_| Error::config("Invalid Solana signer"))?
-    } else if family == Family::Tempo {
-        if text.len() != 64 || !text.bytes().all(|b| b.is_ascii_hexdigit()) {
-            return Err(Error::config("Invalid Tempo signer"));
-        }
-        (0..32)
-            .map(|i| {
-                u8::from_str_radix(&text[i * 2..i * 2 + 2], 16)
-                    .map_err(|_| Error::config("Invalid Tempo signer"))
-            })
-            .collect::<Result<Vec<_>>>()?
-    } else {
-        allowit_stellar_wallet::decode_seed(text.trim())
-            .map_err(|_| Error::config("Invalid Stellar seed"))?
-            .to_vec()
-    });
-    let seed = Zeroizing::new(
-        <[u8; 32]>::try_from(
-            bytes
-                .get(..32)
-                .ok_or_else(|| Error::config("Invalid seed"))?,
-        )
-        .map_err(|_| Error::config("Invalid seed"))?,
-    );
-    let metadata = public(network, &seed)?;
-    if family == Family::Solana {
-        let expected = ed25519_dalek::SigningKey::from_bytes(&seed).to_keypair_bytes();
-        if bytes.as_slice() != expected {
-            return Err(Error::config("Invalid Solana key pair"));
-        }
-    }
-    use zeroize::Zeroize;
-    bytes.zeroize();
-    Ok(metadata)
+    routing::info(network)?;
+    public(network, &*stellar_signing_seed(path)?)
 }
-/// The networks whose keys this build generates.
 #[cfg(test)]
-fn built_networks() -> Vec<&'static str> {
-    let mut networks = vec!["solana:devnet", "stellar:testnet"];
-    if cfg!(feature = "tempo") {
-        networks.push("eip155:42431");
-    }
-    networks
+fn built_networks() -> [&'static str; 2] {
+    ["stellar:testnet", "stellar:pubnet"]
 }
 
 #[cfg(test)]
@@ -293,7 +164,7 @@ mod tests {
         }
     }
     #[test]
-    fn known_stellar_and_evm_addresses() {
+    fn known_stellar_addresses() {
         assert_eq!(
             stellar_address(&[0; 32]),
             "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF"
@@ -302,15 +173,6 @@ mod tests {
         assert_eq!(stellar.public_key, stellar.address);
         assert!(stellar.public_key.starts_with('G'));
         stellar.validate().unwrap();
-        #[cfg(feature = "tempo")]
-        {
-            let mut seed = [0; 32];
-            seed[31] = 1;
-            assert_eq!(
-                public("eip155:42431", &seed).unwrap().address,
-                "0x7e5f4552091a69125d5dfcb7b8c2659029395bdf"
-            );
-        }
     }
 }
 
@@ -319,35 +181,14 @@ impl PublicWallet {
         if routing::normalize(&self.network)? != self.network {
             return Err(Error::usage("Registration requires a canonical network"));
         }
-        let family = routing::family(&self.network)?;
-        let expected = if family == Family::Tempo {
-            if self.key_type != "secp256k1" {
-                return Err(Error::usage("Invalid public key type"));
-            }
-            tempo::validate_public(&self.address, &self.public_key)?;
-            self.address.clone()
-        } else {
-            if self.key_type != "ed25519" {
-                return Err(Error::usage("Invalid public key type"));
-            }
-            let key: [u8; 32] = if family == Family::Stellar {
-                allowit_stellar_wallet::account_key(&self.public_key)
-                    .map_err(|_| Error::usage("Invalid public key"))?
-            } else {
-                bs58::decode(&self.public_key)
-                    .into_vec()
-                    .map_err(|_| Error::usage("Invalid public key"))?
-                    .try_into()
-                    .map_err(|_| Error::usage("Invalid public key"))?
-            };
-            ed25519_dalek::VerifyingKey::from_bytes(&key)
-                .map_err(|_| Error::usage("Invalid public point"))?;
-            if family == Family::Stellar {
-                stellar_address(&key)
-            } else {
-                bs58::encode(key).into_string()
-            }
-        };
+        if self.key_type != "ed25519" {
+            return Err(Error::usage("Invalid public key type"));
+        }
+        let key = allowit_stellar_wallet::account_key(&self.public_key)
+            .map_err(|_| Error::usage("Invalid public key"))?;
+        ed25519_dalek::VerifyingKey::from_bytes(&key)
+            .map_err(|_| Error::usage("Invalid public point"))?;
+        let expected = stellar_address(&key);
         if expected != self.address {
             return Err(Error::usage("Address differs from public key"));
         }
@@ -388,49 +229,23 @@ mod storage_tests {
             let before = std::fs::read(&p).unwrap();
             assert!(generate_wallet(n, &p).is_err());
             assert_eq!(before, std::fs::read(&p).unwrap());
-            if n.starts_with("solana:") {
-                let signer = allowit_native::crypto::LocalSigner::load(&p).unwrap();
-                assert_eq!(signer.public_key().to_string(), public.address);
-                let signature = signer.sign(b"local-agent-proof");
-                allowit_native::crypto::verify(
-                    signer.public_key(),
-                    b"local-agent-proof",
-                    &signature,
-                )
-                .unwrap();
-                assert!(
-                    allowit_native::crypto::verify(
-                        signer.public_key(),
-                        b"different-intent",
-                        &signature
-                    )
-                    .is_err()
-                );
-            }
             std::fs::remove_dir_all(p.parent().unwrap()).unwrap();
         }
-    }
-    #[cfg(not(feature = "tempo"))]
-    #[test]
-    fn tempo_keys_are_refused_when_tempo_is_left_out() {
-        let p = path();
-        assert_eq!(generate_wallet("eip155:42431", &p).unwrap_err().code, 3);
-        assert!(!p.exists());
     }
     #[test]
     fn symlink_hardlink_and_insecure_files_are_refused() {
         let p = path();
-        generate_wallet("solana:devnet", &p).unwrap();
+        generate_wallet("stellar:testnet", &p).unwrap();
         let alias = p.with_file_name("alias");
         symlink(&p, &alias).unwrap();
-        assert!(inspect_wallet("solana:devnet", &alias).is_err());
-        assert!(generate_wallet("solana:devnet", &alias).is_err());
+        assert!(inspect_wallet("stellar:testnet", &alias).is_err());
+        assert!(generate_wallet("stellar:testnet", &alias).is_err());
         std::fs::remove_file(&alias).unwrap();
         std::fs::hard_link(&p, &alias).unwrap();
-        assert!(inspect_wallet("solana:devnet", &p).is_err());
+        assert!(inspect_wallet("stellar:testnet", &p).is_err());
         std::fs::remove_file(&alias).unwrap();
         std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o644)).unwrap();
-        assert!(inspect_wallet("solana:devnet", &p).is_err());
+        assert!(inspect_wallet("stellar:testnet", &p).is_err());
         std::fs::remove_dir_all(p.parent().unwrap()).unwrap();
     }
     #[test]
@@ -440,7 +255,7 @@ mod storage_tests {
         for _ in 0..8 {
             let p = p.clone();
             threads.push(std::thread::spawn(move || {
-                generate_wallet("solana:devnet", &p).is_ok()
+                generate_wallet("stellar:testnet", &p).is_ok()
             }));
         }
         let wins = threads
@@ -448,7 +263,7 @@ mod storage_tests {
             .map(|t| usize::from(t.join().unwrap()))
             .sum::<usize>();
         assert_eq!(wins, 1);
-        inspect_wallet("solana:devnet", &p).unwrap();
+        inspect_wallet("stellar:testnet", &p).unwrap();
         std::fs::remove_dir_all(p.parent().unwrap()).unwrap();
     }
 }

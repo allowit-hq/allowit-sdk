@@ -90,11 +90,11 @@ impl Ctx {
         }
         Ok(wallet)
     }
-    /// The agent key that `setup --agent` chose for the rail.
+    /// The local signing key that `keys use` chose for the rail.
     pub(crate) fn agent(&mut self, rail: &RailInfo) -> Result<keys::Key> {
         let name = self.settings()?.rail(rail.id).agent.ok_or_else(|| {
             Error::config(format!(
-                "no agent key for {}; run allowit setup --agent NAME",
+                "no agent key for {}; run allowit keys use NAME",
                 rail.id
             ))
         })?;

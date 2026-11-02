@@ -9,15 +9,11 @@ thread_local! { static SELECTED: RefCell<Option<String>> = const { RefCell::new(
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Family {
     Stellar,
-    Solana,
-    Tempo,
 }
 impl Family {
     pub fn name(self) -> &'static str {
         match self {
             Family::Stellar => "stellar",
-            Family::Solana => "solana",
-            Family::Tempo => "tempo",
         }
     }
 }
@@ -32,13 +28,6 @@ pub struct RailInfo {
     pub family: Family,
     pub testnet: bool,
 }
-impl RailInfo {
-    /// The friendly name, for example `solana:devnet`.
-    pub fn name(&self) -> &'static str {
-        self.aliases.first().copied().unwrap_or(self.id)
-    }
-}
-
 /// Every admitted rail, in display order.
 pub const RAILS: &[RailInfo] = &[
     RailInfo {
@@ -51,36 +40,6 @@ pub const RAILS: &[RailInfo] = &[
         id: "stellar:pubnet",
         aliases: &["stellar:mainnet", "stellar:pubnet"],
         family: Family::Stellar,
-        testnet: false,
-    },
-    RailInfo {
-        id: "solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1",
-        aliases: &["solana:devnet"],
-        family: Family::Solana,
-        testnet: true,
-    },
-    RailInfo {
-        id: "solana:4uhcVJyU9pJkvQyS88uRDiswHXSCkY3z",
-        aliases: &["solana:testnet"],
-        family: Family::Solana,
-        testnet: true,
-    },
-    RailInfo {
-        id: "solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp",
-        aliases: &["solana:mainnet"],
-        family: Family::Solana,
-        testnet: false,
-    },
-    RailInfo {
-        id: "eip155:42431",
-        aliases: &["tempo:testnet"],
-        family: Family::Tempo,
-        testnet: true,
-    },
-    RailInfo {
-        id: "eip155:4217",
-        aliases: &["tempo:mainnet"],
-        family: Family::Tempo,
         testnet: false,
     },
 ];
@@ -108,12 +67,6 @@ pub fn family(network: &str) -> Result<Family> {
     info(network).map(|r| r.family)
 }
 
-/// The friendly name that the rail crates use in their own files, for example
-/// `stellar:mainnet` for `stellar:pubnet`.
-pub fn legacy_name(network: &str) -> Result<&'static str> {
-    info(network).map(RailInfo::name)
-}
-
 /// The canonical identifier of the rail selected for this command.
 pub fn selected() -> Option<String> {
     SELECTED.with(|n| n.borrow().clone())
@@ -133,8 +86,8 @@ mod tests {
     use super::*;
     #[test]
     fn selection_is_scoped() {
-        with_network(Some("eip155:42431".into()), || {
-            assert_eq!(selected().as_deref(), Some("eip155:42431"));
+        with_network(Some("stellar:testnet".into()), || {
+            assert_eq!(selected().as_deref(), Some("stellar:testnet"));
             Ok(())
         })
         .unwrap();
@@ -143,16 +96,6 @@ mod tests {
     #[test]
     fn aliases_normalize_to_canonical_caip2() {
         for (input, canonical) in [
-            ("solana:devnet", "solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1"),
-            (
-                "solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1",
-                "solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1",
-            ),
-            ("solana:testnet", "solana:4uhcVJyU9pJkvQyS88uRDiswHXSCkY3z"),
-            ("solana:mainnet", "solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp"),
-            ("tempo:testnet", "eip155:42431"),
-            ("eip155:42431", "eip155:42431"),
-            ("tempo:mainnet", "eip155:4217"),
             ("stellar:mainnet", "stellar:pubnet"),
             ("stellar:pubnet", "stellar:pubnet"),
             ("stellar:testnet", "stellar:testnet"),
@@ -164,11 +107,5 @@ mod tests {
         for bad in ["eip155:1", "solana", "", "stellar:futurenet"] {
             assert_eq!(normalize(bad).unwrap_err().code, 2, "{bad}");
         }
-    }
-    #[test]
-    fn legacy_names_serve_rail_crates() {
-        assert_eq!(legacy_name("stellar:pubnet").unwrap(), "stellar:mainnet");
-        assert_eq!(legacy_name("eip155:42431").unwrap(), "tempo:testnet");
-        assert_eq!(family("eip155:4217").unwrap(), Family::Tempo);
     }
 }

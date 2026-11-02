@@ -11,7 +11,7 @@ use crate::{
         typed::TypedRequest,
     },
 };
-use allowit_sdk::typed_workflow::{AccountKind, ExecutionRequest};
+use allowit_stellar_wallet::workflow::{AccountKind, ExecutionRequest};
 use allowit_stellar_wallet::{self as sdk, AccountState, TrustedState, WalletConfig, WalletRoute};
 
 /// Checks the operation flags alone, before any profile, journal or network
@@ -35,7 +35,7 @@ pub(crate) fn check(op: &str, to: &str, token_out: Option<&Amount>, args: bool) 
         ("redeem", None) => Err(Error::usage(
             "a redeem needs --token-out ASSET:MIN, the least of the wallet asset to receive",
         )),
-        ("redeem", Some(min)) if min.units() == Some(0) => Err(Error::usage(
+        ("redeem", Some(min)) if min.units() == 0 => Err(Error::usage(
             "a redeem needs a positive --token-out minimum",
         )),
         ("deposit" | "redeem", Some(_)) => Ok(()),
@@ -188,9 +188,7 @@ fn shares(amount: &Amount) -> Result<i128> {
 }
 
 fn units(amount: &Amount) -> Result<i128> {
-    let units = amount
-        .units()
-        .ok_or_else(|| Error::usage("the operation needs an exact amount"))?;
+    let units = amount.units();
     i128::try_from(units).map_err(|_| Error::usage("the amount is too large"))
 }
 
@@ -202,16 +200,13 @@ mod tests {
         ctx::Ctx,
         routing::Family,
         term::Out,
-        vendors::{
-            Mode,
-            asset::{exec_uses, parse},
-        },
+        vendors::asset::{exec_uses, parse},
     };
     use std::time::Duration;
 
     fn config(route: WalletRoute, usdc: bool) -> WalletConfig {
         let owner = sdk::account_for_seed(&[1; 32]);
-        let source = "use allowit::v1::prelude::*; async fn _execute(ctx: &Context) -> PolicyResult { Ok(()) }".to_string();
+        let source = "use allowit::prelude::*; pub fn execute(ctx: &AllowitContext) -> allowit::Result { Ok(()) }".to_string();
         let mut c = WalletConfig {
             network: "stellar:testnet".into(),
             policy_instance: [7; 32],
@@ -221,7 +216,7 @@ mod tests {
             server: sdk::account_for_seed(&[3; 32]),
             route: route.clone(),
             tier: (route == WalletRoute::PolicyWallet).then_some(sdk::PolicyTier::Simple),
-            language: Default::default(),
+            language: sdk::PolicyLanguage::Portable,
             rules: vec![],
             params: Default::default(),
             source_digest: [0; 32],
@@ -264,7 +259,6 @@ mod tests {
         let tokens = super::super::tokens_for("stellar:testnet");
         let (spend, minimum) = exec_uses(op);
         ExecRequest {
-            mode: Mode::Exec,
             op: op.into(),
             to: to.into(),
             amount: parse(Family::Stellar, tokens, amount, spend).unwrap(),
@@ -340,7 +334,7 @@ mod tests {
             );
         }
     }
-    fn fee_payer(r: &ExecutionRequest) -> allowit_sdk::typed_workflow::AccountId {
+    fn fee_payer(r: &ExecutionRequest) -> allowit_stellar_wallet::workflow::AccountId {
         r.fee_bounds.as_ref().unwrap()[0].payer.clone()
     }
 
@@ -407,8 +401,7 @@ mod tests {
                 request_id: Some("request-0001".into()),
                 wait: Duration::ZERO,
             };
-            let error =
-                crate::commands::exec::submit(Mode::Exec, args, false, &mut cx).unwrap_err();
+            let error = crate::commands::exec::submit(args, false, &mut cx).unwrap_err();
             assert_eq!(error.code, 2, "{op} {to}: {}", error.message);
             assert!(error.message.contains(needle), "{}", error.message);
         }

@@ -18,7 +18,7 @@ fn asset_contract(s: &str) -> Option<u8> {
 
 pub(crate) const FORMATS: Formats = Formats {
     account: (account, "a G… strkey"),
-    wallet: (contract, "a C… contract strkey"),
+    wallet: (account_or_contract, "a G… account or C… contract strkey"),
     recipient: (account_or_contract, "a G… or C… strkey"),
     token: (account_or_contract, "a G… issuer or C… contract"),
     asset_contract,

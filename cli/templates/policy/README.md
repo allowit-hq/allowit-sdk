@@ -1,38 +1,26 @@
-# Policy template
+# Portable policy template
 
-*A Cargo crate to write your Allowit policy in, with your editor's help.*
-
-Writing a policy should feel like writing Rust, because it is Rust. This template gives you a crate where `rustc`, rust-analyzer and the Allowit compiler all look at the same file. Replace [`src/policy.rs`](src/policy.rs) with your policy and keep [`src/lib.rs`](src/lib.rs) unchanged.
-
-## Try it
+Replace [`src/policy.rs`](src/policy.rs) with your policy. [`src/lib.rs`](src/lib.rs) includes that file unchanged.
+The crate uses the portable `allowit` package's host `std` feature. Soroban contracts compile the same authored source with its Soroban backend.
 
 ```sh
 cargo test --locked -p allowit-policy-template
-cargo run --locked --bin allowit -- compile cli/templates/policy/src/policy.rs
-cargo run --locked --bin allowit -- evaluate cli/templates/policy/src/policy.rs docs/examples/context.json contract
+allowit policy check cli/templates/policy/src/policy.rs
+allowit policy build cli/templates/policy/src/policy.rs -o wallet.rs
 ```
 
-The shipped `src/policy.rs` is the smallest valid policy. It builds, and it denies every request:
+The template reads the owner-approved daily and per-payment limits. It denies when a required limit is absent or invalid.
+Amounts use native base units. The executing host and rail supply authenticated request facts and accounting.
 
 ```rust
-use allowit::v1::prelude::*;
+use allowit::prelude::*;
 
-struct PolicyParams {}
-
-fn new() -> PolicyParams {
-    PolicyParams {}
-}
-
-async fn _execute(ctx: &Context, params: &PolicyParams) -> PolicyResult {
-    allowit::fail("Policy is not configured")
+pub fn execute(ctx: &AllowitContext) -> allowit::Result {
+    allowit::daily_spending_limit(ctx, &ctx.params[allowit::DAILY_SPENDING_LIMIT])?;
+    allowit::payment_limit(ctx, &ctx.params[allowit::PAYMENT_LIMIT])?;
+    Ok(())
 }
 ```
 
-## How to fill it in
-
-- Put fixed limits inside `_execute`, as ordinary guards.
-- When the owner wants named configuration, declare primitive fields on `PolicyParams` and set every value in `new()`. Those constructor values are immutable: changing one means a newly approved source artifact. Constructor fields never imply mutable storage.
-
-## What the crate checks
-
-`cargo test` builds the source as ordinary Rust and then compiles the exact same text through the real policy compiler. The crate's public `execute` evaluates the checked IR with mandatory allocation checks, so a policy that passes here is a policy the SDK accepts. Solana SBF and Stellar Wasm builds use their own native wrappers and VM tests; a host build here is not a native deployment.
+Cargo type-checks this file. The shared source gate validates its portable structure.
+An installation binds the exact source and owner configuration. A policy wallet also binds its installed contract code through owner-approved deployment.

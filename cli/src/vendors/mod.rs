@@ -1,19 +1,8 @@
-//! Rail adapters. Command files reach a chain only through [`rail`] and the
-//! [`Rail`] trait; rail code lives only in `vendors/<rail>/`, as thin adapters
-//! over `allowit-stellar-wallet`, `allowit-native` and `allowit-tempo`. The
-//! `solana` and `tempo` features build the last two; a rail left out has an
-//! adapter that lists no verbs.
-//!
-//! Every verb has a default that exits 3 with "VERB is not available on RAIL
-//! yet". An adapter overrides only the verbs whose backend works, and lists
-//! them in [`Caps::verbs`], which `rail show` prints.
+//! Stellar command adapters over `allowit-stellar-wallet`.
+//! Commands reach native behavior through the Rail trait; unsupported capabilities exit 3.
 pub(crate) mod address;
 pub(crate) mod asset;
-#[cfg(feature = "solana")]
-pub(crate) mod solana;
 pub(crate) mod stellar;
-#[cfg(feature = "tempo")]
-pub(crate) mod tempo;
 pub(crate) mod typed;
 
 use crate::{
@@ -24,97 +13,22 @@ use crate::{
     settings::keys::Key,
 };
 use asset::{Amount, Token, Use};
-use std::{path::Path, time::Duration};
+use std::time::Duration;
 
 /// Every verb a rail may serve, in `rail show` order.
-pub(crate) const VERBS: &[&str] = &[
-    "keys fund",
-    "keys import",
-    "wallet create",
-    "wallet show",
-    "wallet fund",
-    "wallet withdraw",
-    "wallet update",
-    "wallet pause",
-    "wallet resume",
-    "wallet close",
-    "policy new",
-    "policy show",
-    "policy build",
-    "policy deploy",
-    "policy params",
-    "policy params set",
-    "exec",
-    "eval",
-    "status",
-    "tx send",
-    "call",
-    "skills",
-    "curl",
-    "http",
-    "mcp",
-];
-
-/// The canonical policy parameter keys of the contracts params map.
-pub(crate) const PARAM_KEYS: &[&str] = &[
-    "transaction_cap",
-    "spent_cap",
-    "day_spent_cap",
-    "day_total_cap",
-    "call_cap",
-    "recipients",
-    "tokens",
-    "expiry",
-    "operations",
-];
+pub(crate) const VERBS: &[&str] = &["keys fund", "wallet show", "policy show", "exec", "status"];
 
 /// What a rail supports. It drives `rail show`, help and the exit-3 errors.
 pub(crate) struct Caps {
     pub curve: &'static str,
-    /// True when an account address is its public key (ed25519 rails).
     pub address_is_key: bool,
-    /// The asset `setup` chooses for paid services.
-    pub service_asset: &'static str,
-    /// `exec --op` values that work.
     pub ops: &'static [&'static str],
-    /// True when `exec --build-only` works.
     pub exec_build_only: bool,
-    /// `policy params set` keys that the rail can change.
-    pub param_keys: &'static [&'static str],
-    /// Owner signing modes that work, per owner verb: `key`, `link`,
-    /// `build-only`.
-    pub signing: &'static [(&'static str, &'static [&'static str])],
-    /// Verbs from [`VERBS`] that work.
     pub verbs: &'static [&'static str],
 }
-impl Caps {
-    /// The owner signing modes that work for one owner verb.
-    pub(crate) fn signing_modes(&self, verb: &str) -> &'static [&'static str] {
-        self.signing
-            .iter()
-            .find(|(v, _)| *v == verb)
-            .map(|(_, modes)| *modes)
-            .unwrap_or(&[])
-    }
-}
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum Mode {
-    Exec,
-    Eval,
-}
-impl Mode {
-    pub(crate) fn name(self) -> &'static str {
-        match self {
-            Mode::Exec => "exec",
-            Mode::Eval => "eval",
-        }
-    }
-}
-
-/// An agent request built from the `exec`/`eval` flags.
+/// An agent request built from the `exec` flags.
 pub(crate) struct ExecRequest {
-    pub mode: Mode,
     pub op: String,
     pub to: String,
     pub amount: Amount,
@@ -135,88 +49,6 @@ pub(crate) struct Binding {
     pub policy: Option<String>,
 }
 
-/// How an owner transaction is signed.
-pub(crate) enum SignWith {
-    /// Print the owner signing link (the default).
-    Link,
-    /// Sign with a local key (testnet and development).
-    Key(Key),
-    /// Print the unsigned transaction.
-    BuildOnly,
-}
-impl SignWith {
-    pub(crate) fn mode(&self) -> &'static str {
-        match self {
-            SignWith::Link => "link",
-            SignWith::Key(_) => "key",
-            SignWith::BuildOnly => "build-only",
-        }
-    }
-}
-pub(crate) struct Signing {
-    pub with: SignWith,
-    /// How long to wait for the owner. No adapter serves it yet, so
-    /// [`require_signing`] refuses it with exit 3.
-    pub wait: Option<Duration>,
-    /// The owner operation's request ID; a retry reuses it.
-    pub request_id: Option<String>,
-    /// An explicitly additional fund or withdraw after an uncertain one.
-    pub additional: bool,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum WalletKind {
-    Simple,
-    Common,
-    Custom,
-}
-
-pub(crate) struct WalletCreate {
-    pub kind: Option<WalletKind>,
-    pub asset: String,
-    /// The initial deposit, where the rail funds the wallet at creation.
-    pub fund: Option<Amount>,
-    pub policy: std::path::PathBuf,
-    pub owner: String,
-    pub agent: Key,
-    pub x402: bool,
-    pub signing: Signing,
-}
-
-/// Read by adapters that serve `wallet update`; no rail serves it yet.
-#[allow(dead_code)]
-pub(crate) struct WalletUpdate {
-    pub owner: Option<String>,
-    pub agent: Option<Key>,
-    pub x402: Option<bool>,
-    pub signing: Signing,
-}
-
-/// One `KEY=VALUE` policy parameter.
-#[derive(Debug)]
-pub(crate) struct Param {
-    pub key: String,
-    /// The value as given. Read by adapters whose keys are not amounts.
-    #[allow(dead_code)]
-    pub value: String,
-    /// The parsed amount for an amount-kind key.
-    pub amount: Option<Amount>,
-}
-
-/// The request ID of one parameter change: `ID.KEY`, so that each change of
-/// a `policy params set` command has its own ID and a retry reuses all.
-pub(crate) fn param_request_id(id: &str, key: &str) -> String {
-    format!("{id}.{key}")
-}
-
-/// A paid call: `call SERVICE|URL`.
-pub(crate) struct CallRequest {
-    pub target: String,
-    pub input: Option<serde_json::Value>,
-    pub max_amount: Option<String>,
-    pub request_id: Option<String>,
-}
-
 /// A rail adapter. Defaults exit 3: the verb is not available on this rail.
 pub(crate) trait Rail {
     fn info(&self) -> &'static RailInfo;
@@ -228,7 +60,7 @@ pub(crate) trait Rail {
     fn na(&self, verb: &str) -> Error {
         not_available(verb, self.info().id)
     }
-    /// Checks the operation flags of an `exec` or `eval` request before any
+    /// Checks the operation flags of an `exec` request before any
     /// settings, journal or network access.
     fn check_exec(
         &self,
@@ -255,9 +87,6 @@ pub(crate) trait Rail {
         Ok(vec![])
     }
     /// Builds a policy source for this rail: the generated Rust source.
-    fn policy_build(&self, _: &str) -> Result<String> {
-        Err(self.na("policy build"))
-    }
     /// A hidden command of earlier releases: VERB names it, ARGS are its words.
     fn legacy(&self, _: &mut Ctx, verb: &str, _: &[String]) -> Result<i32> {
         Err(self.na(verb))
@@ -266,84 +95,18 @@ pub(crate) trait Rail {
         Err(self.na("keys fund"))
     }
     /// Imports an executor bundle (a JSON object) under a key name.
-    fn keys_import(&self, _: &mut Ctx, _: &str, _: &Path, _: &serde_json::Value) -> Result<i32> {
-        Err(self.na("keys import of an executor bundle"))
-    }
-    fn wallet_create(&self, _: &mut Ctx, _: &WalletCreate) -> Result<i32> {
-        Err(self.na("wallet create"))
-    }
     fn wallet_show(&self, _: &mut Ctx, _: Option<&str>) -> Result<i32> {
         Err(self.na("wallet show"))
-    }
-    fn wallet_fund(&self, _: &mut Ctx, _: &Amount, _: Option<&Key>, _: &Signing) -> Result<i32> {
-        Err(self.na("wallet fund"))
-    }
-    fn wallet_withdraw(
-        &self,
-        _: &mut Ctx,
-        _: &Amount,
-        _: Option<&str>,
-        _: &Signing,
-    ) -> Result<i32> {
-        Err(self.na("wallet withdraw"))
-    }
-    fn wallet_update(&self, _: &mut Ctx, _: &WalletUpdate) -> Result<i32> {
-        Err(self.na("wallet update"))
-    }
-    fn wallet_pause(&self, _: &mut Ctx, _: &Signing) -> Result<i32> {
-        Err(self.na("wallet pause"))
-    }
-    fn wallet_resume(&self, _: &mut Ctx, _: &Signing) -> Result<i32> {
-        Err(self.na("wallet resume"))
-    }
-    fn wallet_close(&self, _: &mut Ctx, _: &Signing) -> Result<i32> {
-        Err(self.na("wallet close"))
-    }
-    fn policy_new(&self, _: &mut Ctx, _: &str, _: Option<&Path>) -> Result<i32> {
-        Err(self.na("policy new"))
     }
     fn policy_show(&self, _: &mut Ctx, _: bool) -> Result<i32> {
         Err(self.na("policy show"))
     }
-    fn policy_deploy(&self, _: &mut Ctx, _: &Path, _: Option<bool>, _: &Signing) -> Result<i32> {
-        Err(self.na("policy deploy"))
-    }
-    fn policy_params(&self, _: &mut Ctx) -> Result<i32> {
-        Err(self.na("policy params"))
-    }
-    fn policy_params_set(&self, _: &mut Ctx, _: &[Param], _: &Signing) -> Result<i32> {
-        Err(self.na("policy params set"))
-    }
     fn exec(&self, _: &mut Ctx, _: &ExecRequest) -> Result<i32> {
         Err(self.na("exec"))
-    }
-    fn eval(&self, _: &mut Ctx, _: &ExecRequest) -> Result<i32> {
-        Err(self.na("eval"))
     }
     fn status(&self, _: &mut Ctx, _: &str, _: Option<&str>, _: Duration) -> Result<i32> {
         Err(self.na("status"))
     }
-    fn tx_send(&self, _: &mut Ctx, _: &[u8]) -> Result<i32> {
-        Err(self.na("tx send"))
-    }
-    /// A rail-native paid call. `None` sends the call through the engine
-    /// gateway instead.
-    fn call(&self, _: &mut Ctx, _: &CallRequest) -> Result<Option<i32>> {
-        Ok(None)
-    }
-    /// Paid services through the engine gateway: the catalog, `call SERVICE`,
-    /// `curl`, `http` and the MCP tools. The engine serves no paid-service
-    /// route yet, so no adapter overrides this.
-    fn gateway(&self, verb: &str) -> Result<()> {
-        Err(self.na(verb))
-    }
-}
-
-/// Points stderr back at the terminal where an adapter silenced a rail
-/// crate's own progress output.
-pub(crate) fn restore_stderr() {
-    #[cfg(feature = "tempo")]
-    tempo::restore_stderr();
 }
 
 /// One address check: the test and the expected form that its error names.
@@ -368,84 +131,14 @@ pub(crate) struct Formats {
     pub issuer_decimals: Option<u8>,
 }
 
-/// The families in the order that address inference tries them.
-pub(crate) const FAMILIES: &[Family] = &[Family::Stellar, Family::Tempo, Family::Solana];
-
 /// The address and asset formats of a family.
-pub(crate) fn formats(family: Family) -> &'static Formats {
-    match family {
-        Family::Stellar => &stellar::formats::FORMATS,
-        #[cfg(feature = "solana")]
-        Family::Solana => &solana::formats::FORMATS,
-        #[cfg(feature = "tempo")]
-        Family::Tempo => &tempo::formats::FORMATS,
-        #[cfg(not(all(feature = "solana", feature = "tempo")))]
-        _ => &unbuilt::FORMATS,
-    }
+pub(crate) fn formats(_family: Family) -> &'static Formats {
+    &stellar::formats::FORMATS
 }
 
-/// The adapter for a rail.
+/// The adapter for an admitted Stellar rail.
 pub(crate) fn rail(info: &'static RailInfo) -> Box<dyn Rail> {
-    match info.family {
-        Family::Stellar => Box::new(stellar::Stellar(info)),
-        #[cfg(feature = "solana")]
-        Family::Solana => Box::new(solana::Solana(info)),
-        #[cfg(feature = "tempo")]
-        Family::Tempo => Box::new(tempo::Tempo(info)),
-        #[cfg(not(all(feature = "solana", feature = "tempo")))]
-        _ => Box::new(unbuilt::Unbuilt(info)),
-    }
-}
-
-/// A rail that this build leaves out: no address matches it and its adapter
-/// lists no verbs, so every command on it exits 3.
-#[cfg(not(all(feature = "solana", feature = "tempo")))]
-mod unbuilt {
-    use super::{Caps, Formats, Rail, RailInfo, Token};
-    const UNBUILT: &str = "a rail this binary is built without";
-    pub(super) const FORMATS: Formats = Formats {
-        account: (|_| false, UNBUILT),
-        wallet: (|_| false, UNBUILT),
-        recipient: (|_| false, UNBUILT),
-        token: (|_| false, UNBUILT),
-        asset_contract: |_| None,
-        issuer_decimals: None,
-    };
-    pub(super) struct Unbuilt(pub &'static RailInfo);
-    impl Rail for Unbuilt {
-        fn info(&self) -> &'static RailInfo {
-            self.0
-        }
-        fn tokens(&self) -> &'static [Token] {
-            &[]
-        }
-        fn caps(&self) -> Caps {
-            Caps {
-                curve: "",
-                address_is_key: false,
-                service_asset: "",
-                ops: &[],
-                exec_build_only: false,
-                param_keys: &[],
-                signing: &[],
-                verbs: &[],
-            }
-        }
-    }
-}
-
-/// Refuses a rail that this build leaves out, before any file is written.
-pub(crate) fn require_built(info: &RailInfo, verb: &str) -> Result<()> {
-    let built = match info.family {
-        Family::Stellar => true,
-        Family::Solana => cfg!(feature = "solana"),
-        Family::Tempo => cfg!(feature = "tempo"),
-    };
-    if built {
-        Ok(())
-    } else {
-        Err(not_available(verb, info.id))
-    }
+    Box::new(stellar::Stellar(info))
 }
 
 /// Refuses an operation other than those the rail lists.
@@ -454,227 +147,5 @@ pub(crate) fn require_op(rail: &dyn Rail, op: &str) -> Result<()> {
         Ok(())
     } else {
         Err(not_available(&format!("exec --op {op}"), rail.info().id))
-    }
-}
-
-/// Refuses a signing mode, or `--wait`, that the rail does not serve yet.
-pub(crate) fn require_signing(rail: &dyn Rail, verb: &str, signing: &Signing) -> Result<()> {
-    if signing.wait.is_some() {
-        return Err(not_available(&format!("{verb} --wait"), rail.info().id));
-    }
-    if rail
-        .caps()
-        .signing_modes(verb)
-        .contains(&signing.with.mode())
-    {
-        Ok(())
-    } else {
-        let flag = match signing.with {
-            SignWith::Link => "--sign-with-link",
-            SignWith::Key(_) => "--sign-with-key",
-            SignWith::BuildOnly => "--build-only",
-        };
-        Err(not_available(&format!("{verb} {flag}"), rail.info().id))
-    }
-}
-
-#[cfg(test)]
-pub(super) mod tests {
-    use super::*;
-    use crate::{commands::Global, routing::RAILS, term::Out};
-
-    pub(super) fn ctx() -> Ctx {
-        let dir = crate::settings::temp_dir("vendors");
-        let global = Global {
-            config_dir: Some(dir),
-            ..Global::default()
-        };
-        Ctx::new(global, Out::new(false, true, false, true))
-    }
-    fn key() -> Key {
-        Key {
-            name: "k".into(),
-            rail: "stellar:testnet".into(),
-            address: "G".into(),
-            public_key: None,
-            curve: "ed25519".into(),
-            secret: false,
-        }
-    }
-    fn signing() -> Signing {
-        Signing {
-            with: SignWith::Link,
-            wait: None,
-            request_id: None,
-            additional: false,
-        }
-    }
-    /// Calls one verb with inert arguments. Only verbs a rail does not list
-    /// are called, so no call reaches a network or a file.
-    fn call(r: &dyn Rail, cx: &mut Ctx, verb: &str) -> Result<i32> {
-        let amount = Amount {
-            asset: asset::Asset::Installed,
-            quantity: asset::Quantity::Units(1),
-            decimals: None,
-            text: "1".into(),
-        };
-        let request = ExecRequest {
-            mode: Mode::Exec,
-            op: "transfer".into(),
-            to: String::new(),
-            amount: amount.clone(),
-            token_out: None,
-            args: None,
-            request_id: "request-0001".into(),
-            wait: Duration::ZERO,
-            build_only: false,
-            wallet: None,
-        };
-        let p = Path::new("/nonexistent");
-        match verb {
-            "keys fund" => r.keys_fund(cx, &key()),
-            "keys import" => r.keys_import(cx, "k", p, &serde_json::json!({})),
-            "wallet create" => r.wallet_create(
-                cx,
-                &WalletCreate {
-                    kind: None,
-                    asset: "USDC".into(),
-                    fund: None,
-                    policy: p.into(),
-                    owner: String::new(),
-                    agent: key(),
-                    x402: false,
-                    signing: signing(),
-                },
-            ),
-            "wallet show" => r.wallet_show(cx, None),
-            "wallet fund" => r.wallet_fund(cx, &amount, None, &signing()),
-            "wallet withdraw" => r.wallet_withdraw(cx, &amount, None, &signing()),
-            "wallet update" => r.wallet_update(
-                cx,
-                &WalletUpdate {
-                    owner: None,
-                    agent: None,
-                    x402: None,
-                    signing: signing(),
-                },
-            ),
-            "wallet pause" => r.wallet_pause(cx, &signing()),
-            "wallet resume" => r.wallet_resume(cx, &signing()),
-            "wallet close" => r.wallet_close(cx, &signing()),
-            "policy new" => r.policy_new(cx, "prompt", None),
-            "policy show" => r.policy_show(cx, false),
-            "policy build" => r.policy_build("").map(|_| 0),
-            "policy deploy" => r.policy_deploy(cx, p, None, &signing()),
-            "policy params" => r.policy_params(cx),
-            "policy params set" => r.policy_params_set(cx, &[], &signing()),
-            "exec" => r.exec(cx, &request),
-            "eval" => r.eval(cx, &request),
-            "status" => r.status(cx, "request-0001", None, Duration::ZERO),
-            "tx send" => r.tx_send(cx, b""),
-            "call" => r
-                .call(
-                    cx,
-                    &CallRequest {
-                        target: "service".into(),
-                        input: None,
-                        max_amount: None,
-                        request_id: None,
-                    },
-                )
-                .map(|v| v.unwrap_or(0)),
-            "skills" | "curl" | "http" | "mcp" => r.gateway(verb).map(|_| 0),
-            _ => unreachable!("{verb}"),
-        }
-    }
-
-    #[test]
-    fn every_unlisted_verb_op_and_signing_mode_exits_3() {
-        for info in RAILS {
-            let r = rail(info);
-            let caps = r.caps();
-            for verb in caps.verbs {
-                assert!(
-                    VERBS.contains(verb),
-                    "{} lists unknown verb {verb}",
-                    info.id
-                );
-            }
-            for key in caps.param_keys {
-                assert!(PARAM_KEYS.contains(key), "{key}");
-            }
-            for (verb, modes) in caps.signing {
-                assert!(
-                    caps.verbs.contains(verb),
-                    "{} signs unlisted {verb}",
-                    info.id
-                );
-                for mode in *modes {
-                    assert!(["key", "link", "build-only"].contains(mode), "{mode}");
-                }
-            }
-            let mut cx = ctx();
-            for verb in VERBS.iter().filter(|v| !caps.verbs.contains(v)) {
-                if *verb == "call" {
-                    // An unlisted rail-native call falls back to the gateway.
-                    let none = r
-                        .call(
-                            &mut cx,
-                            &CallRequest {
-                                target: "s".into(),
-                                input: None,
-                                max_amount: None,
-                                request_id: None,
-                            },
-                        )
-                        .unwrap();
-                    assert!(none.is_none(), "{}", info.id);
-                    continue;
-                }
-                let error = call(r.as_ref(), &mut cx, verb).unwrap_err();
-                assert_eq!(error.code, 3, "{} {verb}: {}", info.id, error.message);
-                assert!(
-                    error.message.contains("not available on") && error.message.contains(info.id),
-                    "{} {verb}: {}",
-                    info.id,
-                    error.message
-                );
-            }
-            for op in ["transfer", "swap", "deposit", "redeem", "custom"] {
-                if !caps.ops.contains(&op) {
-                    assert_eq!(require_op(r.as_ref(), op).unwrap_err().code, 3);
-                }
-            }
-            let build = Signing {
-                with: SignWith::BuildOnly,
-                wait: None,
-                request_id: None,
-                additional: false,
-            };
-            let wait = Signing {
-                with: SignWith::Link,
-                wait: Some(Duration::from_secs(300)),
-                request_id: None,
-                additional: false,
-            };
-            assert_eq!(
-                require_signing(r.as_ref(), "wallet create", &wait)
-                    .unwrap_err()
-                    .code,
-                3
-            );
-            if !r
-                .caps()
-                .signing_modes("wallet pause")
-                .contains(&"build-only")
-            {
-                assert_eq!(
-                    require_signing(r.as_ref(), "wallet pause", &build)
-                        .unwrap_err()
-                        .code,
-                    3
-                );
-            }
-        }
     }
 }

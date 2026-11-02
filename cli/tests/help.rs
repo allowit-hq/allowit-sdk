@@ -21,9 +21,9 @@ fn data_lines_refuse_prose() {
     for prose in [
         "state: settled\nThe transfer is confirmed on chain.",
         "next: request pay-0001 stays uncertain",
-        "Imported Tempo policy 0f0f",
-        "Tempo request pay-0001: status",
-        "allowit: setup operation ID; do not repeat an uncertain mutation",
+        "The payment is confirmed.",
+        "Request pay-0001 is uncertain.",
+        "allowit: request ID; do not repeat an uncertain mutation",
     ] {
         let text = prose.to_owned();
         let refused = std::panic::catch_unwind(|| common::assert_data(&text, "prose"));
@@ -44,13 +44,8 @@ fn offline_help_examples_run_and_print_only_data() {
     let sandbox = common::Sandbox::new("examples");
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     std::fs::copy(
-        root.join("../docs/examples/research.rs"),
+        root.join("templates/policy/src/policy.rs"),
         sandbox.work().join("policy.rs"),
-    )
-    .unwrap();
-    std::fs::copy(
-        root.join("../docs/examples/context.json"),
-        sandbox.work().join("context.json"),
     )
     .unwrap();
     // Every example that appears in help.
@@ -71,17 +66,15 @@ fn offline_help_examples_run_and_print_only_data() {
         "allowit rail ls --json",
         "allowit rail use stellar:testnet",
         "allowit rail show",
-        "allowit rail show solana:devnet --json",
+        "allowit rail show stellar:testnet --json",
         "allowit keys generate agent",
         "allowit keys ls",
         "allowit keys ls --json",
         "allowit keys show agent",
         "allowit keys show agent --json",
-        "allowit setup --agent agent",
+        "allowit keys use agent",
         // Preparation that no example covers.
         "prepare keys generate old-agent",
-        "allowit whoami",
-        "allowit whoami --json",
         "allowit config path",
         "allowit config show",
         "allowit config show --json",
@@ -90,12 +83,7 @@ fn offline_help_examples_run_and_print_only_data() {
         "allowit history",
         "allowit history --limit 5 --json",
         "allowit policy check policy.rs",
-        "allowit policy test policy.rs --context context.json",
-        "allowit policy functions",
-        "allowit policy functions transaction_cap",
         "allowit keys rm old-agent --yes",
-        "allowit --rail tempo:testnet keys generate executor",
-        "allowit --rail solana:devnet policy new \"Spend up to 5 tokens per day\" -o policy.json",
         "allowit version",
         "allowit guide",
     ];
@@ -147,7 +135,6 @@ fn every_help_node_matches_its_snapshot() {
     }
     let sandbox = common::Sandbox::new("help");
     let paths = allowit_cli::command_paths();
-    assert!(paths.len() > 60, "{} nodes", paths.len());
     let mut expected_files = BTreeSet::new();
     let mut failures = vec![];
     for path in &paths {
@@ -205,12 +192,7 @@ fn every_help_node_matches_its_snapshot() {
 
 #[test]
 fn help_subcommand_matches_the_help_flag() {
-    for path in [
-        vec![],
-        vec!["keys"],
-        vec!["policy", "params", "set"],
-        vec!["exec"],
-    ] {
+    for path in [vec![], vec!["keys"], vec!["policy", "show"], vec!["exec"]] {
         let mut flag = path.clone();
         flag.push("--help");
         let mut sub = vec!["help"];
@@ -227,7 +209,7 @@ fn help_subcommand_matches_the_help_flag() {
 #[test]
 fn a_bare_group_prints_its_help_and_changes_nothing() {
     let sandbox = common::Sandbox::new("bare");
-    for group in ["keys", "rail", "config", "wallet", "policy", "tx", "skills"] {
+    for group in ["keys", "rail", "config", "wallet", "policy"] {
         let output = sandbox.run(&[group]);
         assert_eq!(output.status.code(), Some(0), "{group}");
         let text = String::from_utf8(output.stdout).unwrap();
@@ -248,18 +230,14 @@ fn unknown_commands_exit_2_and_list_the_commands_at_that_level() {
     assert!(output.stdout.is_empty());
     let error = String::from_utf8(output.stderr).unwrap();
     assert!(
-        error.contains("Commands: setup, whoami, keys, rail"),
+        error.contains("Commands: keys, rail, config, wallet, policy"),
         "{error}"
-    );
-    assert!(
-        !error.contains("json"),
-        "a hidden command was listed: {error}"
     );
     // A global flag's value is not read as a command name.
     let output = sandbox.run(&["--rail", "stellar:testnet", "policy", "mystery"]);
     assert_eq!(output.status.code(), Some(2));
     let error = String::from_utf8(output.stderr).unwrap();
-    for verb in ["new", "check", "deploy", "params", "functions"] {
+    for verb in ["show", "check", "build"] {
         assert!(error.contains(verb), "{verb}: {error}");
     }
     let output = sandbox.run(&["--json", "keys", "nope"]);

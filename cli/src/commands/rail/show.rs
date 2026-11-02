@@ -4,7 +4,7 @@ use crate::{ctx::Ctx, error::Result, routing, vendors};
 pub(crate) const EXAMPLES: &str = "\
 Examples:
   allowit rail show
-  allowit rail show solana:devnet --json";
+  allowit rail show stellar:testnet --json";
 
 /// Show a rail: its identity, what works on it, and its local settings
 #[derive(clap::Args, Debug)]
@@ -36,11 +36,6 @@ pub(crate) fn run(args: Args, cx: &mut Ctx) -> Result<i32> {
         .copied()
         .filter(|v| !caps.verbs.contains(v))
         .collect();
-    let signing: serde_json::Map<String, serde_json::Value> = caps
-        .signing
-        .iter()
-        .map(|(verb, modes)| ((*verb).to_owned(), serde_json::json!(modes)))
-        .collect();
     let value = serde_json::json!({
         "rail": info.id,
         "aliases": info.aliases,
@@ -48,14 +43,11 @@ pub(crate) fn run(args: Args, cx: &mut Ctx) -> Result<i32> {
         "testnet": info.testnet,
         "curve": caps.curve,
         "ops": caps.ops,
-        "paramKeys": caps.param_keys,
-        "signing": signing,
         "available": caps.verbs,
         "notAvailable": unavailable,
         "tokens": tokens,
         "wallet": settings.wallet,
         "agent": settings.agent,
-        "serviceAsset": settings.service_asset,
     });
     if cx.out.json {
         cx.out.json_value(&value);
@@ -77,19 +69,6 @@ pub(crate) fn run(args: Args, cx: &mut Ctx) -> Result<i32> {
         vec!["testnet".into(), info.testnet.to_string()],
         vec!["curve".into(), caps.curve.into()],
         vec!["ops".into(), list(caps.ops)],
-        vec!["paramKeys".into(), list(caps.param_keys)],
-        vec![
-            "signing".into(),
-            if caps.signing.is_empty() {
-                "-".to_owned()
-            } else {
-                caps.signing
-                    .iter()
-                    .map(|(verb, modes)| format!("{verb} ({})", modes.join(", ")))
-                    .collect::<Vec<_>>()
-                    .join(", ")
-            },
-        ],
         vec!["available".into(), list(caps.verbs)],
         vec!["notAvailable".into(), list(&unavailable)],
         vec!["tokens".into(), list(&codes)],
@@ -98,10 +77,6 @@ pub(crate) fn run(args: Args, cx: &mut Ctx) -> Result<i32> {
             settings.wallet.unwrap_or_else(|| "-".into()),
         ],
         vec!["agent".into(), settings.agent.unwrap_or_else(|| "-".into())],
-        vec![
-            "serviceAsset".into(),
-            settings.service_asset.unwrap_or_else(|| "-".into()),
-        ],
     ];
     cx.out.table(&rows);
     Ok(0)

@@ -1,7 +1,6 @@
 //! Named keys. `keys/NAME.toml` holds public metadata only. The private key,
 //! when this device has one, lives in `secrets/NAME` (mode 0600 in a 0700
-//! directory) in the rail's own signer format: a Stellar S seed, a Solana
-//! key-pair JSON array or a Tempo 32-byte hex key.
+//! directory), encoded as a Stellar S seed.
 use crate::{
     error::{Error, Result, quoted},
     routing::{self, Family},
@@ -146,7 +145,7 @@ fn refuse_existing(dir: &Path, name: &str) -> Result<()> {
 
 /// Generates a key with the rail's curve and stores its private key.
 pub(crate) fn generate(dir: &Path, name: &str, rail: &str) -> Result<Key> {
-    crate::vendors::require_built(routing::info(rail)?, "keys generate")?;
+    routing::info(rail)?;
     let _lock = super::lock(dir)?;
     refuse_existing(dir, name)?;
     super::private_dir(&dir.join("secrets"))?;
@@ -168,7 +167,6 @@ pub(crate) fn add(dir: &Path, name: &str, rail: &str, address: &str) -> Result<K
     let _lock = super::lock(dir)?;
     refuse_existing(dir, name)?;
     let info = routing::info(rail)?;
-    crate::vendors::require_built(info, "keys add")?;
     crate::vendors::address::check_account(info.family, address)?;
     let caps = crate::vendors::rail(info).caps();
     let key = Key {
@@ -185,7 +183,7 @@ pub(crate) fn add(dir: &Path, name: &str, rail: &str, address: &str) -> Result<K
 
 /// Stores an existing private key in the rail's signer format.
 pub(crate) fn import_secret(dir: &Path, name: &str, rail: &str, secret: &[u8]) -> Result<Key> {
-    crate::vendors::require_built(routing::info(rail)?, "keys import")?;
+    routing::info(rail)?;
     let _lock = super::lock(dir)?;
     refuse_existing(dir, name)?;
     super::private_dir(&dir.join("secrets"))?;
@@ -270,46 +268,26 @@ pub(crate) fn remove(dir: &Path, name: &str) -> Result<()> {
         .map_err(|_| Error::config("cannot remove the key metadata"))
 }
 
-/// Resolves `KEY|ADDR`: a key name, or an address in the rail's format.
-pub(crate) fn resolve_address(dir: &Path, value: &str, rail: &str) -> Result<String> {
-    if valid_name(value).is_ok() && exists(dir, value) {
-        let key = load(dir, value)?;
-        key.check_rail(rail)?;
-        return Ok(key.address);
-    }
-    let family = routing::family(rail)?;
-    crate::vendors::address::check_account(family, value).map_err(|_| {
-        Error::usage(format!(
-            "{} is neither a key name nor a {} address",
-            quoted(value),
-            family.name()
-        ))
-    })?;
-    Ok(value.into())
-}
-
 #[cfg(all(test, unix))]
 mod tests {
     use super::*;
     #[test]
-    #[cfg(not(feature = "solana"))]
-    fn unbuilt_rail_writes_no_key() {
+    fn unknown_rail_writes_no_key() {
         let dir = crate::settings::temp_dir("unbuilt-keys");
         let secret = b"[0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0]";
-        assert_eq!(generate(&dir, "a", "solana:devnet").unwrap_err().code, 3);
         assert_eq!(
-            import_secret(&dir, "b", "solana:devnet", secret)
+            generate(&dir, "a", "stellar:futurenet").unwrap_err().code,
+            2
+        );
+        assert_eq!(
+            import_secret(&dir, "b", "stellar:futurenet", secret)
                 .unwrap_err()
                 .code,
-            3
+            2
         );
         assert!(!dir.join("secrets").exists() && !dir.join("keys").exists());
     }
     #[test]
-    #[cfg_attr(
-        not(all(feature = "solana", feature = "tempo")),
-        ignore = "needs the Solana and Tempo rails"
-    )]
     fn generate_add_import_and_remove_keep_secrets_private() {
         use std::os::unix::fs::PermissionsExt;
         let dir = crate::settings::temp_dir("keys");
@@ -346,12 +324,6 @@ mod tests {
         assert!(signer_path(&dir, &owner).is_err());
         assert!(add(&dir, "other", "stellar:testnet", "GBAD").is_err());
 
-        let tempo = generate(&dir, "tempo", "tempo:testnet").unwrap();
-        assert_eq!(tempo.curve, "secp256k1");
-        assert!(tempo.address.starts_with("0x"));
-        assert_eq!(tempo.rail, "eip155:42431");
-        assert!(tempo.check_rail("stellar:testnet").is_err());
-
         assert_eq!(
             list(&dir)
                 .unwrap()
@@ -359,17 +331,8 @@ mod tests {
                 .iter()
                 .map(|k| k.name.as_str())
                 .collect::<Vec<_>>(),
-            ["agent", "copy", "owner", "tempo"]
+            ["agent", "copy", "owner"]
         );
-        assert_eq!(
-            resolve_address(&dir, "owner", "stellar:testnet").unwrap(),
-            agent.address
-        );
-        assert_eq!(
-            resolve_address(&dir, &agent.address, "stellar:testnet").unwrap(),
-            agent.address
-        );
-        assert!(resolve_address(&dir, "missing", "stellar:testnet").is_err());
         remove(&dir, "agent").unwrap();
         assert!(!secret_path(&dir, "agent").exists());
         assert!(load(&dir, "agent").is_err());

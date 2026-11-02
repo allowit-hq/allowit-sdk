@@ -31,8 +31,7 @@ pub(crate) struct Entry {
 
 /// The folder of one request ID.
 fn shard(id: &str) -> String {
-    use sha2::Digest;
-    format!("{:02x}", sha2::Sha256::digest(id.as_bytes())[0])
+    allowit_sdk::digest(id.as_bytes())[..2].to_owned()
 }
 
 fn open_shard(dir: &Path, shard: &str) -> Result<Store> {

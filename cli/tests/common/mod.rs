@@ -56,8 +56,6 @@ impl Sandbox {
         }
         c.current_dir(self.work())
             .env("ALLOWIT_CONFIG_DIR", self.config())
-            .env("HOME", self.root.join("home"))
-            .env("XDG_CONFIG_HOME", self.root.join("xdg"))
             .env("NO_COLOR", "1")
             .env("COLUMNS", "100")
             .env("HTTPS_PROXY", "http://127.0.0.1:1")
@@ -260,4 +258,32 @@ pub fn assert_data(text: &str, what: &str) {
         );
         block = !line.contains(char::is_whitespace);
     }
+}
+
+/// Public descriptor metadata derived from a real portable configuration, never build proof.
+pub fn portable_descriptor(config: &mut allowit_stellar_wallet::WalletConfig) -> Value {
+    use allowit_stellar_wallet::{self as sdk, PolicyTier, WalletRoute};
+    let shape = sdk::policy::source_shape(&config.policy_source).unwrap();
+    let tier = if config.tier == Some(PolicyTier::Custom) {
+        "custom"
+    } else {
+        "standard"
+    };
+    let rules = if tier == "standard" {
+        shape.prefix.clone()
+    } else {
+        vec![]
+    };
+    let params_hash =
+        allowit_sdk::digest(&serde_json_canonicalizer::to_vec(&config.params).unwrap());
+    let identity = serde_json::json!({"language":"allowit-portable-v1","tier":tier,"rules":rules,"sourceHash":sdk::hex(&config.source_hash),"paramsHash":params_hash});
+    if config.route == WalletRoute::Native {
+        config.module_digest = sdk::unhex(&allowit_sdk::digest(
+            &serde_json_canonicalizer::to_vec(&identity).unwrap(),
+        ))
+        .unwrap();
+    }
+    serde_json::json!({"language":"allowit-portable-v1","sourceHash":sdk::hex(&config.source_hash),"tier":tier,"rules":rules,"params":config.params,"paramsHash":params_hash,
+        "asset":{"symbol":config.asset_symbol,"address":config.asset,"decimals":7},"unresolved":[],
+        "build":{"prefix":shape.prefix,"writesState":shape.writes_state,"libraryRevision":"6aa4235e6229e18d1f9780a6a9fdf80aceb0f348","attempts":1}})
 }

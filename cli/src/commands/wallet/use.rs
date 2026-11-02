@@ -1,14 +1,9 @@
 //! `allowit wallet use ADDR`.
-use crate::{
-    ctx::Ctx,
-    error::{Error, Result},
-    vendors::address,
-};
+use crate::{ctx::Ctx, error::Result, vendors::address};
 
 pub(crate) const EXAMPLES: &str = "\
 Examples:
-  allowit wallet use CWALLET…
-  allowit --rail solana:devnet wallet use VAULT…";
+  allowit wallet use CWALLET…";
 
 /// Make an address the current rail's default wallet
 #[derive(clap::Args, Debug)]
@@ -19,16 +14,6 @@ pub(crate) struct Args {
 
 pub(crate) fn run(args: Args, cx: &mut Ctx) -> Result<i32> {
     let rail = cx.rail()?;
-    if let Some(family) = address::infer_family(&args.address)
-        && family != rail.family
-    {
-        return Err(Error::usage(format!(
-            "{} is a {} address, but the rail is {}",
-            args.address,
-            family.name(),
-            rail.id
-        )));
-    }
     address::check_wallet(rail.family, &args.address)?;
     cx.settings()?.update(|config| {
         let r = config.rail_mut(rail.id);

@@ -28,7 +28,7 @@ pub(crate) struct Out {
     pub color_err: bool,
     pub kind: Kind,
     /// Print stdout unchanged: no redaction and no display escaping. The local
-    /// policy compiler commands use it.
+    /// policy source commands use it.
     pub raw: bool,
     /// The request this command acts on, for JSON errors.
     pub request_id: Option<String>,

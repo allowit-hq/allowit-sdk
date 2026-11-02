@@ -4,11 +4,9 @@ use crate::{ctx::Ctx, error::Result, settings::keys};
 pub(crate) const EXAMPLES: &str = "\
 Examples:
   allowit keys generate agent
-  allowit keys generate owner --fund
-  allowit --rail tempo:testnet keys generate executor";
+  allowit keys generate owner --fund";
 
-/// Generate a key with the rail's curve: ed25519 on Stellar and Solana,
-/// secp256k1 on Tempo
+/// Generate a private Stellar ed25519 key
 #[derive(clap::Args, Debug)]
 pub(crate) struct Args {
     /// Key name

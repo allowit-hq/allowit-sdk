@@ -1,4 +1,4 @@
-//! Process exit codes. Every command, including the paid-service commands,
+//! Process exit codes. Every command
 //! uses this one table.
 use crate::error::Error;
 

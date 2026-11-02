@@ -4,8 +4,7 @@ use crate::{ctx::Ctx, error::Result, routing};
 pub(crate) const EXAMPLES: &str = "\
 Examples:
   allowit rail use stellar:testnet
-  allowit rail use solana:devnet
-  allowit rail use eip155:42431";
+  allowit rail use stellar:pubnet";
 
 /// Choose the current rail. Each rail keeps its own wallet and agent key
 #[derive(clap::Args, Debug)]

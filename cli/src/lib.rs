@@ -1,40 +1,20 @@
 //! The `allowit` command. Argument parsing, terminal output and rail adapters
 //! live here; engine requests and service composition come from
 //! `allowit-sdk-engine`, which has no terminal I/O.
-// Shared code that only the Solana and Tempo adapters read is unused in a
-// build without them; the default build checks it.
-#![cfg_attr(
-    not(all(feature = "solana", feature = "tempo")),
-    allow(dead_code, unused_imports)
-)]
-#[cfg(feature = "solana")]
-pub use allowit_native as native;
 pub use allowit_sdk::admin;
 pub use allowit_sdk_engine::{VERSION, error, wallet};
-pub(crate) use allowit_sdk_engine::{
-    client, config, output, request, routing, skill, typed_request,
-};
+pub(crate) use allowit_sdk_engine::{config, output, request, routing, typed_request};
 pub use allowit_stellar_wallet as stellar;
-mod agents;
 mod commands;
 mod ctx;
 mod exit;
-mod gateway;
 mod settings;
 mod term;
 mod vendors;
 use crate::{config::env_value, error::Error, exit::Exit, term::Out};
 use serde_json::{Value, json};
 use std::io::Write;
-#[cfg(feature = "solana")]
-pub use vendors::solana::handoff;
 pub use vendors::stellar::{approval as stellar_approval, owner as stellar_owner};
-
-/// Points stderr back at the terminal before a panic report: a rail crate
-/// may run with its own progress output silenced.
-pub fn restore_stderr() {
-    vendors::restore_stderr();
-}
 
 /// Every command path, hidden aliases included, for the help snapshot tests.
 #[doc(hidden)]
@@ -153,14 +133,6 @@ fn execute(cli: commands::Cli) -> i32 {
     // cannot change their output.
     let network = if commands::is_local(&command) {
         None
-    } else if commands::is_legacy(&command) {
-        // The hidden commands of earlier releases select a rail only with
-        // --rail or ALLOWIT_RAIL, never with `rail use`. An unknown rail is
-        // refused, never ignored.
-        match cx.global.rail.as_deref().map(routing::info).transpose() {
-            Ok(rail) => rail.map(|r| r.id.to_owned()),
-            Err(e) => return finish(cx.out, Err(e)),
-        }
     } else {
         cx.rail_opt().ok().flatten().map(|r| r.id.to_owned())
     };
@@ -172,7 +144,7 @@ fn execute(cli: commands::Cli) -> i32 {
         cx.out.detail(format!("config  {}", dir.display()));
     }
     let settings = match &network {
-        Some(n) if !commands::is_legacy(&command) => {
+        Some(n) => {
             match routing::info(n)
                 .map(vendors::rail)
                 .and_then(|v| v.settings(&mut cx))
@@ -259,7 +231,7 @@ fn safe_output(stdout: String) -> String {
 pub(crate) fn redact(s: String) -> String {
     output::clean(
         output::clean(s, &env_value("ALLOWIT_TOKEN")),
-        &env_value(gateway::ACCOUNT_TOKEN_ENV),
+        &env_value("ALLOWIT_ACCOUNT_TOKEN"),
     )
 }
 

@@ -8,6 +8,7 @@ mod import;
 mod ls;
 mod rm;
 mod show;
+mod use_key;
 
 use crate::{ctx::Ctx, error::Result};
 use clap::Subcommand;
@@ -17,9 +18,10 @@ Examples:
   allowit keys generate agent --fund
   allowit keys add owner --public-key GOWNER…
   allowit keys ls
+  allowit keys use agent
   allowit keys show agent";
 
-/// Manage local keys: generate, add, import, list, fund, export and remove
+/// Manage local Stellar keys and select the signing key
 #[derive(Subcommand, Debug)]
 pub(crate) enum Command {
     #[command(before_help = generate::EXAMPLES)]
@@ -32,6 +34,8 @@ pub(crate) enum Command {
     Ls(ls::Args),
     #[command(before_help = show::EXAMPLES)]
     Show(show::Args),
+    #[command(name = "use", before_help = use_key::EXAMPLES)]
+    Use(use_key::Args),
     #[command(before_help = fund::EXAMPLES)]
     Fund(fund::Args),
     #[command(before_help = export::EXAMPLES)]
@@ -47,6 +51,7 @@ pub(crate) fn run(command: Command, cx: &mut Ctx) -> Result<i32> {
         Command::Import(a) => import::run(a, cx),
         Command::Ls(a) => ls::run(a, cx),
         Command::Show(a) => show::run(a, cx),
+        Command::Use(a) => use_key::run(a, cx),
         Command::Fund(a) => fund::run(a, cx),
         Command::Export(a) => export::run(a, cx),
         Command::Rm(a) => rm::run(a, cx),
