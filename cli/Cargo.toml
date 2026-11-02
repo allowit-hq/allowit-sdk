@@ -6,7 +6,7 @@ edition = "2024"
 rust-version = "1.98"
 license = "MIT"
 publish = false
-description = "The allowit command: Stellar requests, local key custody and portable policy tools"
+description = "The allowit command: policy requests, local key custody and portable policy tools"
 
 [lib]
 name = "allowit_cli"

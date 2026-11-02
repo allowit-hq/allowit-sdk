@@ -1,6 +1,6 @@
 # Stellar CLI adapter
 
-This adapter binds the common CLI commands to the [Stellar rail library](https://github.com/allowit-hq/allowit-contracts-stellar/tree/main/stellar/core).
+This adapter binds the common CLI commands to the [Stellar rail library](https://github.com/allowit-hq/allowit-contracts-stellar/tree/v0.2.0/stellar/core).
 The [workspace manifest](../../../../Cargo.toml) selects its release and the [lockfile](../../../../Cargo.lock) fixes the exact source.
 [Adapter wiring](../mod.rs) and the [rail table](../../../../engine/src/routing.rs) register it in the executable.
 Run `allowit rail ls --json` and `allowit rail show RAIL --json` for the installed build's networks, aliases and capabilities.

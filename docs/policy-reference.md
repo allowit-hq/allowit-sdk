@@ -13,7 +13,7 @@ pub fn execute(ctx: &AllowitContext) -> allowit::Result {
 }
 ```
 
-The `allowit` package lives in [Allowit core](https://github.com/allowit-hq/allowit-core/tree/main/crates/allowit).
+The `allowit` package lives in [Allowit core](https://github.com/allowit-hq/allowit-core/tree/v0.2.0/crates/allowit).
 Its host `std` and Soroban features are mutually exclusive. The same authored source runs against either backend.
 The shared Core source gate admits only the portable vocabulary and one `execute` entrypoint.
 Host compilation uses the same exact Core revision as the gate and portable library.
