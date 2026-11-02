@@ -5,37 +5,16 @@ use crate::{
     vendors::typed::TypedRequest,
 };
 use allowit_sdk::client::store::Store;
-use allowit_sdk_engine::stellar::client::{self as shared, AgentSigner, ExecutionOutcome};
-use allowit_stellar_wallet::{self as native, OperationStatus};
+use allowit_sdk_engine::stellar::client::{self as shared, ExecutionOutcome};
+use allowit_stellar_wallet::OperationStatus;
 pub(crate) use shared::{Bundle, public_description, read_public_bundle};
 use std::{path::Path, sync::Arc, time::Duration};
-use zeroize::Zeroizing;
 
-struct LocalSigner {
-    seed: Zeroizing<[u8; 32]>,
-    account: String,
-}
-impl AgentSigner for LocalSigner {
-    fn account(&self) -> &str {
-        &self.account
-    }
-    fn sign_hash(&self, digest: &[u8; 32]) -> native::Result<[u8; 64]> {
-        use ed25519_dalek::{Signer, SigningKey};
-        Ok(SigningKey::from_bytes(&self.seed).sign(digest).to_bytes())
-    }
-}
 pub(crate) struct Client(shared::Client);
 impl Client {
     pub(crate) fn load(bundle: Bundle, signer: &Path, rpc_url: Option<String>) -> Result<Self> {
-        let seed = crate::wallet::stellar_signing_seed(signer)?;
-        let account = native::account_for_seed(&seed);
-        shared::Client::new(
-            bundle,
-            Arc::new(LocalSigner { seed, account }),
-            &env_value("ALLOWIT_URL"),
-            rpc_url,
-        )
-        .map(Self)
+        let signer = crate::wallet::local_signer(&bundle.network, signer)?;
+        shared::Client::new(bundle, Arc::new(signer), &env_value("ALLOWIT_URL"), rpc_url).map(Self)
     }
 }
 fn open_journal(path: &Path) -> Result<Store> {

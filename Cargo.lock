@@ -19,8 +19,8 @@ dependencies = [
 
 [[package]]
 name = "allowit"
-version = "0.2.0"
-source = "git+https://github.com/allowit-hq/allowit-core.git?tag=v0.2.0#6aa4235e6229e18d1f9780a6a9fdf80aceb0f348"
+version = "0.3.0"
+source = "git+https://github.com/allowit-hq/allowit-core.git?tag=v0.3.0#56e8a0755a20bf2cc786c4ad0d5822c1a9ac63cb"
 
 [[package]]
 name = "allowit-cli"
@@ -55,8 +55,8 @@ dependencies = [
 
 [[package]]
 name = "allowit-sdk"
-version = "0.2.0"
-source = "git+https://github.com/allowit-hq/allowit-core.git?tag=v0.2.0#6aa4235e6229e18d1f9780a6a9fdf80aceb0f348"
+version = "0.3.0"
+source = "git+https://github.com/allowit-hq/allowit-core.git?tag=v0.3.0#56e8a0755a20bf2cc786c4ad0d5822c1a9ac63cb"
 dependencies = [
  "allowit",
  "libc",
@@ -90,8 +90,8 @@ dependencies = [
 
 [[package]]
 name = "allowit-stellar-wallet"
-version = "0.2.0"
-source = "git+https://github.com/allowit-hq/allowit-contracts-stellar.git?tag=v0.2.0#1724fde351a53701e013d919bf650e801ffec0d0"
+version = "0.3.0"
+source = "git+https://github.com/allowit-hq/allowit-contracts-stellar.git?tag=v0.3.0#96b81689603fe24986fdd8e18da7f12db9ecafe1"
 dependencies = [
  "allowit",
  "allowit-sdk",
@@ -102,6 +102,7 @@ dependencies = [
  "sha2",
  "stellar-strkey",
  "stellar-xdr",
+ "zeroize",
 ]
 
 [[package]]

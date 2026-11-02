@@ -339,29 +339,21 @@ impl Client {
         })
     }
     fn post(&self, path: &str, body: serde_json::Value) -> Result<Response> {
-        use ed25519_dalek::{Signature, VerifyingKey};
         let issued_at = clock()?;
         let canonical = serde_json_canonicalizer::to_vec(&body)
             .map_err(|_| Error::config("Cannot encode Stellar request"))?;
-        let mut message = format!("allowit-stellar-request-v1\n{issued_at}\n{path}\n").into_bytes();
-        message.extend_from_slice(&canonical);
-        let digest = sdk::hash(message);
+        let digest = sdk::signing::request_digest(issued_at, path, &canonical);
         let signature = checked(self.signer.sign_hash(&digest))?;
-        checked(
-            VerifyingKey::from_bytes(&checked(sdk::account_key(&self.account))?)
-                .map_err(|_| "Invalid Stellar signing account".to_owned())
-                .and_then(|key| {
-                    key.verify_strict(&digest, &Signature::from_bytes(&signature))
-                        .map_err(|_| {
-                            "Signing capability returned an invalid request signature".to_owned()
-                        })
-                }),
-        )?;
-        let proof = format!(
-            "Bearer stellar-proof.{}.{issued_at}.{}",
-            self.account,
-            sdk::hex(&signature)
-        );
+        checked(sdk::signing::verify_digest(
+            &self.account,
+            &digest,
+            &signature,
+        ))?;
+        let proof = checked(sdk::signing::request_proof(
+            &self.account,
+            issued_at,
+            &signature,
+        ))?;
         let bytes = serde_json::to_vec(&body)
             .map_err(|_| Error::config("Cannot encode Stellar request"))?;
         let headers = [

@@ -1,12 +1,12 @@
 //! Local agent keys. PublicWallet is the only serializable registration value.
 use crate::{
     error::{Error, Result},
-    routing,
+    routing, vendors,
 };
 use allowit_sdk::client::store::Store;
 use serde::{Deserialize, Serialize};
 use std::path::Path;
-use zeroize::{Zeroize, Zeroizing};
+use zeroize::Zeroizing;
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct PublicWallet {
@@ -15,18 +15,40 @@ pub struct PublicWallet {
     pub public_key: String,
     pub key_type: String,
 }
-fn public(network: &str, seed: &[u8; 32]) -> Result<PublicWallet> {
-    let network = routing::normalize(network)?;
-    let address = allowit_stellar_wallet::account_for_seed(seed);
-    Ok(PublicWallet {
-        network: network.into(),
-        public_key: address.clone(),
-        address,
-        key_type: "ed25519".into(),
-    })
+/// A caller-bound local signer. Its native key stays behind the compiled provider.
+pub struct LocalSigner {
+    network: String,
+    key: Box<dyn vendors::PrivateSigner>,
 }
-fn stellar_address(key: &[u8; 32]) -> String {
-    stellar_strkey::ed25519::PublicKey(*key).to_string()
+impl LocalSigner {
+    pub fn network(&self) -> &str {
+        &self.network
+    }
+    pub fn address(&self) -> &str {
+        self.key.address()
+    }
+    pub fn public(&self) -> PublicWallet {
+        PublicWallet {
+            network: self.network.clone(),
+            address: self.key.address().into(),
+            public_key: self.key.public_key().into(),
+            key_type: self.key.key_type().into(),
+        }
+    }
+    /// Sign a digest already authorized by the caller's protocol workflow.
+    pub fn sign_hash(&self, digest: &[u8]) -> Result<Vec<u8>> {
+        self.key.sign_hash(digest)
+    }
+}
+#[cfg(test)]
+fn public(network: &str, entropy: &[u8]) -> Result<PublicWallet> {
+    let network = routing::normalize(network)?;
+    let key = vendors::keys(network)?.derive(entropy)?;
+    Ok(LocalSigner {
+        network: network.into(),
+        key,
+    }
+    .public())
 }
 fn storage(path: &Path) -> Result<(Store, String)> {
     let name = path
@@ -50,13 +72,17 @@ fn storage(path: &Path) -> Result<(Store, String)> {
 pub fn generate_wallet(network: &str, path: &Path) -> Result<PublicWallet> {
     routing::info(network)?;
     let (_lock, _name) = storage(path)?;
-    let mut seed = Zeroizing::new([0u8; 32]);
-    getrandom::fill(seed.as_mut())
+    let provider = vendors::keys(network)?;
+    let mut entropy = Zeroizing::new(vec![0u8; provider.entropy_bytes()]);
+    getrandom::fill(entropy.as_mut())
         .map_err(|_| Error::config("Operating-system randomness unavailable"))?;
-    let metadata = public(network, &seed)?;
-    let mut private = stellar_strkey::ed25519::PrivateKey(*seed);
-    let secret = Zeroizing::new(private.to_string());
-    private.0.zeroize();
+    let key = provider.derive(&entropy)?;
+    let signer = LocalSigner {
+        network: routing::normalize(network)?.into(),
+        key,
+    };
+    let metadata = signer.public();
+    let secret = signer.key.encoded_secret();
     write_new(path, secret.as_bytes())?;
     Ok(metadata)
 }
@@ -133,20 +159,25 @@ fn read_signer(path: &Path) -> Result<Zeroizing<String>> {
     }
     Ok(text)
 }
-pub fn stellar_signing_seed(path: &Path) -> Result<Zeroizing<[u8; 32]>> {
+/// Open the selected rail's private signer without exposing native key bytes.
+pub fn local_signer(network: &str, path: &Path) -> Result<LocalSigner> {
+    let network = routing::normalize(network)?;
+    let provider = vendors::keys(network)?;
     let text = read_signer(path)?;
-    allowit_stellar_wallet::decode_seed(text.trim())
-        .map(Zeroizing::new)
-        .map_err(|_| Error::config("Invalid local Stellar signer"))
+    let key = provider.parse(text.trim())?;
+    Ok(LocalSigner {
+        network: network.into(),
+        key,
+    })
 }
-/// Inspect a native signer file without returning its secret.
+/// Inspect a local signer file without returning its secret.
 pub fn inspect_wallet(network: &str, path: &Path) -> Result<PublicWallet> {
-    routing::info(network)?;
-    public(network, &*stellar_signing_seed(path)?)
+    Ok(local_signer(network, path)?.public())
 }
+
 #[cfg(test)]
-fn built_networks() -> [&'static str; 2] {
-    ["stellar:testnet", "stellar:pubnet"]
+fn built_networks() -> impl Iterator<Item = &'static str> {
+    routing::RAILS.iter().map(|rail| rail.id)
 }
 
 #[cfg(test)]
@@ -163,17 +194,6 @@ mod tests {
             assert!(v.get("privateKey").is_none());
         }
     }
-    #[test]
-    fn known_stellar_addresses() {
-        assert_eq!(
-            stellar_address(&[0; 32]),
-            "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF"
-        );
-        let stellar = public("stellar:testnet", &[0; 32]).unwrap();
-        assert_eq!(stellar.public_key, stellar.address);
-        assert!(stellar.public_key.starts_with('G'));
-        stellar.validate().unwrap();
-    }
 }
 
 impl PublicWallet {
@@ -181,17 +201,11 @@ impl PublicWallet {
         if routing::normalize(&self.network)? != self.network {
             return Err(Error::usage("Registration requires a canonical network"));
         }
-        if self.key_type != "ed25519" {
-            return Err(Error::usage("Invalid public key type"));
-        }
-        let key = allowit_stellar_wallet::account_key(&self.public_key)
-            .map_err(|_| Error::usage("Invalid public key"))?;
-        ed25519_dalek::VerifyingKey::from_bytes(&key)
-            .map_err(|_| Error::usage("Invalid public point"))?;
-        let expected = stellar_address(&key);
-        if expected != self.address {
-            return Err(Error::usage("Address differs from public key"));
-        }
+        vendors::keys(&self.network)?.validate_identity(
+            &self.address,
+            &self.public_key,
+            &self.key_type,
+        )?;
         Ok(())
     }
 }

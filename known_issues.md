@@ -10,10 +10,9 @@ Remove this workaround when the adapter can resolve the required public profile 
 
 ## Native adapter bindings
 
-[Key codecs](engine/src/wallet.rs), [owner generation](cli/src/commands/policy/generate.rs)
-and [command dispatch](cli/src/vendors/mod.rs) still select the bundled native implementation directly.
-[Owner authentication](engine/src/stellar/owner_client.rs) also retains native sign-in encoding and signature checks.
-Use the registered capabilities from `allowit rail ls --json` and `allowit rail show RAIL --json`.
-Adding a dependency and registry entry alone does not supply another vendor's native bindings.
-Move these bindings behind vendor capabilities before admitting another implementation.
-Keep shared execution and recovery in SDK engine.
+[Command dispatch](cli/src/vendors/mod.rs) and wallet-profile selection still choose the bundled native implementation directly.
+Native key encoding, signing and message domains now live in the vendor library.
+Common key custody and owner generation use registered SDK capabilities.
+Use `allowit rail ls --json` and `allowit rail show RAIL --json` for the compiled capabilities.
+Adding a dependency and registry entry alone does not supply another vendor's command or profile bindings.
+Finish those bindings before admitting another implementation. Shared execution and recovery stay in SDK engine.

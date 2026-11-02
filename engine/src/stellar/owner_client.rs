@@ -9,7 +9,6 @@ use allowit_sdk::transport::{
 };
 use allowit_stellar_wallet::{self as native, PolicyParams, PolicyTier};
 use base64::{Engine, engine::general_purpose::STANDARD};
-use ed25519_dalek::{Signature, VerifyingKey};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::time::{Duration, Instant};
@@ -26,39 +25,7 @@ pub trait OwnerSigner {
     fn sign_hash(&self, digest: &[u8; 32]) -> native::Result<[u8; 64]>;
 }
 
-#[derive(Clone, Debug)]
-pub enum Target {
-    NewWallet,
-    Installation(String),
-}
-#[derive(Clone, Debug)]
-pub struct GenerateRequest {
-    pub prompt: String,
-    pub network: String,
-    pub profile: String,
-    pub target: Target,
-}
-impl GenerateRequest {
-    pub fn validate(&self) -> Result<()> {
-        if !(5..=3000).contains(&self.prompt.len()) {
-            return Err(Error::usage("Describe the policy in 5–3000 UTF-8 bytes"));
-        }
-        crate::routing::info(&self.network)?;
-        if self.profile.is_empty()
-            || self.profile.len() > 128
-            || !self
-                .profile
-                .bytes()
-                .all(|b| b.is_ascii_alphanumeric() || b"._:-".contains(&b))
-        {
-            return Err(Error::usage("Select an advertised Stellar wallet profile"));
-        }
-        if let Target::Installation(id) = &self.target {
-            lower_hash(id)?;
-        }
-        Ok(())
-    }
-}
+pub use crate::generation::{GenerateRequest, Target};
 
 pub struct OwnerClient {
     http: HttpClient,
@@ -298,11 +265,8 @@ fn cookie(response: &Response, backend: &str) -> Result<Zeroizing<String>> {
 }
 impl OwnerClient {
     pub fn new(backend: &str, origin: &str, owner: &str) -> Result<Self> {
-        let owner_key = native::account_key(owner)
+        native::signing::canonical_account_key(owner)
             .map_err(|_| Error::config("Select a canonical Stellar G owner account"))?;
-        if stellar_strkey::ed25519::PublicKey(owner_key).to_string() != owner {
-            return Err(Error::config("Select a canonical Stellar G owner account"));
-        }
         if origin.is_empty() {
             return Err(Error::config("Set the explicit owner sign-in Origin"));
         }
@@ -372,18 +336,13 @@ impl OwnerClient {
         let challenge: Challenge = Self::decode(&response, false)?;
         let expiry = timestamp(&challenge.expires_at)?;
         lower_hash(&challenge.id)?;
-        let host = self.origin.split_once("://").expect("parsed origin").1;
-        let prefix = format!(
-            "{host} wants you to sign in with your Stellar account:\n{}\n\nSign in to AllowIt. This does not authorize spending or move funds.\n\nURI: {}\nVersion: 1\nNonce: {}\nIssued At: ",
-            self.owner, self.origin, challenge.id
-        );
-        let (issued, expiration) = challenge
-            .message
-            .strip_prefix(&prefix)
-            .and_then(|s| s.split_once("\nExpiration Time: "))
-            .ok_or_else(|| {
-                Error::config("Owner sign-in message differs from its exact account and Origin")
-            })?;
+        let (issued, expiration) = native::signing::sign_in_message_times(
+            &challenge.message,
+            &self.owner,
+            &self.origin,
+            &challenge.id,
+        )
+        .map_err(Error::config)?;
         let issued = timestamp(issued)?;
         if challenge.address != self.owner
             || challenge.origin != self.origin
@@ -397,15 +356,11 @@ impl OwnerClient {
                 "Owner sign-in challenge is invalid or expired",
             ));
         }
-        let mut message = b"Stellar Signed Message:\n".to_vec();
-        message.extend_from_slice(challenge.message.as_bytes());
-        let digest = native::hash(message);
+        let digest = native::signing::signed_message_digest(&challenge.message);
         let signature = signer
             .sign_hash(&digest)
             .map_err(|_| Error::config("Owner signing capability failed"))?;
-        VerifyingKey::from_bytes(&native::account_key(&self.owner).map_err(Error::config)?)
-            .map_err(|_| Error::config("Invalid owner key"))?
-            .verify_strict(&digest, &Signature::from_bytes(&signature))
+        native::signing::verify_digest(&self.owner, &digest, &signature)
             .map_err(|_| Error::config("Owner signer returned an invalid signature"))?;
         let response=self.send(Method::Post,"/api/auth/verify",Some(&json!({"id":challenge.id,"address":self.owner,"message":challenge.message,"signature":STANDARD.encode(signature)})),Some(&guest),false)?;
         let authenticated: Authenticated = Self::decode(&response, false)?;

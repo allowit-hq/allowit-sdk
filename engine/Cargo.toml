@@ -13,8 +13,6 @@ allowit-sdk = { workspace = true, features = ["std", "policy-source", "client", 
 allowit-stellar-wallet.workspace = true
 getrandom = "0.3"
 base64 = "0.22.1"
-ed25519-dalek = "2"
-stellar-strkey = "0.0.13"
 libc = "0.2.190"
 serde = { version = "1.0.219", features = ["derive"] }
 serde_json_canonicalizer = "0.3"
@@ -25,4 +23,6 @@ tempfile = "3.27"
 time = { version = "0.3.55", features = ["parsing", "formatting"] }
 
 [dev-dependencies]
+ed25519-dalek = "2"
+stellar-strkey = "0.0.13"
 stellar-xdr = { version = "=28.0.0", features = ["std", "base64"] }
