@@ -351,7 +351,7 @@ pub(crate) fn dispatch(command: Command, cx: &mut Ctx) -> Result<i32> {
     }
 }
 
-/// True for commands that read no rail, wallet or credential.
+/// True for commands that need no selected rail, wallet or signing credential.
 pub(crate) fn is_local(command: &Command) -> bool {
     matches!(
         command,

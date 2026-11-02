@@ -5,6 +5,8 @@ The `allowit` command owns developer workflows, local key custody, portable draf
 Rail core owns native encoding, signing, simulation and settlement semantics.
 [Allowit core](https://github.com/allowit-hq/allowit-core) supplies deterministic policy logic and host transport and journal primitives.
 The server supplies trusted policy enforcement and its own signing authority.
+The CLI owns UX and client-side validation of selections, identities and requests, using shared Core and SDK logic.
+Server enforcement and native chain authority remain with their respective components.
 
 ```sh
 cargo run --locked --bin allowit -- --help
@@ -100,6 +102,8 @@ Its session stays in memory and is bound to that backend, Origin and owner accou
 replace it with `--installation ID` and that installation's advertised profile. Selection never falls back between them.
 Use the exact wallet `PROFILE` advertised by the server for the selected adapter.
 The complete prompt, selected network, profile and transfer operation go to the server.
+Generated source starts its rule sequence with `allowit::operations`, binding the permitted operation set.
+The [authoring contract](../docs/policy-reference.md#authoring-order) defines the order; UI renderers preserve it.
 
 The result is a public portable draft with exact source and typed owner params. Exit 11 means that owner input remains unresolved.
 Generation does not deploy, fund or activate a wallet. Its build report does not authorize publication.

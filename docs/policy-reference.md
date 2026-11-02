@@ -6,6 +6,7 @@ A policy is one self-contained synchronous Rust file with this entrypoint:
 use allowit::prelude::*;
 
 pub fn execute(ctx: &AllowitContext) -> allowit::Result {
+    allowit::operations(ctx, &ctx.params[allowit::OPERATIONS])?;
     allowit::daily_spending_limit(ctx, &ctx.params[allowit::DAILY_SPENDING_LIMIT])?;
     allowit::payment_limit(ctx, &ctx.params[allowit::PAYMENT_LIMIT])?;
     Ok(())
@@ -16,6 +17,13 @@ The `allowit` package lives in [Allowit core](https://github.com/allowit-hq/allo
 Its host `std` and Soroban features are mutually exclusive. The same authored source runs against either backend.
 The shared Core source gate admits only the portable vocabulary and one `execute` entrypoint.
 Host compilation uses the same exact Core revision as the gate and portable library.
+
+## Authoring order
+
+Start the policy's rule sequence with `allowit::operations(ctx, &ctx.params[allowit::OPERATIONS])?`.
+Its second argument supplies the owner's allowed operation set.
+The owner chooses the operation set. The generator places this rule first, then follows the order of the owner's remaining requirements.
+SDK authoring owns this order. Consumers display it unchanged and preserve explicit owner edits to parameter values.
 
 ## Source and state
 

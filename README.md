@@ -4,6 +4,9 @@
 
 This repository contains `allowit-sdk-engine`, the shared offchain execution library, and the `allowit` CLI.
 Both CLI and server callers use SDK engine. Each actor retains its own keys, authorization and durable application state.
+The CLI owns command UX and client-side validation of selected bindings and requests.
+It uses shared Core and SDK logic for checks that also run at server or rail boundaries.
+Server enforcement, native authority and verified settlement remain authoritative.
 
 [Allowit core](https://github.com/allowit-hq/allowit-core) contains the portable `allowit` policy library, its shared source gate and feature-gated host primitives.
 Rail libraries own native requests, encoding, signatures, RPC methods, simulation and settlement rules.
@@ -76,6 +79,7 @@ Policies are synchronous Rust against the `allowit` package:
 use allowit::prelude::*;
 
 pub fn execute(ctx: &AllowitContext) -> allowit::Result {
+    allowit::operations(ctx, &ctx.params[allowit::OPERATIONS])?;
     allowit::daily_spending_limit(ctx, &ctx.params[allowit::DAILY_SPENDING_LIMIT])?;
     allowit::payment_limit(ctx, &ctx.params[allowit::PAYMENT_LIMIT])?;
     Ok(())
