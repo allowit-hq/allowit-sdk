@@ -1,6 +1,6 @@
 # Allowit CLI
 
-The `allowit` command selects a Stellar network, keeps local keys, generates portable drafts, inspects public wallet profiles and sends agent requests.
+The `allowit` command owns developer workflows, local key custody, portable drafts, wallet profiles and agent requests.
 [`allowit-sdk-engine`](../engine/) supplies reusable workflows for CLI and server callers.
 Rail core owns native encoding, signing, simulation and settlement semantics.
 [Allowit core](https://github.com/allowit-hq/allowit-core) supplies deterministic policy logic and host transport and journal primitives.
@@ -10,6 +10,28 @@ The server supplies trusted policy enforcement and its own signing authority.
 cargo run --locked --bin allowit -- --help
 cargo build --locked --release --bin allowit
 ```
+
+## Architecture
+
+The CLI owns developer workflows for policies, agent keypairs, validation and the x402 marketplace.
+It uses SDK engine for shared logic and the server REST API for server operations.
+
+```mermaid
+flowchart TB
+    CLI["[allowit-sdk]<br/>crate @allowit/cli<br/>DX: policy and agent keypair generation<br/>Policy validation · x402 marketplace"]
+    Server["[allowit-engine]<br/>crate @allowit/server<br/>Shared REST API · server enforcement"]
+    Engine["[allowit-sdk]<br/>crate @allowit/sdk/engine<br/>All other shared logic"]
+    Core["[allowit-core]<br/>crate + npm @allowit/sdk/core<br/>Common types · policy rules · primitives<br/>TypeScript interfaces"]
+
+    CLI -. REST .-> Server
+    CLI -->|crate| Engine
+    Server -->|crate| Engine
+    Engine -->|crate| Core
+```
+
+Solid arrows are dependencies. Dashed arrows are runtime calls / connections.
+This view follows the [canonical responsibility diagram][responsibility-model].
+Use the [Cargo manifest](Cargo.toml) for Rust build package names.
 
 ## Commands
 
@@ -136,3 +158,5 @@ SDK engine controls submission and original-hash recovery; keys remain with the 
 Portable policy source uses `pub fn execute(ctx: &AllowitContext) -> allowit::Result`.
 Owner params supply configuration; authenticated request facts and committed state come from the host and rail.
 See the [portable policy reference](../docs/policy-reference.md) and [Stellar rail reference](https://github.com/allowit-hq/allowit-contracts-stellar/tree/main/stellar/core).
+
+[responsibility-model]: https://github.com/allowit-hq/allowit-project/blob/main/wiki/allowit/architecture.md#dependency-direction

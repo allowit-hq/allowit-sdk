@@ -7,6 +7,31 @@ Callers supply arguments, configuration and the required RPC, signing, storage a
 [Allowit core](https://github.com/allowit-hq/allowit-core) provides deterministic policy logic and
 feature-gated host primitives. Rail cores provide native protocol and settlement semantics.
 
+## Architecture
+
+SDK engine composes shared logic from core primitives and vendor capabilities.
+CLI and server callers use the same library and retain their own keys and authority.
+
+```mermaid
+flowchart TB
+    CLI["[allowit-sdk]<br/>crate @allowit/cli<br/>DX: policy and agent keypair generation<br/>Policy validation · x402 marketplace"]
+    Server["[allowit-engine]<br/>crate @allowit/server<br/>Shared REST API · server enforcement"]
+    Engine["[allowit-sdk]<br/>crate @allowit/sdk/engine<br/>All other shared logic"]
+    Vendor["crate + npm @allowit/vendor/*<br/>Native contracts · signing · chain semantics<br/>SVG graphics · web components"]
+    Core["[allowit-core]<br/>crate + npm @allowit/sdk/core<br/>Common types · policy rules · primitives<br/>TypeScript interfaces"]
+
+    CLI -. REST .-> Server
+    CLI -->|crate| Engine
+    Server -->|crate| Engine
+    Engine -->|crate| Vendor
+    Engine -->|crate| Core
+    Vendor -->|crate + npm| Core
+```
+
+Solid arrows are dependencies. Dashed arrows are runtime calls / connections.
+This view follows the [canonical responsibility diagram][responsibility-model].
+Use the [Cargo manifest](Cargo.toml) for Rust build package names.
+
 ## Responsibilities
 
 | Component | Responsibility |
@@ -15,7 +40,7 @@ feature-gated host primitives. Rail cores provide native protocol and settlement
 | Allowit core | Portable policy types and validation, deterministic rules, host-only transport and journal primitives |
 | Rail core | Native request encoding, addresses, signatures, simulation and settlement validation |
 | Server engine | Authentication, trusted policy context, server authority, enforcement and durable application state |
-| CLI | Commands, input/output, local key custody and actor-specific configuration |
+| CLI | Developer workflows, policy and agent keypair generation, client validation and x402 marketplace interaction |
 | Vendor adapter | Provider request/response protocols and typed facts, using common transport and workflow capabilities |
 
 Placement follows responsibility. A reusable rail workflow belongs in SDK engine even when its first caller is the server.
@@ -73,3 +98,5 @@ Run these commands from the repository root:
 cargo test --locked -p allowit-sdk-engine
 cargo clippy --locked -p allowit-sdk-engine --all-targets -- -D warnings
 ```
+
+[responsibility-model]: https://github.com/allowit-hq/allowit-project/blob/main/wiki/allowit/architecture.md#dependency-direction

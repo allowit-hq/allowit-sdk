@@ -3,6 +3,24 @@
 Replace [`src/policy.rs`](src/policy.rs) with your policy. [`src/lib.rs`](src/lib.rs) includes that file unchanged.
 The crate uses the portable `allowit` package's host `std` feature. Soroban contracts compile the same authored source with its Soroban backend.
 
+## Architecture
+
+Policy authoring uses the CLI and shared SDK logic. Core owns the common policy types, rules and primitives.
+
+```mermaid
+flowchart TB
+    CLI["[allowit-sdk]<br/>crate @allowit/cli<br/>DX: policy and agent keypair generation<br/>Policy validation · x402 marketplace"]
+    Engine["[allowit-sdk]<br/>crate @allowit/sdk/engine<br/>All other shared logic"]
+    Core["[allowit-core]<br/>crate + npm @allowit/sdk/core<br/>Common types · policy rules · primitives<br/>TypeScript interfaces"]
+
+    CLI -->|crate| Engine
+    Engine -->|crate| Core
+```
+
+Solid arrows are dependencies. Dashed arrows are runtime calls / connections.
+This view follows the [canonical responsibility diagram][responsibility-model].
+Use the [Cargo manifest](Cargo.toml) for Rust build package names.
+
 ```sh
 cargo test --locked -p allowit-policy-template
 allowit policy check cli/templates/policy/src/policy.rs
@@ -24,3 +42,5 @@ pub fn execute(ctx: &AllowitContext) -> allowit::Result {
 
 Cargo type-checks this file. The shared source gate validates its portable structure.
 An installation binds the exact source and owner configuration. A policy wallet also binds its installed contract code through owner-approved deployment.
+
+[responsibility-model]: https://github.com/allowit-hq/allowit-project/blob/main/wiki/allowit/architecture.md#dependency-direction
