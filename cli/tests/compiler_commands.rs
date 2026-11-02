@@ -39,10 +39,7 @@ fn local_commands_ignore_wallet_environment_and_broken_config() {
         ("ALLOWIT_RAIL", "bogus"),
         ("ALLOWIT_WALLET", "bogus"),
         ("ALLOWIT_CONFIG_DIR", config_dir),
-        (
-            "ALLOWIT_TEMPO_BUNDLE",
-            "/nonexistent/allowit-tempo-bundle.json",
-        ),
+        ("ALLOWIT_TEMPO_BUNDLE", "/nonexistent/retired-bundle.json"),
         (
             "ALLOWIT_STELLAR_BUNDLE",
             "/nonexistent/allowit-stellar-bundle.json",
@@ -200,10 +197,10 @@ fn global_flags_in_any_position_leave_compiler_output_unchanged() {
         serde_json::json!({"source": String::from_utf8(text.stdout).unwrap()})
     );
     let other = allowit(
-        &["--rail", "solana:devnet", "policy", "build", approval],
+        &["--rail", "stellar:futurenet", "policy", "build", approval],
         &[],
     );
-    assert_eq!(other.status.code(), Some(3));
+    assert_eq!(other.status.code(), Some(2));
     // Without --json the policy verbs print text lines, also when piped.
     for args in [
         &["policy", "check", research][..],

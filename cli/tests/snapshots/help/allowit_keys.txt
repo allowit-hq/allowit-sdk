@@ -1,4 +1,4 @@
-Manage local keys: generate, add, import, list, fund, export and remove
+Manage local Stellar keys and select the signing key
 
 Usage: allowit keys [OPTIONS] <COMMAND>
 
@@ -6,17 +6,17 @@ Examples:
   allowit keys generate agent --fund
   allowit keys add owner --public-key GOWNER…
   allowit keys ls
+  allowit keys use agent
   allowit keys show agent
 
 Commands:
-  generate  Generate a key with the rail's curve: ed25519 on Stellar and Solana, secp256k1 on Tempo
+  generate  Generate a private Stellar ed25519 key
   add       Record a public key that this device cannot sign for, such as the owner's
-  import    Import a private key in the rail's signer format, or an owner-issued executor bundle
-            (Solana executor JSON, Tempo bundle)
+  import    Import a private Stellar S seed
   ls        List keys [alias: list]
   show      Show a key's public metadata
-  fund      Fund a key's account from the rail's test faucet (Friendbot on Stellar testnet, an RPC
-            airdrop on Solana devnet and testnet)
+  use       Select an existing private key for requests on the current rail
+  fund      Fund a key's account through Stellar Testnet Friendbot
   export    Print a private key in the rail's signer format
   rm        Remove a key and its private key file
   help      Print this message or the help of the given subcommand(s)
@@ -25,10 +25,9 @@ Options:
   -h, --help  Print help
 
 Global options:
-  -n, --rail <RAIL>       Rail as CAIP-2 or alias: stellar:testnet, solana:devnet, tempo:testnet
-                          [env: ALLOWIT_RAIL] [alias: --network]
-      --wallet <ADDR>     Policy wallet address: C… on Stellar, a vault on Solana, 0x… on Tempo
-                          [env: ALLOWIT_WALLET]
+  -n, --rail <RAIL>       Stellar rail: stellar:testnet or stellar:pubnet [env: ALLOWIT_RAIL]
+                          [alias: --network]
+      --wallet <ADDR>     Stellar policy wallet address (C…) [env: ALLOWIT_WALLET]
       --output <FORMAT>   Output format [possible values: text, json]
       --json              Same as --output json
   -y, --yes               Confirm destructive actions without a prompt

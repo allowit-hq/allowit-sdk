@@ -2,8 +2,7 @@
 //! default `~/.config/allowit`, or `--config-dir`):
 //!
 //! - `config.toml`: the current rail and, per rail, the default wallet, the
-//!   agent key, known wallets, the engine URL, an RPC override and the
-//!   paid-service asset.
+//!   agent key, known wallets and an RPC override.
 //! - `keys/NAME.toml`: public key metadata. `secrets/NAME`: the private key,
 //!   mode 0600 in a 0700 directory.
 //! - `requests/`: the local request journal that `status` and `history` read.
@@ -29,12 +28,7 @@ pub(crate) struct RailSettings {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub wallets: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub engine_url: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub rpc_url: Option<String>,
-    /// The asset that `setup` chose for paid-service wallets.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub service_asset: Option<String>,
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]

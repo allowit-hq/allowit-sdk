@@ -188,7 +188,7 @@ To type-check policy source in an ordinary Rust project, depend on the facade.
 This example uses the core revision pinned by the SDK workspace:
 
 ```toml
-allowit = { package = "allowit-sdk", git = "https://github.com/allowit-hq/allowit-core.git", rev = "6aa00597a0796acf6f6fa911a86c0fe57c055b67", version = "0.1" }
+allowit = { package = "allowit-sdk", git = "https://github.com/allowit-hq/allowit-core.git", tag = "v0.1.0", version = "0.1" }
 ```
 
 The facade is for your editor. Compilation and evaluation still go through the SDK.
@@ -207,7 +207,7 @@ The facade is for your editor. Compilation and evaluation still go through the S
 All packages share one Cargo workspace, one `Cargo.lock` and one version, and depend on each other by path.
 The root `Cargo.toml` pins git dependencies from other repositories.
 This SDK depends on the rail crates and Allowit core. The rail crates depend on Allowit core.
-Every crate in the build names the same core revision.
+Every crate in the build names the same core release tag.
 
 The CLI and server engine depend on SDK engine. SDK engine composes rail and vendor capabilities.
 Those capabilities use common core types and host primitives directly.
@@ -225,8 +225,6 @@ flowchart LR
 | Repository | Crates this SDK uses |
 | --- | --- |
 | [allowit-core](https://github.com/allowit-hq/allowit-core) | `allowit-sdk`: the compiler, interpreter, registry, workflow projection, protocol, LSP, and the client, service, transport and contract modules |
-| [allowit-contracts-solana](https://github.com/allowit-hq/allowit-contracts-solana) | `allowit-native` and the Solana service and PaySH crates |
-| [allowit-contracts-tempo](https://github.com/allowit-hq/allowit-contracts-tempo) | `allowit-tempo` and `allowit-tempo-services` |
 | [allowit-contracts-stellar](https://github.com/allowit-hq/allowit-contracts-stellar) | `allowit-stellar-wallet` from `stellar/core` |
 
 Releases of this repository are annotated git tags `vX.Y.Z`: set `version` in `[workspace.package]`, merge, then tag the merge commit with `git tag -a vX.Y.Z -m vX.Y.Z <commit> && git push origin vX.Y.Z`.
@@ -236,8 +234,8 @@ Releases of this repository are annotated git tags `vX.Y.Z`: set `version` in `[
 Allowit is a small constellation of repositories, and this one sits in the middle.
 
 - [**allowit-core**](https://github.com/allowit-hq/allowit-core) defines the policy language and decides requests. Everything else trusts its hashes and its IR.
-- **The `allowit` CLI** in [`cli/`](cli/) is the command an agent actually runs: `show`, `eval`, `exec` and `status` against a running Allowit service, built on [`engine/`](engine/).
-- [**allowit-contracts-solana**](https://github.com/allowit-hq/allowit-contracts-solana), [**allowit-contracts-stellar**](https://github.com/allowit-hq/allowit-contracts-stellar) and [**allowit-contracts-tempo**](https://github.com/allowit-hq/allowit-contracts-tempo) hold the on-chain custody that enforces an approved policy on each rail, together with the rail crates that the engine and the CLI use to speak to it. They depend on Allowit core.
+- **The `allowit` CLI** in [`cli/`](cli/) is the command an agent actually runs: `wallet show`, `policy show`, `exec` and `status` against a running Allowit service, built on [`engine/`](engine/).
+- [**allowit-contracts-stellar**](https://github.com/allowit-hq/allowit-contracts-stellar) holds Stellar custody contracts and the native wallet library used by SDK engine and the CLI.
 - The hosted Allowit service, introduced at [allowit.xyz](https://allowit.xyz), owns authentication,
   trusted policy enforcement, server authority and durable application state.
   It shares SDK engine workflows with the CLI. Common host transport and journal primitives live in Allowit core.
@@ -251,7 +249,6 @@ cargo build --workspace --all-targets --locked
 cargo fmt --all --check
 cargo test --locked -p allowit-sdk-engine -p allowit-cli -p allowit-policy-template
 cargo clippy --locked -p allowit-sdk-engine -p allowit-cli --all-targets -- -D warnings
-cargo test --locked -p allowit-sdk-engine --features services
 ```
 
 CI pins Rust 1.98.0. The workflows in [`.github/workflows/`](.github/workflows/) are the authoritative list; [`AGENTS.md`](AGENTS.md) explains how to pick the right ones for a change. Allowit core and the rail crates have their own tests and CI in their repositories.

@@ -29,7 +29,7 @@ pub(crate) struct Args {
 pub(crate) fn run(args: Args, cx: &mut Ctx) -> Result<i32> {
     if !request_id_valid(&args.id) {
         return Err(Error::usage(
-            "ID must be the request ID that exec or eval printed: 8 to 100 characters from A-Z a-z 0-9 . _ : -",
+            "ID must be the request ID that exec printed: 8 to 100 characters from A-Z a-z 0-9 . _ : -",
         ));
     }
     cx.out.request_id = Some(args.id.clone());

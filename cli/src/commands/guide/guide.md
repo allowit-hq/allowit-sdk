@@ -10,16 +10,15 @@ allowit rail ls
 allowit rail use stellar:testnet
 ```
 
-Rails accept aliases (`stellar:testnet`, `solana:devnet`, `tempo:testnet`).
+The rails are `stellar:testnet` and `stellar:pubnet`; `stellar:mainnet` aliases `stellar:pubnet`.
 Output always uses the CAIP-2 identifier. A command that needs a rail exits 3
 until one is selected.
 
-## 2. Create and register your key
+## 2. Create and select your key
 
 ```sh
 allowit keys generate agent --fund
-allowit setup --agent agent
-allowit whoami
+allowit keys use agent
 ```
 
 Private keys stay in the config directory. No flag accepts a secret.
@@ -39,12 +38,11 @@ allowit exec --op transfer --to GDEST… --amount XLM:5 --request-id pay-0001
 allowit status pay-0001 --wait 60s
 ```
 
-`allowit rail show` lists the verbs that work on the rail; a verb that does
-not work there exits 3. Where it lists `eval`, `allowit eval` takes the
-`exec` flags and asks the policy without spending. `exec` prints a new
-request ID on stderr when you give none. After exit 5, retry only with the
-same `--request-id`, or read the result with `status`. `history` lists your
-requests.
+Set `ALLOWIT_STELLAR_BUNDLE` to the owner's public wallet profile and `ALLOWIT_URL` to the server origin.
+The selected key must match the profile's agent. `allowit rail show` lists the supported operations.
+`exec` prints a generated request ID on stderr when none was supplied.
+After exit 5, retry only with the same `--request-id`, or read the result with `status`.
+`history` lists local requests.
 
 Amounts: `CODE:DECIMAL` (`USDC:10`), `CODE:ISSUER:DECIMAL`, `C…:DECIMAL`
 (Stellar asset contract) or an `INTEGER` of base units. `XLM` and `native`

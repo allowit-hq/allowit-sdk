@@ -56,8 +56,6 @@ impl Sandbox {
         }
         c.current_dir(self.work())
             .env("ALLOWIT_CONFIG_DIR", self.config())
-            .env("HOME", self.root.join("home"))
-            .env("XDG_CONFIG_HOME", self.root.join("xdg"))
             .env("NO_COLOR", "1")
             .env("COLUMNS", "100")
             .env("HTTPS_PROXY", "http://127.0.0.1:1")

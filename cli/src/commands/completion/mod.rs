@@ -72,7 +72,7 @@ mod tests {
             for hidden in ["stellar-native", "tune-action"] {
                 assert!(!script.contains(hidden), "{shell}: {hidden}");
             }
-            assert!(script.contains("generate") && script.contains("withdraw"));
+            assert!(script.contains("generate") && script.contains("status"));
         }
     }
 }

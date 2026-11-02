@@ -1,5 +1,5 @@
 //! Stellar agent requests against a mock engine: `exec --op transfer` and
-//! `status ID` with the agent key from `setup --agent` and the public wallet
+//! `status ID` with the agent key from `keys use` and the public wallet
 //! profile. The mock checks the agent's request proof and real signatures.
 #![cfg(unix)]
 mod common;
@@ -158,7 +158,7 @@ fn setup(c: &WalletConfig, seed: u8, mock: &Mock) -> Sandbox {
     sandbox.ok(&["rail", "use", "stellar:testnet"]);
     sandbox.ok(&["keys", "import", "agent", key.to_str().unwrap()]);
     std::fs::remove_file(key).unwrap();
-    sandbox.ok(&["setup", "--agent", "agent"]);
+    sandbox.ok(&["keys", "use", "agent"]);
     let path = sandbox.work().join("profile.json");
     std::fs::write(&path, profile(c).to_string()).unwrap();
     sandbox.set("ALLOWIT_STELLAR_BUNDLE", &path);
@@ -738,7 +738,7 @@ fn replacement_agent_key_recovers_original_receipt_and_exact_journal_without_sig
     // The owner rotates the agent: a new key and a profile that names it.
     let key = sandbox.private_file("agent9.key", &common::stellar_seed([9; 32]));
     sandbox.ok(&["keys", "import", "agent9", key.to_str().unwrap()]);
-    sandbox.ok(&["setup", "--agent", "agent9", "--force"]);
+    sandbox.ok(&["keys", "use", "agent9"]);
     let mut rotated = profile(&config);
     rotated["config"]["agent"] = json!(sdk::account_for_seed(&[9; 32]));
     std::fs::write(sandbox.work().join("profile.json"), rotated.to_string()).unwrap();
@@ -787,11 +787,11 @@ fn status_uses_the_journaled_rail_and_refuses_another() {
     assert_eq!(code(&exec(&sandbox)), Some(4));
     // Another current rail does not change where status looks: neither
     // `rail use` nor ALLOWIT_RAIL conflicts with the journal.
-    sandbox.ok(&["rail", "use", "solana:devnet"]);
-    sandbox.set("ALLOWIT_RAIL", "solana:devnet");
+    sandbox.ok(&["rail", "use", "stellar:pubnet"]);
+    sandbox.set("ALLOWIT_RAIL", "stellar:pubnet");
     let shown = status(&sandbox);
     assert_eq!(code(&shown), Some(12), "{}", stderr(&shown));
-    let refused = sandbox.run(&["--rail", "solana:devnet", "status", ID]);
+    let refused = sandbox.run(&["--rail", "stellar:pubnet", "status", ID]);
     assert_eq!(code(&refused), Some(2));
     assert!(stderr(&refused).contains("belongs to stellar:testnet"));
     server.join().unwrap();
@@ -816,4 +816,15 @@ fn status_uses_the_journaled_rail_and_refuses_another() {
         "{}",
         stderr(&shown)
     );
+}
+
+#[test]
+fn selected_key_must_match_the_wallet_agent_before_transport_or_signing() {
+    let (config, _, _, _) = fixture();
+    let mock = Mock::new();
+    let sandbox = setup(&config, 9, &mock);
+    let refused = exec(&sandbox);
+    assert_eq!(code(&refused), Some(3), "{}", stderr(&refused));
+    assert!(stderr(&refused).contains("agent key differs from the wallet profile agent"));
+    mock.assert_untouched();
 }

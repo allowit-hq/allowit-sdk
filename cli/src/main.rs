@@ -7,7 +7,6 @@ fn main() {
             .map(|s| (*s).to_owned())
             .or_else(|| info.payload().downcast_ref::<String>().cloned())
             .unwrap_or_default();
-        allowit_cli::restore_stderr();
         eprintln!("error: internal error: {message}");
         std::process::exit(1);
     }));

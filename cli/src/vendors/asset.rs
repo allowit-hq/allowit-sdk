@@ -4,10 +4,9 @@
 //! | Form | Meaning |
 //! |---|---|
 //! | `CODE:DECIMAL` | display units of a token from the rail's table; `native` names the native asset |
-//! | `CODE:ISSUER:DECIMAL` | ISSUER is a Stellar G issuer, a Solana mint or a Tempo 0x token |
+//! | `CODE:ISSUER:DECIMAL` | ISSUER is a Stellar G issuer |
 //! | `C…:DECIMAL` | a Stellar asset contract (Stellar only) |
 //! | `INTEGER` | base units of the wallet's installed asset, or vault shares |
-//! | `CODE:max` | the whole balance; `wallet withdraw` only |
 //!
 //! `--token-out` takes `ASSET:MIN` in the same forms; MIN may be zero. Vault
 //! shares, the `--amount` of a redeem and the `--token-out` of a deposit, are
@@ -45,15 +44,9 @@ pub(crate) enum Asset {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) enum Quantity {
-    Units(u128),
-    Max,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct Amount {
     pub asset: Asset,
-    pub quantity: Quantity,
+    pub quantity: u128,
     /// Decimals of the asset; `None` for base units of the installed asset.
     pub decimals: Option<u8>,
     /// The original input, for the request journal.
@@ -63,14 +56,10 @@ pub(crate) struct Amount {
 /// Where an amount appears, which decides the forms it may take.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Use {
-    /// `--amount`, `wallet fund`: a positive amount.
+    /// `--amount`: a positive amount.
     Spend,
-    /// `wallet withdraw`: a positive amount or `CODE:max`.
-    Withdraw,
     /// `--token-out ASSET:MIN`: an asset is required and MIN may be zero.
     Minimum,
-    /// A policy parameter value: a nonnegative amount.
-    Limit,
     /// Vault shares: a positive INTEGER of base units.
     Shares,
 }
@@ -86,27 +75,12 @@ pub(crate) fn exec_uses(op: &str) -> (Use, Use) {
 }
 
 impl Amount {
-    pub(crate) fn units(&self) -> Option<u128> {
-        match self.quantity {
-            Quantity::Units(u) => Some(u),
-            Quantity::Max => None,
-        }
+    pub(crate) fn units(&self) -> u128 {
+        self.quantity
     }
 }
 
 const FORMS: &str = "use CODE:DECIMAL, CODE:ISSUER:DECIMAL, C…:DECIMAL or INTEGER base units";
-
-/// Formats base units as a decimal without trailing zeros.
-pub(crate) fn format_units(units: u128, decimals: u8) -> String {
-    let scale = 10u128.pow(u32::from(decimals));
-    let whole = units / scale;
-    let fraction = units % scale;
-    if fraction == 0 {
-        return whole.to_string();
-    }
-    let digits = format!("{fraction:0width$}", width = usize::from(decimals));
-    format!("{whole}.{}", digits.trim_end_matches('0'))
-}
 
 /// Converts a display decimal to base units, refusing extra precision.
 pub(crate) fn decimal_units(text: &str, decimals: u8) -> Result<u128> {
@@ -171,12 +145,12 @@ pub(crate) fn parse(family: Family, tokens: &[Token], text: &str, usage: Use) ->
         let units: u128 = text
             .parse()
             .map_err(|_| Error::usage(format!("{} is too large", quoted(text))))?;
-        if units == 0 && usage != Use::Limit {
+        if units == 0 {
             return Err(Error::usage("the amount must be positive"));
         }
         return Ok(Amount {
             asset: Asset::Installed,
-            quantity: Quantity::Units(units),
+            quantity: units,
             decimals: None,
             text: text.into(),
         });
@@ -198,18 +172,10 @@ pub(crate) fn parse(family: Family, tokens: &[Token], text: &str, usage: Use) ->
             )));
         }
     };
-    let quantity = if quantity == "max" {
-        if usage != Use::Withdraw {
-            return Err(Error::usage("CODE:max is accepted only by wallet withdraw"));
-        }
-        Quantity::Max
-    } else {
-        let units = decimal_units(quantity, decimals)?;
-        if units == 0 && !matches!(usage, Use::Minimum | Use::Limit) {
-            return Err(Error::usage("the amount must be positive"));
-        }
-        Quantity::Units(units)
-    };
+    let quantity = decimal_units(quantity, decimals)?;
+    if quantity == 0 && usage != Use::Minimum {
+        return Err(Error::usage("the amount must be positive"));
+    }
     Ok(Amount {
         asset,
         quantity,
@@ -308,36 +274,13 @@ mod tests {
             issuer: Some("GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5"),
         },
     ];
-    const SOLANA: &[Token] = &[
-        Token {
-            code: "SOL",
-            decimals: 9,
-            native: true,
-            issuer: None,
-        },
-        Token {
-            code: "USDC",
-            decimals: 6,
-            native: false,
-            issuer: Some("4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU"),
-        },
-    ];
     fn units(family: Family, tokens: &[Token], s: &str) -> u128 {
-        parse(family, tokens, s, Use::Spend)
-            .unwrap()
-            .units()
-            .unwrap()
+        parse(family, tokens, s, Use::Spend).unwrap().units()
     }
     #[test]
-    fn units_parse_and_format_with_the_rail_decimals() {
+    fn units_parse_with_stellar_decimals() {
         assert_eq!(units(Family::Stellar, STELLAR, "XLM:5"), 50_000_000);
         assert_eq!(units(Family::Stellar, STELLAR, "USDC:0.25"), 2_500_000);
-        assert_eq!(units(Family::Solana, SOLANA, "USDC:0.25"), 250_000);
-        assert_eq!(units(Family::Solana, SOLANA, "SOL:1"), 1_000_000_000);
-        assert_eq!(units(Family::Solana, SOLANA, "1500"), 1500);
-        assert_eq!(format_units(2_500_000, 7), "0.25");
-        assert_eq!(format_units(50_000_000, 7), "5");
-        assert_eq!(format_units(1, 6), "0.000001");
         assert_eq!(decimal_units("0.000001", 6).unwrap(), 1);
     }
     #[test]
@@ -357,50 +300,26 @@ mod tests {
             Use::Spend,
         )
         .unwrap();
-        assert_eq!(issued.units(), Some(15_000_000));
+        assert_eq!(issued.units(), 15_000_000);
         assert!(matches!(issued.asset, Asset::Token { ref issuer, .. } if issuer.is_some()));
         let native = allowit_stellar_wallet::asset_from_identity("XLM", None).unwrap();
         let sac = allowit_stellar_wallet::sac_address("stellar:testnet", &native).unwrap();
         let contract = parse(Family::Stellar, STELLAR, &format!("{sac}:2"), Use::Spend).unwrap();
         assert_eq!(contract.asset, Asset::Contract(sac.clone()));
-        assert_eq!(contract.units(), Some(20_000_000));
-        assert!(parse(Family::Solana, SOLANA, &format!("{sac}:2"), Use::Spend).is_err());
+        assert_eq!(contract.units(), 20_000_000);
         let installed = parse(Family::Stellar, STELLAR, "100", Use::Spend).unwrap();
         assert_eq!(installed.asset, Asset::Installed);
         assert_eq!(installed.decimals, None);
-        assert!(
-            parse(
-                Family::Solana,
-                SOLANA,
-                "BONK:DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263:1",
-                Use::Spend
-            )
-            .is_err()
-        );
     }
     #[test]
-    fn max_minimum_and_bad_input() {
+    fn minimum_and_bad_input() {
         let huge = decimal_units(&u128::MAX.to_string(), 7).unwrap_err();
         assert_eq!(huge.code, 2);
         assert!(huge.message.contains("is too large"), "{}", huge.message);
-        let max = parse(Family::Stellar, STELLAR, "XLM:max", Use::Withdraw).unwrap();
-        assert_eq!(max.quantity, Quantity::Max);
         assert!(parse(Family::Stellar, STELLAR, "XLM:max", Use::Spend).is_err());
-        assert_eq!(
-            parse(Family::Stellar, STELLAR, "XLM:0", Use::Limit)
-                .unwrap()
-                .units(),
-            Some(0)
-        );
-        assert_eq!(
-            parse(Family::Stellar, STELLAR, "0", Use::Limit)
-                .unwrap()
-                .units(),
-            Some(0)
-        );
         assert!(parse(Family::Stellar, STELLAR, "0", Use::Spend).is_err());
         let min = parse(Family::Stellar, STELLAR, "USDC:0", Use::Minimum).unwrap();
-        assert_eq!(min.units(), Some(0));
+        assert_eq!(min.units(), 0);
         assert!(parse(Family::Stellar, STELLAR, "10", Use::Minimum).is_err());
         for bad in [
             "",

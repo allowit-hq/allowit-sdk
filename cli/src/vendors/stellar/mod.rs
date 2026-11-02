@@ -2,8 +2,8 @@
 //!
 //! - `keys fund`: Friendbot on testnet.
 //! - `exec --op transfer|deposit|redeem`, `status`: the installed wallet
-//!   profile's engine endpoints, signed by the rail's agent key (`setup
-//!   --agent`). Deposits and redeems need a policy wallet and a SEP-56 vault.
+//!   profile's engine endpoints, signed by the rail's agent key (`keys use`).
+//!   Deposits and redeems need a policy wallet and a SEP-56 vault.
 //!   The public wallet profile comes from `ALLOWIT_STELLAR_BUNDLE` until the
 //!   wallet is resolved from chain state.
 //! - `wallet show`, `policy show`: the public wallet profile.
@@ -125,12 +125,8 @@ impl Rail for Stellar {
         Caps {
             curve: "ed25519",
             address_is_key: true,
-            service_asset: "USDC",
             ops: &["transfer", "deposit", "redeem"],
             exec_build_only: true,
-            // No `policy params set` backend yet.
-            param_keys: &[],
-            signing: &[],
             verbs: if self.0.testnet {
                 &[
                     "keys fund",

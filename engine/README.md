@@ -25,12 +25,9 @@ Rail packages can use common core primitives directly. Core has no dependency on
 
 | Module | Purpose |
 | --- | --- |
-| `client` | Allowit backend requests with bounded responses and single-send semantics for payment-bearing requests |
-| `gateway` | Gateway requests and shared request options |
-| `request`, `typed_request` | Request fields, bounded input documents and operation identities |
-| `config`, `routing`, `wallet` | Configuration, network selection and calling-actor wallet bindings |
-| `output`, `skill` | Result classification, printable values and public operation descriptions |
-| `services` | Shared service contracts and selected rail/vendor capabilities, enabled by the `services` feature |
+| `request`, `typed_request` | Bounded request identifiers, input documents and operation identities |
+| `config`, `routing`, `wallet` | Configuration, Stellar network selection and caller-owned key bindings |
+| `output` | Shared printable values |
 | `error` | The error type from `allowit_sdk::client::error` |
 
 ## Communication and authority
@@ -48,7 +45,6 @@ SDK engine shares workflow logic between those callers without transferring thei
 
 Vendor adapters translate provider protocols. Generic transport, retry budgets and journal mechanics belong in common code.
 An adapter exposes an explicit provider recovery contract instead of duplicating the provider's delivery workflow.
-The shared core's `Upstream::cached` and `Upstream::resume` contracts preserve that boundary.
 
 ## Develop
 
@@ -57,5 +53,4 @@ Run these commands from the repository root:
 ```sh
 cargo test --locked -p allowit-sdk-engine
 cargo clippy --locked -p allowit-sdk-engine --all-targets -- -D warnings
-cargo clippy --locked -p allowit-sdk-engine --features services --all-targets -- -D warnings
 ```

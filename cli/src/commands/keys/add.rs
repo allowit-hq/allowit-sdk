@@ -3,15 +3,14 @@ use crate::{ctx::Ctx, error::Result, settings::keys};
 
 pub(crate) const EXAMPLES: &str = "\
 Examples:
-  allowit keys add owner --public-key GOWNER…
-  allowit --rail solana:devnet keys add owner --public-key OWNER_PUBKEY";
+  allowit keys add owner --public-key GOWNER…";
 
 /// Record a public key that this device cannot sign for, such as the owner's
 #[derive(clap::Args, Debug)]
 pub(crate) struct Args {
     /// Key name
     pub name: String,
-    /// The account address: G… on Stellar, base58 on Solana, 0x… on Tempo
+    /// The Stellar account address (G…)
     #[arg(long, value_name = "ADDR")]
     pub public_key: String,
 }

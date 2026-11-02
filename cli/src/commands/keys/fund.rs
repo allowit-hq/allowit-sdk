@@ -3,11 +3,9 @@ use crate::{ctx::Ctx, error::Result};
 
 pub(crate) const EXAMPLES: &str = "\
 Examples:
-  allowit --rail stellar:testnet keys fund agent
-  allowit --rail solana:devnet keys fund agent";
+  allowit --rail stellar:testnet keys fund agent";
 
-/// Fund a key's account from the rail's test faucet (Friendbot on Stellar
-/// testnet, an RPC airdrop on Solana devnet and testnet)
+/// Fund a key's account through Stellar Testnet Friendbot
 #[derive(clap::Args, Debug)]
 pub(crate) struct Args {
     /// Key name

@@ -35,7 +35,7 @@ pub(crate) fn check(op: &str, to: &str, token_out: Option<&Amount>, args: bool) 
         ("redeem", None) => Err(Error::usage(
             "a redeem needs --token-out ASSET:MIN, the least of the wallet asset to receive",
         )),
-        ("redeem", Some(min)) if min.units() == Some(0) => Err(Error::usage(
+        ("redeem", Some(min)) if min.units() == 0 => Err(Error::usage(
             "a redeem needs a positive --token-out minimum",
         )),
         ("deposit" | "redeem", Some(_)) => Ok(()),
@@ -188,9 +188,7 @@ fn shares(amount: &Amount) -> Result<i128> {
 }
 
 fn units(amount: &Amount) -> Result<i128> {
-    let units = amount
-        .units()
-        .ok_or_else(|| Error::usage("the operation needs an exact amount"))?;
+    let units = amount.units();
     i128::try_from(units).map_err(|_| Error::usage("the amount is too large"))
 }
 
@@ -202,10 +200,7 @@ mod tests {
         ctx::Ctx,
         routing::Family,
         term::Out,
-        vendors::{
-            Mode,
-            asset::{exec_uses, parse},
-        },
+        vendors::asset::{exec_uses, parse},
     };
     use std::time::Duration;
 
@@ -264,7 +259,6 @@ mod tests {
         let tokens = super::super::tokens_for("stellar:testnet");
         let (spend, minimum) = exec_uses(op);
         ExecRequest {
-            mode: Mode::Exec,
             op: op.into(),
             to: to.into(),
             amount: parse(Family::Stellar, tokens, amount, spend).unwrap(),
@@ -407,8 +401,7 @@ mod tests {
                 request_id: Some("request-0001".into()),
                 wait: Duration::ZERO,
             };
-            let error =
-                crate::commands::exec::submit(Mode::Exec, args, false, &mut cx).unwrap_err();
+            let error = crate::commands::exec::submit(args, false, &mut cx).unwrap_err();
             assert_eq!(error.code, 2, "{op} {to}: {}", error.message);
             assert!(error.message.contains(needle), "{}", error.message);
         }

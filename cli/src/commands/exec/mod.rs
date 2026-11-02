@@ -5,7 +5,7 @@ use crate::{
     error::{Error, Result, quoted},
     request::request_id_valid,
     settings::journal,
-    vendors::{ExecRequest, Mode, asset::exec_uses},
+    vendors::{ExecRequest, asset::exec_uses},
 };
 use std::{path::Path, time::Duration};
 
@@ -17,7 +17,7 @@ Examples:
   allowit exec --op deposit --to CVAULT… --amount USDC:100 --token-out 990000000
   allowit exec --op redeem --to CVAULT… --amount 500000000 --token-out USDC:49.5";
 
-/// The request flags shared by `exec` and `eval`.
+/// The request flags shared by `exec`.
 #[derive(clap::Args, Debug)]
 pub(crate) struct RequestArgs {
     /// transfer, swap, deposit, redeem, custom, custom.FN or custom:C….FN
@@ -54,7 +54,7 @@ pub(crate) struct Args {
 }
 
 pub(crate) fn run(args: Args, cx: &mut Ctx) -> Result<i32> {
-    submit(Mode::Exec, args.request, args.build_only, cx)
+    submit(args.request, args.build_only, cx)
 }
 
 /// Checks the `--op` syntax. Which operations work depends on the rail.
@@ -81,14 +81,14 @@ pub(crate) fn check_op(op: &str) -> Result<()> {
     }
 }
 
-/// Builds, journals and sends one `exec` or `eval` request.
-pub(crate) fn submit(mode: Mode, a: RequestArgs, build_only: bool, cx: &mut Ctx) -> Result<i32> {
+/// Builds, journals and sends one `exec` request.
+pub(crate) fn submit(a: RequestArgs, build_only: bool, cx: &mut Ctx) -> Result<i32> {
     check_op(&a.op)?;
     let rail = cx.rail()?;
     let vendor = cx.vendor()?;
     // Refuse what the rail cannot serve before a request ID is spent.
-    if !vendor.caps().verbs.contains(&mode.name()) {
-        return Err(vendor.na(mode.name()));
+    if !vendor.caps().verbs.contains(&"exec") {
+        return Err(vendor.na("exec"));
     }
     if build_only && !vendor.caps().exec_build_only {
         return Err(vendor.na("exec --build-only"));
@@ -135,7 +135,6 @@ pub(crate) fn submit(mode: Mode, a: RequestArgs, build_only: bool, cx: &mut Ctx)
     };
     cx.out.request_id = Some(request_id.clone());
     let request = ExecRequest {
-        mode,
         op: a.op,
         to: a.to,
         amount,
@@ -156,7 +155,7 @@ pub(crate) fn submit(mode: Mode, a: RequestArgs, build_only: bool, cx: &mut Ctx)
             &dir,
             &journal::Entry {
                 request_id: request_id.clone(),
-                command: mode.name().into(),
+                command: "exec".into(),
                 rail: rail.id.into(),
                 wallet: binding.wallet.clone(),
                 policy: binding.policy.clone(),
@@ -168,10 +167,7 @@ pub(crate) fn submit(mode: Mode, a: RequestArgs, build_only: bool, cx: &mut Ctx)
             },
         )?;
     }
-    let result = match mode {
-        Mode::Exec => vendor.exec(cx, &request),
-        Mode::Eval => vendor.eval(cx, &request),
-    };
+    let result = vendor.exec(cx, &request);
     if !build_only {
         let code = match &result {
             Ok(code) => *code,
