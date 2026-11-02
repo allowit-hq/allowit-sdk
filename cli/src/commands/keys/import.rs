@@ -11,12 +11,12 @@ Examples:
   allowit keys import agent agent.key
   pass show allowit/agent | allowit keys import agent -";
 
-/// Import a private Stellar S seed
+/// Import a private key in the selected rail's signer format
 #[derive(clap::Args, Debug)]
 pub(crate) struct Args {
     /// Key name
     pub name: String,
-    /// The private S seed file; - reads stdin
+    /// The private key file; - reads stdin
     pub file: PathBuf,
 }
 

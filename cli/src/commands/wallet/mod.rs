@@ -14,7 +14,7 @@ Examples:
   allowit wallet use CWALLET…
   allowit wallet show";
 
-/// Select and inspect installed Stellar policy wallets
+/// Select and inspect installed policy wallets
 #[derive(Subcommand, Debug)]
 pub(crate) enum Command {
     #[command(visible_alias = "list", before_help = ls::EXAMPLES)]

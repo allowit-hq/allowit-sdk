@@ -61,12 +61,22 @@ fn offline_help_examples_run_and_print_only_data() {
                 .map(str::to_owned),
         );
     }
+    let rails = sandbox.json(&["rail", "ls"]);
+    let example_rail = rails
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|rail| rail["testnet"] == true)
+        .and_then(|rail| rail["rail"].as_str())
+        .expect("the build needs a Testnet rail for offline key examples");
+    let rail_use = format!("allowit rail use {example_rail}");
+    let rail_show = format!("allowit rail show {example_rail} --json");
     let run_all = [
         "allowit rail ls",
         "allowit rail ls --json",
-        "allowit rail use stellar:testnet",
+        rail_use.as_str(),
         "allowit rail show",
-        "allowit rail show stellar:testnet --json",
+        rail_show.as_str(),
         "allowit keys generate agent",
         "allowit keys ls",
         "allowit keys ls --json",
@@ -259,4 +269,98 @@ fn version_flag_and_command_agree() {
     let command = String::from_utf8(command.stdout).unwrap();
     assert!(flag.starts_with("allowit "), "{flag}");
     assert!(flag.contains(command.trim()), "{flag} / {command}");
+}
+
+#[test]
+fn help_examples_follow_selection_without_creating_or_editing_settings() {
+    let mut sandbox = common::Sandbox::new("help-selection");
+    let rails = sandbox.json(&["rail", "ls"]);
+    let ids: Vec<_> = rails
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|rail| rail["rail"].as_str())
+        .collect();
+    let Some(first) = ids.first().copied() else {
+        return;
+    };
+    // rail ls creates local settings. Remove its empty directory so the help
+    // assertion covers a genuinely fresh installation.
+    std::fs::remove_dir_all(sandbox.config()).unwrap();
+    let help = |output: std::process::Output| {
+        assert_eq!(output.status.code(), Some(0));
+        assert!(output.stderr.is_empty());
+        String::from_utf8(output.stdout).unwrap()
+    };
+    let first_example = format!("allowit rail use {first}");
+    let default_help = help(sandbox.run(&["rail", "use", "--help"]));
+    assert!(default_help.contains(&first_example), "{default_help}");
+    assert!(!default_help.contains("__ALLOWIT_EXAMPLE_RAIL__"));
+    assert!(!sandbox.config().exists(), "help created settings");
+    let guide = sandbox.ok(&["guide"]);
+    assert!(guide.contains(&first_example), "{guide}");
+    assert!(!sandbox.config().exists(), "guide created settings");
+
+    let selected = ids.last().copied().unwrap();
+    sandbox.ok(&["rail", "use", selected]);
+    let config_path = sandbox.config().join("config.toml");
+    let before = std::fs::read(&config_path).unwrap();
+    let current_example = format!("allowit rail use {selected}");
+    let selected_help = help(sandbox.run(&["rail", "use", "--help"]));
+    assert!(selected_help.contains(&current_example), "{selected_help}");
+    assert!(sandbox.ok(&["guide"]).contains(&current_example));
+    assert_eq!(std::fs::read(&config_path).unwrap(), before);
+    assert!(!sandbox.config().join("keys").exists());
+    assert!(!sandbox.config().join("secrets").exists());
+
+    sandbox.set("ALLOWIT_RAIL", first);
+    let env_help = help(sandbox.run(&["rail", "use", "--help"]));
+    assert!(env_help.contains(&first_example), "{env_help}");
+    let flag_help = help(sandbox.run(&["rail", "use", "--rail", selected, "--help"]));
+    assert!(flag_help.contains(&current_example), "{flag_help}");
+    let late_flag = help(sandbox.run(&["rail", "use", "--help", "--rail", selected]));
+    assert!(late_flag.contains(&current_example), "{late_flag}");
+    let subcommand_help = help(sandbox.run(&["--rail", selected, "help", "rail", "use"]));
+    assert!(
+        subcommand_help.contains(&current_example),
+        "{subcommand_help}"
+    );
+    let incomplete = help(sandbox.run(&["keys", "add", "--help", "--rail", selected]));
+    assert!(!incomplete.contains("__ALLOWIT_EXAMPLE_RAIL__"));
+    // A help hint cannot normalize an invalid execution choice into another rail.
+    let invalid = sandbox.run(&["--rail", "not-registered:network", "rail", "show"]);
+    assert_eq!(invalid.status.code(), Some(2));
+    assert_eq!(std::fs::read(&config_path).unwrap(), before);
+}
+
+#[test]
+fn help_falls_back_for_unreadable_or_invalid_config_without_repairing_it() {
+    let sandbox = common::Sandbox::new("help-config");
+    let rails = sandbox.json(&["rail", "ls"]);
+    let Some(first) = rails
+        .as_array()
+        .unwrap()
+        .first()
+        .and_then(|rail| rail["rail"].as_str())
+    else {
+        return;
+    };
+    let path = sandbox.config().join("config.toml");
+    for text in [
+        "rail = [",
+        "rail = 'not-registered:network'",
+        "# no selection\n",
+    ] {
+        std::fs::write(&path, text).unwrap();
+        let output = sandbox.run(&["rail", "use", "--help"]);
+        assert_eq!(output.status.code(), Some(0));
+        assert!(output.stderr.is_empty());
+        let shown = String::from_utf8(output.stdout).unwrap();
+        assert!(
+            shown.contains(&format!("allowit rail use {first}")),
+            "{shown}"
+        );
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), text);
+        assert_eq!(std::fs::read_dir(sandbox.config()).unwrap().count(), 1);
+    }
 }

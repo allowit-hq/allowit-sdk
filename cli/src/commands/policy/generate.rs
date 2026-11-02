@@ -10,7 +10,7 @@ use allowit_stellar_wallet as native;
 use std::time::{SystemTime, UNIX_EPOCH};
 use zeroize::Zeroizing;
 
-pub(crate) const EXAMPLES: &str = "Examples:\n  allowit --rail stellar:testnet policy generate --owner-key owner --origin http://localhost:5173 --profile allowit-stellar-policy-wallet-v1 --new-wallet 'Pay only my approved recipient, up to 1 XLM per payment'";
+pub(crate) const EXAMPLES: &str = "Examples:\n  allowit policy generate --owner-key owner --origin http://localhost:5173 --profile PROFILE --new-wallet 'Pay only my approved recipient'";
 
 /// Generate a portable draft through the owner-authenticated server; does not deploy or spend
 #[derive(clap::Args, Debug)]

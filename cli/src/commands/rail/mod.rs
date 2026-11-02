@@ -9,7 +9,7 @@ use clap::Subcommand;
 pub(crate) const EXAMPLES: &str = "\
 Examples:
   allowit rail ls
-  allowit rail use stellar:testnet
+  allowit rail use __ALLOWIT_EXAMPLE_RAIL__
   allowit rail show";
 
 /// List rails, show what a rail supports and choose the current rail

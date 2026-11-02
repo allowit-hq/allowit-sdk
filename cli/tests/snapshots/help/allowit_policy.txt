@@ -19,10 +19,9 @@ Options:
   -h, --help  Print help
 
 Global options:
-  -n, --rail <RAIL>       Stellar rail: stellar:testnet or stellar:pubnet [env: ALLOWIT_RAIL]
-                          [alias: --network]
-      --wallet <ADDR>     Stellar wallet address (G… classic account or C… policy contract) [env:
-                          ALLOWIT_WALLET]
+  -n, --rail <RAIL>       Rail identifier or alias from rail ls [env: ALLOWIT_RAIL] [alias:
+                          --network]
+      --wallet <ADDR>     Wallet address accepted by the selected rail [env: ALLOWIT_WALLET]
       --output <FORMAT>   Output format [possible values: text, json]
       --json              Same as --output json
   -y, --yes               Confirm destructive actions without a prompt

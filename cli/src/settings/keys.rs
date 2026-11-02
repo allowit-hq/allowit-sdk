@@ -1,6 +1,6 @@
 //! Named keys. `keys/NAME.toml` holds public metadata only. The private key,
 //! when this device has one, lives in `secrets/NAME` (mode 0600 in a 0700
-//! directory), encoded as a Stellar S seed.
+//! directory), encoded in the selected rail's signer format.
 use crate::{
     error::{Error, Result, quoted},
     routing::{self, Family},

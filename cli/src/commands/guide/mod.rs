@@ -14,6 +14,8 @@ pub(crate) struct Args {}
 
 pub(crate) fn run(_: Args, cx: &mut Ctx) -> Result<i32> {
     cx.out.raw = true;
-    cx.out.stdout.push_str(GUIDE);
+    cx.out
+        .stdout
+        .push_str(&super::examples::render(GUIDE, &cx.global));
     Ok(0)
 }

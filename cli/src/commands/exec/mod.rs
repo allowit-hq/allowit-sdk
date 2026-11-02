@@ -11,22 +11,22 @@ use std::{path::Path, time::Duration};
 
 pub(crate) const EXAMPLES: &str = "\
 Examples:
-  allowit exec --op transfer --to GDEST… --amount XLM:5
-  allowit exec --op transfer --to GDEST… --amount XLM:5 --request-id pay-0001 --wait 2m
-  allowit exec --op transfer --to GDEST… --amount 50000000 --build-only
-  allowit exec --op deposit --to CVAULT… --amount USDC:100 --token-out 990000000
-  allowit exec --op redeem --to CVAULT… --amount 500000000 --token-out USDC:49.5";
+  allowit exec --op transfer --to DESTINATION --amount ASSET:5
+  allowit exec --op transfer --to DESTINATION --amount ASSET:5 --request-id pay-0001 --wait 2m
+  allowit exec --op transfer --to DESTINATION --amount 50000000 --build-only
+  allowit exec --op deposit --to VAULT --amount ASSET:100 --token-out 990000000
+  allowit exec --op redeem --to VAULT --amount 500000000 --token-out ASSET:49.5";
 
 /// The request flags shared by `exec`.
 #[derive(clap::Args, Debug)]
 pub(crate) struct RequestArgs {
-    /// transfer, swap, deposit, redeem, custom, custom.FN or custom:C….FN
+    /// transfer, swap, deposit, redeem, custom, custom.FN or custom:CONTRACT.FN
     #[arg(long, value_name = "OP")]
     pub op: String,
     /// The recipient address, or the vault of a deposit or redeem
     #[arg(long, value_name = "ADDR")]
     pub to: String,
-    /// CODE:DECIMAL, CODE:ISSUER:DECIMAL, C…:DECIMAL or INTEGER base units; INTEGER vault shares for redeem
+    /// Amount in the selected rail's asset format, or INTEGER base units; INTEGER vault shares for redeem
     #[arg(long, value_name = "AMOUNT")]
     pub amount: String,
     /// The minimum to receive: ASSET:MIN for swap and redeem, INTEGER vault shares for deposit

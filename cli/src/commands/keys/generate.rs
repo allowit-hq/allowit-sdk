@@ -6,7 +6,7 @@ Examples:
   allowit keys generate agent
   allowit keys generate owner --fund";
 
-/// Generate a private Stellar ed25519 key
+/// Generate a private signing key for the selected rail
 #[derive(clap::Args, Debug)]
 pub(crate) struct Args {
     /// Key name

@@ -1,4 +1,4 @@
-//! Select the local signing key for a Stellar rail.
+//! Select the local signing key for the current rail.
 use crate::{
     ctx::Ctx,
     error::{Error, Result},

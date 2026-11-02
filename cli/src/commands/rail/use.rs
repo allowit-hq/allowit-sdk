@@ -1,10 +1,9 @@
-//! `allowit rail use RAIL`.
+//! `allowit rail use __ALLOWIT_EXAMPLE_RAIL__`.
 use crate::{ctx::Ctx, error::Result, routing};
 
 pub(crate) const EXAMPLES: &str = "\
 Examples:
-  allowit rail use stellar:testnet
-  allowit rail use stellar:pubnet";
+  allowit rail use __ALLOWIT_EXAMPLE_RAIL__";
 
 /// Choose the current rail. Each rail keeps its own wallet and agent key
 #[derive(clap::Args, Debug)]

@@ -1,22 +1,22 @@
-Manage local Stellar keys and select the signing key
+Manage local keys and select the signing key
 
 Usage: allowit keys [OPTIONS] <COMMAND>
 
 Examples:
-  allowit keys generate agent --fund
-  allowit keys add owner --public-key GOWNER…
+  allowit keys generate agent
+  allowit keys add owner --public-key PUBLIC_KEY
   allowit keys ls
   allowit keys use agent
   allowit keys show agent
 
 Commands:
-  generate  Generate a private Stellar ed25519 key
+  generate  Generate a private signing key for the selected rail
   add       Record a public key that this device cannot sign for, such as the owner's
-  import    Import a private Stellar S seed
+  import    Import a private key in the selected rail's signer format
   ls        List keys [alias: list]
   show      Show a key's public metadata
   use       Select an existing private key for requests on the current rail
-  fund      Fund a key's account through Stellar Testnet Friendbot
+  fund      Fund a key's account through the selected rail's test faucet
   export    Print a private key in the rail's signer format
   rm        Remove a key and its private key file
   help      Print this message or the help of the given subcommand(s)
@@ -25,10 +25,9 @@ Options:
   -h, --help  Print help
 
 Global options:
-  -n, --rail <RAIL>       Stellar rail: stellar:testnet or stellar:pubnet [env: ALLOWIT_RAIL]
-                          [alias: --network]
-      --wallet <ADDR>     Stellar wallet address (G… classic account or C… policy contract) [env:
-                          ALLOWIT_WALLET]
+  -n, --rail <RAIL>       Rail identifier or alias from rail ls [env: ALLOWIT_RAIL] [alias:
+                          --network]
+      --wallet <ADDR>     Wallet address accepted by the selected rail [env: ALLOWIT_WALLET]
       --output <FORMAT>   Output format [possible values: text, json]
       --json              Same as --output json
   -y, --yes               Confirm destructive actions without a prompt

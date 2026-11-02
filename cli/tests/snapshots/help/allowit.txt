@@ -4,15 +4,15 @@ Usage: allowit [OPTIONS] [COMMAND]
 
 Examples:
   allowit rail use stellar:testnet
-  allowit keys generate agent --fund
-  allowit exec --op transfer --to GDEST… --amount XLM:5
+  allowit keys generate agent
+  allowit exec --op transfer --to DESTINATION --amount ASSET:5
   allowit status pay-0001 --wait 60s
 
 Commands:
-  keys        Manage local Stellar keys and select the signing key
+  keys        Manage local keys and select the signing key
   rail        List rails, show what a rail supports and choose the current rail
   config      Show the configuration and where it lives
-  wallet      Select and inspect installed Stellar policy wallets
+  wallet      Select and inspect installed policy wallets
   policy      Generate and validate portable policies or inspect an installed policy
   exec        Submit an agent request: the policy checks it and the rail settles it
   status      Read a request's state. The local journal supplies its rail and wallet; --rail and
@@ -28,10 +28,9 @@ Options:
   -V, --version  Print version
 
 Global options:
-  -n, --rail <RAIL>       Stellar rail: stellar:testnet or stellar:pubnet [env: ALLOWIT_RAIL]
-                          [alias: --network]
-      --wallet <ADDR>     Stellar wallet address (G… classic account or C… policy contract) [env:
-                          ALLOWIT_WALLET]
+  -n, --rail <RAIL>       Rail identifier or alias from rail ls [env: ALLOWIT_RAIL] [alias:
+                          --network]
+      --wallet <ADDR>     Wallet address accepted by the selected rail [env: ALLOWIT_WALLET]
       --output <FORMAT>   Output format [possible values: text, json]
       --json              Same as --output json
   -y, --yes               Confirm destructive actions without a prompt

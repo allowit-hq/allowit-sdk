@@ -1,12 +1,12 @@
 //! Hidden `allowit wallet configure`: the classic-account owner setup link of
-//! earlier releases, Stellar testnet only.
+//! earlier releases; availability follows the selected adapter.
 use crate::{ctx::Ctx, error::Result};
 
 pub(crate) const EXAMPLES: &str = "\
 Examples:
-  allowit --rail stellar:testnet wallet configure --owner GOWNER… --agent GAGENT… --engine GENGINE… --request-id setup-0001";
+  allowit --rail __ALLOWIT_EXAMPLE_RAIL__ wallet configure --owner OWNER --agent AGENT --engine SERVER --request-id setup-0001";
 
-/// Print the owner signing link for a classic Stellar account setup
+/// Print the owner signing link for account setup
 #[derive(clap::Args, Debug)]
 pub(crate) struct Args {
     /// --owner G… --agent G… --engine G… --request-id ID [--fee-per-operation N]
