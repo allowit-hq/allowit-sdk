@@ -5,7 +5,7 @@ The [workspace manifest](../../../../Cargo.toml) selects its release and the [lo
 [Adapter wiring](../mod.rs) and the [rail table](../../../../engine/src/routing.rs) register it in the executable.
 Run `allowit rail ls --json` and `allowit rail show RAIL --json` for the installed build's networks, aliases and capabilities.
 
-The profile resolution workaround is tracked in [known issues](../../../../known_issues.md).
+[Known issues](../../../../known_issues.md) tracks the profile resolution workaround.
 
 ## Public wallet profile
 
@@ -18,7 +18,7 @@ The selected private key must match the profile's agent before transport or sign
 
 ## Keys and asset amounts
 
-The adapter uses Ed25519 account keys. Public account addresses use G strkeys; policy contracts use C strkeys.
+The adapter uses Ed25519 account keys. Public account addresses use G strkeys. Policy contracts use C strkeys.
 Private key import/export uses Stellar S seeds. The common CLI keeps them in its private key store.
 `keys fund` uses Friendbot only on supported Testnet networks, as advertised by `rail show`.
 
@@ -36,13 +36,13 @@ Policy-wallet signing revalidates the prepared operation through `--rpc-url URL`
 This RPC receives only public observations and unsigned simulation bytes.
 Classic execution and signed recovery require no RPC override.
 Shared SDK engine retains the original operation, submits it and recovers verified receipts.
-The adapter supplies native rules; it does not own a separate transport retry or delivery coordinator.
+The adapter supplies native rules. It does not own a separate transport retry or delivery coordinator.
 
 ## Owner authoring and signing
 
 Use the wallet profile advertised by the owner's server, for example `allowit-stellar-policy-wallet-v1`.
 The [CLI owner-generation instructions](../../../README.md#generate-an-owner-policy) describe the common command.
-Generation produces a draft; it does not deploy, fund or activate a wallet.
+Generation produces a draft. It does not deploy, fund or activate a wallet.
 
 The hidden `wallet configure` and `wallet approve` commands produce browser signing links for Stellar Testnet.
 `configure` binds signer-setting operations of a funded classic account.

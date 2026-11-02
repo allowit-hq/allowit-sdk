@@ -58,7 +58,7 @@ allowit guide
 
 ## Vendors and build output
 
-The [workspace manifest](../Cargo.toml) selects vendor dependencies; the [lockfile](../Cargo.lock) fixes their source revisions.
+The [workspace manifest](../Cargo.toml) selects vendor dependencies. The [lockfile](../Cargo.lock) fixes their source revisions.
 The [rail table](../engine/src/routing.rs) admits networks and aliases, and [CLI adapter wiring](src/vendors/mod.rs) dispatches their capabilities.
 These are compiled registrations. Adding a dependency alone does not make a vendor available.
 
@@ -78,7 +78,7 @@ Reading help or the guide does not create settings or inspect private keys.
 
 ## Local keys and selections
 
-Wallet and key selections are stored separately for each canonical rail identifier.
+The CLI stores wallet and key selections separately for each canonical rail identifier.
 Private signing material remains in `secrets/NAME` with mode 0600 inside a 0700 directory.
 `keys use` selects an existing private key for that network. It performs no server registration.
 Public keys added with `keys add` cannot sign. `keys export` explicitly prints private signing material.
@@ -103,17 +103,17 @@ replace it with `--installation ID` and that installation's advertised profile. 
 Use the exact wallet `PROFILE` advertised by the server for the selected adapter.
 The complete prompt, selected network, profile and transfer operation go to the server.
 Generated source starts its rule sequence with `allowit::operations`, binding the permitted operation set.
-The [authoring contract](../docs/policy-reference.md#authoring-order) defines the order; UI renderers preserve it.
+The [authoring contract](../docs/policy-reference.md#authoring-order) defines the order. UI renderers preserve it.
 
 The result is a public portable draft with exact source and typed owner params. Exit 11 means that owner input remains unresolved.
 Generation does not deploy, fund or activate a wallet. Its build report does not authorize publication.
-After uncertain generation (exit 5), inspect the owner workspace before submitting another generation; the CLI sends no automatic retry.
+After uncertain generation (exit 5), inspect the owner workspace before submitting another generation. The CLI sends no automatic retry.
 
 ## Execute and recover
 
 Configure the owner's public profile through the selected adapter, then inspect it with `wallet show` and `policy show`.
 Each [adapter reference](src/vendors/) describes its public profile configuration and native request formats.
-The profile-file workaround and native-binding limits are recorded in [known issues](../known_issues.md).
+[Known issues](../known_issues.md) describes the profile-file workaround and native-binding limits.
 `ALLOWIT_URL` selects the server origin. Selecting a wallet address does not fetch or import its profile.
 
 Use only commands and operations advertised by `rail show`.
