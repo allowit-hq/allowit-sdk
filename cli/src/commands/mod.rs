@@ -1,6 +1,5 @@
-//! The command tree. One folder per command group and one file per verb;
-//! each verb file holds its clap arguments and its `run`. Command files reach
-//! a chain only through `vendors::rail`.
+//! The command tree. Each verb owns its arguments and terminal interaction.
+//! SDK engine supplies shared execution and recovery workflows.
 mod completion;
 mod config;
 mod examples;
