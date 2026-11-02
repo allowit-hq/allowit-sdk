@@ -6,7 +6,7 @@ edition = "2024"
 rust-version = "1.98"
 license = "MIT"
 publish = false
-description = "The allowit command: agent requests, owner policy lifecycle and policy compiler tools"
+description = "The allowit command: Stellar requests, local key custody and portable policy tools"
 
 [lib]
 name = "allowit_cli"
@@ -16,25 +16,22 @@ name = "allowit"
 path = "src/main.rs"
 
 [dependencies]
-allowit-sdk = { workspace = true, features = ["default", "client"] }
+allowit-sdk = { workspace = true, features = ["std", "client"] }
 allowit-sdk-engine = { path = "../engine", default-features = false }
 allowit-stellar-wallet.workspace = true
 serde_json_canonicalizer = "0.3"
 ed25519-dalek = "2"
-base64 = "0.22.1"
 clap = { version = "4.6", features = ["derive", "env", "wrap_help"] }
 clap_complete = "4.6"
 libc = "0.2.190"
 regex = "1.11.1"
-reqwest = { version = "0.12.23", default-features = false, features = ["blocking", "native-tls-vendored"] }
 serde = { version = "1.0.219", features = ["derive"] }
 serde_json = { version = "1.0.143", features = ["raw_value", "arbitrary_precision"] }
-sha2 = "0.10.9"
 syntect = { version = "5.2", default-features = false, features = ["default-syntaxes", "default-themes", "regex-fancy", "parsing"] }
-time = { version = "0.3", features = ["parsing"] }
 toml = "0.9"
-url = "2.5.7"
 zeroize = "1.8.2"
 
 [dev-dependencies]
+sha2 = "0.10.9"
+base64 = "0.22.1"
 stellar-xdr = { version = "=28.0.0", features = ["std", "base64"] }

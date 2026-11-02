@@ -23,7 +23,7 @@ pub(crate) fn check_account(family: Family, s: &str) -> Result<()> {
     check("account", family, formats(family).account, s)
 }
 
-/// A Stellar C policy contract.
+/// A Stellar G classic account or C policy contract.
 pub(crate) fn check_wallet(family: Family, s: &str) -> Result<()> {
     check("wallet address", family, formats(family).wallet, s)
 }
@@ -55,7 +55,7 @@ mod tests {
         let C = contract.as_str();
         check_account(Family::Stellar, G).unwrap();
         check_wallet(Family::Stellar, C).unwrap();
-        assert_eq!(check_wallet(Family::Stellar, G).unwrap_err().code, 2);
+        check_wallet(Family::Stellar, G).unwrap();
         check_recipient(Family::Stellar, C).unwrap();
         assert!(check_account(Family::Stellar, C).is_err());
         assert!(check_account(Family::Stellar, &G.replace('A', "B")).is_err());

@@ -11,7 +11,7 @@ use crate::{
         typed::TypedRequest,
     },
 };
-use allowit_sdk::typed_workflow::{AccountKind, ExecutionRequest};
+use allowit_stellar_wallet::workflow::{AccountKind, ExecutionRequest};
 use allowit_stellar_wallet::{self as sdk, AccountState, TrustedState, WalletConfig, WalletRoute};
 
 /// Checks the operation flags alone, before any profile, journal or network
@@ -206,7 +206,7 @@ mod tests {
 
     fn config(route: WalletRoute, usdc: bool) -> WalletConfig {
         let owner = sdk::account_for_seed(&[1; 32]);
-        let source = "use allowit::v1::prelude::*; async fn _execute(ctx: &Context) -> PolicyResult { Ok(()) }".to_string();
+        let source = "use allowit::prelude::*; pub fn execute(ctx: &AllowitContext) -> allowit::Result { Ok(()) }".to_string();
         let mut c = WalletConfig {
             network: "stellar:testnet".into(),
             policy_instance: [7; 32],
@@ -216,7 +216,7 @@ mod tests {
             server: sdk::account_for_seed(&[3; 32]),
             route: route.clone(),
             tier: (route == WalletRoute::PolicyWallet).then_some(sdk::PolicyTier::Simple),
-            language: Default::default(),
+            language: sdk::PolicyLanguage::Portable,
             rules: vec![],
             params: Default::default(),
             source_digest: [0; 32],
@@ -334,7 +334,7 @@ mod tests {
             );
         }
     }
-    fn fee_payer(r: &ExecutionRequest) -> allowit_sdk::typed_workflow::AccountId {
+    fn fee_payer(r: &ExecutionRequest) -> allowit_stellar_wallet::workflow::AccountId {
         r.fee_bounds.as_ref().unwrap()[0].payer.clone()
     }
 

@@ -17,7 +17,8 @@ Options:
 Global options:
   -n, --rail <RAIL>       Stellar rail: stellar:testnet or stellar:pubnet [env: ALLOWIT_RAIL]
                           [alias: --network]
-      --wallet <ADDR>     Stellar policy wallet address (C…) [env: ALLOWIT_WALLET]
+      --wallet <ADDR>     Stellar wallet address (G… classic account or C… policy contract) [env:
+                          ALLOWIT_WALLET]
       --output <FORMAT>   Output format [possible values: text, json]
       --json              Same as --output json
   -y, --yes               Confirm destructive actions without a prompt

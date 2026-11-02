@@ -69,7 +69,7 @@ mod tests {
             let mut buffer = Vec::new();
             clap_complete::generate(shell, &mut tree.clone(), "allowit", &mut buffer);
             let script = String::from_utf8(buffer).unwrap();
-            for hidden in ["stellar-native", "tune-action"] {
+            for hidden in ["configure", "approve"] {
                 assert!(!script.contains(hidden), "{shell}: {hidden}");
             }
             assert!(script.contains("generate") && script.contains("status"));

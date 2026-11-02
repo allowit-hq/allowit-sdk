@@ -2,7 +2,7 @@
 
 ## Artifact storage
 
-Keep code, required build/test inputs and concise API/usage documentation in this repository. Plans, design reports, reviews, run evidence, demo recordings and screenshots belong in the main project wiki repository under `instance/artifacts/`; capture their original Markdown sources with the wiki source-ingestion tooling. Never commit those artifacts in this subproject or its feature branches. Link to the canonical wiki artifact instead.
+Keep code, required build/test inputs and concise API/usage documentation in this repository. Plans, design reports, reviews, run evidence, demo recordings and screenshots belong in the canonical `allowit-hq/allowit-project` knowledge repository under `.agents/artifacts/`. Never commit those artifacts in this subproject or its feature branches. Link to the canonical wiki artifact instead.
 
 ## Before pushing
 
@@ -16,9 +16,9 @@ All packages share one Cargo workspace, one `Cargo.lock` and one version
 path and are never pinned. Select them with `-p allowit-sdk-engine`,
 `-p allowit-cli` or `-p allowit-policy-template`.
 
-Dependencies point one way. This SDK depends on Allowit core (package
-`allowit-sdk`, repository allowit-core) and on the rail crates from
-allowit-contracts-solana, allowit-contracts-tempo and allowit-contracts-stellar.
+Dependencies point one way. This SDK depends on Allowit core (repository
+allowit-core, packages `allowit-sdk` and portable `allowit`) and on the Stellar
+rail package from allowit-contracts-stellar.
 The rail crates depend on Allowit core. Never move core or rail code into this
 repository, and never add a `[patch]` section. Each git dependency names a
 release tag `vX.Y.Z` in the root `[workspace.dependencies]` (the policy template

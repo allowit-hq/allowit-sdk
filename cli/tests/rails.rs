@@ -344,13 +344,16 @@ fn stdout_escapes_display_controls_and_redacts_the_engine_token() {
 }
 
 fn stellar_approval_fixture() -> Value {
-    serde_json::from_str(include_str!("fixtures/stellar-approval.json")).unwrap()
+    serde_json::from_str(include_str!(
+        "../../engine/tests/fixtures/stellar-portable-approval.json"
+    ))
+    .unwrap()
 }
 
 fn public_stellar_profile(fixture: &Value) -> Value {
     use allowit_stellar_wallet::{self as sdk, WalletConfig, WalletRoute};
     let policy = &fixture["policy"];
-    let config = WalletConfig {
+    let mut config = WalletConfig {
         network: "stellar:testnet".into(),
         policy_instance: [7; 32],
         wallet: fixture["intent"]["owner"].as_str().unwrap().into(),
@@ -359,9 +362,12 @@ fn public_stellar_profile(fixture: &Value) -> Value {
         server: sdk::account_for_seed(&[3; 32]),
         route: WalletRoute::Native,
         tier: None,
-        language: Default::default(),
+        language: sdk::PolicyLanguage::Portable,
         rules: vec![],
-        params: Default::default(),
+        params: serde_json::from_value(
+            policy["runtime"]["instanceBinding"]["portable"]["params"].clone(),
+        )
+        .unwrap(),
         source_digest: [0; 32],
         asset: policy["mint"].as_str().unwrap().into(),
         asset_symbol: "XLM".into(),
@@ -371,7 +377,8 @@ fn public_stellar_profile(fixture: &Value) -> Value {
         module_digest: [5; 32],
         max_fee_stroops: 100,
     };
-    json!({"version":1,"profile":sdk::PROFILE,"network":config.network,
+    let portable = common::portable_descriptor(&mut config);
+    json!({"language":"allowit-portable-v1","portable":portable,"version":1,"profile":sdk::PROFILE,"network":config.network,
         "policyId":policy["id"],"sourceHash":policy["sourceHash"],"irHash":policy["irHash"],
         "moduleDigest":sdk::hex(&config.module_digest),"wallet":config.wallet,
         "route":"native","config":config,
@@ -418,8 +425,7 @@ fn public_stellar_profile_shows_without_agent_key_or_engine() {
         fixture["policy"]["code"].as_str().unwrap().trim_end()
     );
     assert_eq!(source.as_object().unwrap().len(), 1, "{source}");
-    // A wallet selection is a C… contract. The classic route's G account
-    // needs no selection and cannot be selected.
+    // Explicit classic selection keeps the same exact public profile binding.
     let classic = profile["wallet"].as_str().unwrap();
     assert!(classic.starts_with('G'));
     let output = sandbox.run(&[
@@ -430,8 +436,8 @@ fn public_stellar_profile_shows_without_agent_key_or_engine() {
         "wallet",
         "show",
     ]);
-    assert_eq!(code(&output), Some(2), "{}", stderr(&output));
-    assert!(stderr(&output).contains("C… contract strkey"));
+    assert_eq!(code(&output), Some(0), "{}", stderr(&output));
+    assert!(stdout(&output).contains(classic));
 }
 
 #[test]
@@ -659,4 +665,27 @@ fn verbose_details_are_data_lines() {
     assert!(text.lines().any(|l| l == "rail  stellar:testnet"), "{text}");
     assert!(text.lines().any(|l| l.starts_with("config  ")), "{text}");
     common::assert_data(&text, "rail show -v");
+}
+
+#[test]
+fn classic_g_wallet_selection_keeps_checksum_and_exact_profile_binding() {
+    let fixture = stellar_approval_fixture();
+    let profile = public_stellar_profile(&fixture);
+    let sandbox = stellar_sandbox(&profile);
+    let wallet = profile["wallet"].as_str().unwrap();
+    sandbox.ok(&["rail", "use", "stellar:testnet"]);
+    sandbox.ok(&["wallet", "use", wallet]);
+    assert_eq!(sandbox.json(&["wallet", "show"])["wallet"], wallet);
+    let mut malformed = wallet.to_owned();
+    malformed.pop();
+    malformed.push(if wallet.ends_with('A') { 'B' } else { 'A' });
+    assert_eq!(code(&sandbox.run(&["wallet", "use", &malformed])), Some(2));
+    assert_eq!(
+        sandbox.json(&["config", "show"])["config"]["rails"]["stellar:testnet"]["wallet"],
+        wallet
+    );
+    let other = allowit_stellar_wallet::account_for_seed(&[9; 32]);
+    let refused = sandbox.run(&["--wallet", &other, "wallet", "show"]);
+    assert_eq!(code(&refused), Some(3), "{}", stderr(&refused));
+    assert!(stderr(&refused).contains("wallet profile"));
 }

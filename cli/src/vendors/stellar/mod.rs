@@ -7,8 +7,7 @@
 //!   The public wallet profile comes from `ALLOWIT_STELLAR_BUNDLE` until the
 //!   wallet is resolved from chain state.
 //! - `wallet show`, `policy show`: the public wallet profile.
-//! - `policy build`: the Rust source of a custom policy wallet.
-//! - Hidden `wallet configure`, `wallet approve` and `stellar-native`: the
+//! - Hidden `wallet configure`, `wallet approve`: the
 //!   classic-account owner links and the policy build of earlier releases.
 pub mod approval;
 pub mod owner;
@@ -70,8 +69,6 @@ pub(crate) fn tokens_for(rail: &str) -> &'static [Token] {
     }
 }
 
-const FRIENDBOT: &str = "https://friendbot.stellar.org";
-
 impl Stellar {
     /// The public wallet profile, checked against the selected wallet.
     fn profile(&self, cx: &mut Ctx, wallet: Option<&str>) -> Result<run::Bundle> {
@@ -128,22 +125,9 @@ impl Rail for Stellar {
             ops: &["transfer", "deposit", "redeem"],
             exec_build_only: true,
             verbs: if self.0.testnet {
-                &[
-                    "keys fund",
-                    "wallet show",
-                    "policy show",
-                    "policy build",
-                    "exec",
-                    "status",
-                ]
+                &["keys fund", "wallet show", "policy show", "exec", "status"]
             } else {
-                &[
-                    "wallet show",
-                    "policy show",
-                    "policy build",
-                    "exec",
-                    "status",
-                ]
+                &["wallet show", "policy show", "exec", "status"]
             },
         }
     }
@@ -152,34 +136,17 @@ impl Rail for Stellar {
             return Err(self.na("keys fund"));
         }
         key.check_rail(self.0.id)?;
-        let base = match env_value("ALLOWIT_FRIENDBOT_URL") {
-            v if v.is_empty() => FRIENDBOT.to_owned(),
-            v => v,
-        };
-        let mut url =
-            url::Url::parse(&base).map_err(|_| Error::config("the Friendbot URL is invalid"))?;
-        url.query_pairs_mut().append_pair("addr", &key.address);
-        let response = reqwest::blocking::Client::builder()
-            .timeout(Duration::from_secs(30))
-            .build()
-            .and_then(|c| c.get(url).send())
-            .map_err(|_| {
-                Error::uncertain("Friendbot did not answer; check the balance before retrying")
-            })?;
-        let status = response.status().as_u16();
-        let body: serde_json::Value = response.json().unwrap_or_default();
-        if !(200..300).contains(&status) {
-            let detail = body["detail"].as_str().unwrap_or("request refused");
-            return Err(Error::config(format!(
-                "Friendbot refused to fund {} (HTTP {status}): {detail}",
-                key.address
-            )));
-        }
+        let endpoint = env_value("ALLOWIT_FRIENDBOT_URL");
+        let hash =
+            allowit_stellar_wallet::owner::fund_testnet_account(&key.address, Some(&endpoint))
+                .map_err(|message| {
+                    Error::uncertain(format!("{message}; check the balance before retrying"))
+                })?;
         cx.out.value(&serde_json::json!({
             "key": key.name,
             "address": key.address,
             "rail": self.0.id,
-            "transactionHash": body["hash"],
+            "transactionHash": hash,
         }));
         Ok(0)
     }
@@ -189,11 +156,6 @@ impl Rail for Stellar {
             policy: Some(format!("{}@{}", bundle.policy_id, bundle.module_digest)),
             wallet: Some(bundle.wallet),
         })
-    }
-    fn policy_build(&self, source: &str) -> Result<String> {
-        allowit_sdk::compile_stellar_policy(source)
-            .map(|policy| policy.rust_source)
-            .map_err(|e| Error::usage(e.to_string()))
     }
     fn legacy(&self, cx: &mut Ctx, verb: &str, args: &[String]) -> Result<i32> {
         match verb {

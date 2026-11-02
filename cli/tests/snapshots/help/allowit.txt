@@ -13,12 +13,11 @@ Commands:
   rail        List rails, show what a rail supports and choose the current rail
   config      Show the configuration and where it lives
   wallet      Select and inspect installed Stellar policy wallets
-  policy      Check, build, test and inspect policies
+  policy      Validate portable Rust source, emit its source or inspect an installed policy
   exec        Submit an agent request: the policy checks it and the rail settles it
   status      Read a request's state. The local journal supplies its rail and wallet; --rail and
               --wallet are the fallback
   history     List recent requests from the local journal
-  lsp         Run the policy language server: diagnostics, hover, completion and allowit/workflow
   completion  Print a shell completion script
   guide       Print the agent guide: the commands in the order an agent uses them
   version     Print the version
@@ -31,7 +30,8 @@ Options:
 Global options:
   -n, --rail <RAIL>       Stellar rail: stellar:testnet or stellar:pubnet [env: ALLOWIT_RAIL]
                           [alias: --network]
-      --wallet <ADDR>     Stellar policy wallet address (C…) [env: ALLOWIT_WALLET]
+      --wallet <ADDR>     Stellar wallet address (G… classic account or C… policy contract) [env:
+                          ALLOWIT_WALLET]
       --output <FORMAT>   Output format [possible values: text, json]
       --json              Same as --output json
   -y, --yes               Confirm destructive actions without a prompt

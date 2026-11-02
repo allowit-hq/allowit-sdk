@@ -4,7 +4,7 @@
 #![cfg(unix)]
 mod common;
 
-use allowit_sdk::typed_workflow::*;
+use allowit_stellar_wallet::workflow::*;
 use allowit_stellar_wallet::{self as sdk, *};
 use common::{Mock, Sandbox, code, read_request, reply, stderr};
 use serde_json::{Value, json};
@@ -45,7 +45,7 @@ fn fixture() -> (WalletConfig, ExecutionRequest, TrustedState, u64) {
     let owner = sdk::account_for_seed(&[1; 32]);
     let agent = sdk::account_for_seed(&[2; 32]);
     let engine = sdk::account_for_seed(&[3; 32]);
-    let source = "use allowit::v1::prelude::*; async fn _execute(ctx:&Context)->PolicyResult { allowit::require_asset(ctx,\"XLM\")?; Ok(()) }".to_string();
+    let source = "use allowit::prelude::*; pub fn execute(ctx: &AllowitContext) -> allowit::Result { Ok(()) }".to_string();
     let mut c = WalletConfig {
         network: "stellar:testnet".into(),
         policy_instance: [7; 32],
@@ -55,7 +55,7 @@ fn fixture() -> (WalletConfig, ExecutionRequest, TrustedState, u64) {
         server: engine.clone(),
         route: WalletRoute::Native,
         tier: None,
-        language: Default::default(),
+        language: sdk::PolicyLanguage::Portable,
         rules: vec![],
         params: Default::default(),
         source_digest: [0; 32],
@@ -68,6 +68,7 @@ fn fixture() -> (WalletConfig, ExecutionRequest, TrustedState, u64) {
         max_fee_stroops: 50000,
     };
     c.asset = sdk::sac_address(&c.network, &sdk::asset_xdr(&c).unwrap()).unwrap();
+    common::portable_descriptor(&mut c);
     let asset = WorkflowAsset::Native {
         chain: Chain::Stellar,
         network: sdk::network_id(&c.network).unwrap(),
@@ -144,10 +145,18 @@ fn expires(now: u64) -> u64 {
 
 /// The public wallet profile: no signing material.
 fn profile(c: &WalletConfig) -> Value {
-    json!({"version":1,"profile":PROFILE,"network":c.network,"policyId":POLICY,
+    let mut value = json!({"version":1,"profile":PROFILE,"network":c.network,"policyId":POLICY,
         "sourceHash":sdk::hex(&c.source_hash),"irHash":sdk::hex(&[4;32]),
         "moduleDigest":sdk::hex(&c.module_digest),"wallet":c.wallet,"route":c.route,"config":c,
-        "endpoints":{"execute":"/api/native/execute","status":"/api/native/execute/status"}})
+        "endpoints":{"execute":"/api/native/execute","status":"/api/native/execute/status"}});
+    if c.language == sdk::PolicyLanguage::Portable {
+        let mut checked = c.clone();
+        value["portable"] = common::portable_descriptor(&mut checked);
+        assert_eq!(checked.module_digest, c.module_digest);
+        value["language"] = json!("allowit-portable-v1");
+        value["irHash"] = json!("");
+    }
+    value
 }
 
 /// A sandbox on stellar:testnet with the agent key for `seed` set up, the

@@ -1,21 +1,17 @@
-Check, build, test and inspect policies
+Validate portable Rust source, emit its source or inspect an installed policy
 
 Usage: allowit policy [OPTIONS] <COMMAND>
 
 Examples:
   allowit policy check policy.rs
-  allowit policy test policy.rs --context context.json
+  allowit policy build policy.rs -o wallet.rs
   allowit policy show --source
 
 Commands:
-  show       Show the wallet's installed policy
-  check      Compile a policy locally: validated IR, hashes, requirements, the owner's workflow
-             steps and the recommended Stellar engines
-  build      Build a policy for the selected rail. On Stellar this is the Rust source of a custom
-             policy wallet
-  test       Evaluate a policy locally for one request context
-  functions  List the policy functions with their signatures and help, or show one
-  help       Print this message or the help of the given subcommand(s)
+  show   Show the wallet's installed policy
+  check  Validate the structure and allowed operations of portable Rust source
+  build  Type-check portable Rust against the pinned Core host library and emit its source
+  help   Print this message or the help of the given subcommand(s)
 
 Options:
   -h, --help  Print help
@@ -23,7 +19,8 @@ Options:
 Global options:
   -n, --rail <RAIL>       Stellar rail: stellar:testnet or stellar:pubnet [env: ALLOWIT_RAIL]
                           [alias: --network]
-      --wallet <ADDR>     Stellar policy wallet address (C…) [env: ALLOWIT_WALLET]
+      --wallet <ADDR>     Stellar wallet address (G… classic account or C… policy contract) [env:
+                          ALLOWIT_WALLET]
       --output <FORMAT>   Output format [possible values: text, json]
       --json              Same as --output json
   -y, --yes               Confirm destructive actions without a prompt

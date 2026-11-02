@@ -16,14 +16,7 @@ use asset::{Amount, Token, Use};
 use std::time::Duration;
 
 /// Every verb a rail may serve, in `rail show` order.
-pub(crate) const VERBS: &[&str] = &[
-    "keys fund",
-    "wallet show",
-    "policy show",
-    "policy build",
-    "exec",
-    "status",
-];
+pub(crate) const VERBS: &[&str] = &["keys fund", "wallet show", "policy show", "exec", "status"];
 
 /// What a rail supports. It drives `rail show`, help and the exit-3 errors.
 pub(crate) struct Caps {
@@ -94,9 +87,6 @@ pub(crate) trait Rail {
         Ok(vec![])
     }
     /// Builds a policy source for this rail: the generated Rust source.
-    fn policy_build(&self, _: &str) -> Result<String> {
-        Err(self.na("policy build"))
-    }
     /// A hidden command of earlier releases: VERB names it, ARGS are its words.
     fn legacy(&self, _: &mut Ctx, verb: &str, _: &[String]) -> Result<i32> {
         Err(self.na(verb))

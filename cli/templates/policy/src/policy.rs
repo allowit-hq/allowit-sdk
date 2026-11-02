@@ -1,11 +1,7 @@
-use allowit::v1::prelude::*;
+use allowit::prelude::*;
 
-struct PolicyParams {}
-
-fn new() -> PolicyParams {
-    PolicyParams {}
-}
-
-async fn _execute(ctx: &Context, params: &PolicyParams) -> PolicyResult {
-    allowit::fail("Policy is not configured")
+pub fn execute(ctx: &AllowitContext) -> allowit::Result {
+    allowit::daily_spending_limit(ctx, &ctx.params[allowit::DAILY_SPENDING_LIMIT])?;
+    allowit::payment_limit(ctx, &ctx.params[allowit::PAYMENT_LIMIT])?;
+    Ok(())
 }

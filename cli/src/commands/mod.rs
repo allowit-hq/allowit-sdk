@@ -1,16 +1,12 @@
 //! The command tree. One folder per command group and one file per verb;
 //! each verb file holds its clap arguments and its `run`. Command files reach
 //! a chain only through `vendors::rail`.
-mod compiler;
 mod completion;
 mod config;
 pub(crate) mod exec;
 mod guide;
 mod history;
-mod json;
 mod keys;
-mod legacy;
-mod lsp;
 mod policy;
 mod rail;
 mod status;
@@ -69,7 +65,7 @@ pub(crate) struct Global {
         value_name = "RAIL"
     )]
     pub rail: Option<String>,
-    /// Stellar policy wallet address (C…)
+    /// Stellar wallet address (G… classic account or C… policy contract)
     #[arg(
         long,
         env = "ALLOWIT_WALLET",
@@ -162,18 +158,12 @@ pub(crate) enum Command {
     Status(status::Args),
     #[command(before_help = history::EXAMPLES)]
     History(history::Args),
-    #[command(before_help = lsp::EXAMPLES)]
-    Lsp(lsp::Args),
     #[command(before_help = completion::EXAMPLES)]
     Completion(completion::Args),
     #[command(before_help = guide::EXAMPLES)]
     Guide(guide::Args),
     #[command(before_help = version::EXAMPLES)]
     Version(version::Args),
-    #[command(hide = true, before_help = json::EXAMPLES)]
-    Json(json::Args),
-    #[command(flatten)]
-    Legacy(legacy::Command),
 }
 
 /// Parses `60s`, `5m`, `1h30m`, `500ms` or `0`, at most 10 minutes.
@@ -351,12 +341,9 @@ pub(crate) fn dispatch(command: Command, cx: &mut Ctx) -> Result<i32> {
         Command::Exec(a) => exec::run(a, cx),
         Command::Status(a) => status::run(a, cx),
         Command::History(a) => history::run(a, cx),
-        Command::Lsp(a) => lsp::run(a, cx),
         Command::Completion(a) => completion::run(a, cx),
         Command::Guide(a) => guide::run(a, cx),
         Command::Version(a) => version::run(a, cx),
-        Command::Json(a) => json::run(a, cx),
-        Command::Legacy(c) => legacy::run(c, cx),
     }
 }
 
@@ -364,13 +351,8 @@ pub(crate) fn dispatch(command: Command, cx: &mut Ctx) -> Result<i32> {
 pub(crate) fn is_local(command: &Command) -> bool {
     matches!(
         command,
-        Command::Lsp(_)
-            | Command::Completion(_)
-            | Command::Guide(_)
-            | Command::Version(_)
-            | Command::Json(_)
+        Command::Completion(_) | Command::Guide(_) | Command::Version(_)
     ) || matches!(command, Command::Policy(p) if policy::is_local(p))
-        || matches!(command, Command::Legacy(l) if legacy::is_local(l))
 }
 
 #[cfg(test)]
