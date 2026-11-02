@@ -3,7 +3,7 @@ use crate::{ctx::Ctx, error::Result, vendors::address};
 
 pub(crate) const EXAMPLES: &str = "\
 Examples:
-  allowit wallet use CWALLET…";
+  allowit wallet use WALLET";
 
 /// Make an address the current rail's default wallet
 #[derive(clap::Args, Debug)]

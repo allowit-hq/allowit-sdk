@@ -1,4 +1,4 @@
-//! `allowit rail use __ALLOWIT_EXAMPLE_RAIL__`.
+//! `allowit rail use RAIL`.
 use crate::{ctx::Ctx, error::Result, routing};
 
 pub(crate) const EXAMPLES: &str = "\

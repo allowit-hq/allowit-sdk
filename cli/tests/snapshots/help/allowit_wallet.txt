@@ -3,7 +3,7 @@ Select and inspect installed policy wallets
 Usage: allowit wallet [OPTIONS] <COMMAND>
 
 Examples:
-  allowit wallet use CWALLET…
+  allowit wallet use WALLET
   allowit wallet show
 
 Commands:

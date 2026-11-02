@@ -13,7 +13,7 @@ pub(crate) const EXAMPLES: &str = "\
 Examples:
   allowit status pay-0001
   allowit status pay-0001 --wait 60s
-  allowit status pay-0001 --wallet CWALLET… --json";
+  allowit status pay-0001 --wallet WALLET --json";
 
 /// Read a request's state. The local journal supplies its rail and wallet;
 /// --rail and --wallet are the fallback

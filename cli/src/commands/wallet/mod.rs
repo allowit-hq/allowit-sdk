@@ -11,7 +11,7 @@ use clap::Subcommand;
 
 pub(crate) const EXAMPLES: &str = "\
 Examples:
-  allowit wallet use CWALLET…
+  allowit wallet use WALLET
   allowit wallet show";
 
 /// Select and inspect installed policy wallets

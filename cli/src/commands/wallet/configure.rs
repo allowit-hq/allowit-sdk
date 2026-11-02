@@ -9,7 +9,7 @@ Examples:
 /// Print the owner signing link for account setup
 #[derive(clap::Args, Debug)]
 pub(crate) struct Args {
-    /// --owner G… --agent G… --engine G… --request-id ID [--fee-per-operation N]
+    /// --owner OWNER --agent AGENT --engine SERVER --request-id ID [--fee-per-operation N]
     #[arg(
         trailing_var_arg = true,
         allow_hyphen_values = true,

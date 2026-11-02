@@ -9,7 +9,7 @@ Examples:
 /// Print the owner approval link for an installed account policy
 #[derive(clap::Args, Debug)]
 pub(crate) struct Args {
-    /// --policy-file FILE --owner G… --request-id ID
+    /// --policy-file FILE --owner OWNER --request-id ID
     #[arg(
         trailing_var_arg = true,
         allow_hyphen_values = true,
