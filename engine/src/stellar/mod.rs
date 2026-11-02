@@ -2,6 +2,7 @@
 pub mod approval;
 pub mod client;
 pub mod owner;
+pub mod owner_client;
 
 use allowit_stellar_wallet::workflow::ExecutionRequest;
 use allowit_stellar_wallet::{

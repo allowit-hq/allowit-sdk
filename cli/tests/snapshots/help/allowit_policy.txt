@@ -1,4 +1,4 @@
-Validate portable Rust source, emit its source or inspect an installed policy
+Generate and validate portable policies or inspect an installed policy
 
 Usage: allowit policy [OPTIONS] <COMMAND>
 
@@ -8,10 +8,12 @@ Examples:
   allowit policy show --source
 
 Commands:
-  show   Show the wallet's installed policy
-  check  Validate the structure and allowed operations of portable Rust source
-  build  Type-check portable Rust against the pinned Core host library and emit its source
-  help   Print this message or the help of the given subcommand(s)
+  generate  Generate a portable draft through the owner-authenticated server; does not deploy or
+            spend
+  show      Show the wallet's installed policy
+  check     Validate the structure and allowed operations of portable Rust source
+  build     Type-check portable Rust against the pinned Core host library and emit its source
+  help      Print this message or the help of the given subcommand(s)
 
 Options:
   -h, --help  Print help

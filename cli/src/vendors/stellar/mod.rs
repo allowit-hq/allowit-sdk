@@ -125,9 +125,22 @@ impl Rail for Stellar {
             ops: &["transfer", "deposit", "redeem"],
             exec_build_only: true,
             verbs: if self.0.testnet {
-                &["keys fund", "wallet show", "policy show", "exec", "status"]
+                &[
+                    "keys fund",
+                    "wallet show",
+                    "policy show",
+                    "policy generate",
+                    "exec",
+                    "status",
+                ]
             } else {
-                &["wallet show", "policy show", "exec", "status"]
+                &[
+                    "wallet show",
+                    "policy show",
+                    "policy generate",
+                    "exec",
+                    "status",
+                ]
             },
         }
     }

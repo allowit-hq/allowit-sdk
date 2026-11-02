@@ -27,6 +27,7 @@ Rail packages can use common core primitives directly. Core has no dependency on
 | --- | --- |
 | `authoring` | Shared portable source gate and bounded real compilation using embedded Core resources |
 | `stellar` | Native execution, caller-owned OperationStore, ordered authorization retention and exact-hash recovery |
+| `stellar::owner_client` | Owner sign-in and server-backed portable generation with explicit template or installation selection |
 | `stellar::client` | Authenticated server requests, signer capabilities and exact-intent client resumption |
 | `request`, `typed_request` | Bounded request identifiers, input documents and operation identities |
 | `config`, `routing`, `wallet` | Configuration, Stellar network selection and caller-owned key bindings |
@@ -44,6 +45,12 @@ Provider delivery and chain settlement remain separate results.
 `Runtime::finalize_authorization` requires the caller's authorization and retention callbacks.
 The complete authorization must be durable before the second native simulation starts.
 Retention failure prevents that RPC step. The caller retains the returned final packet before exposing it to an agent.
+
+`stellar::owner_client` takes a distinct caller-owned owner signer. It checks the complete sign-in
+message, account, Origin, nonce and expiry before signing, then requires a rotated owner session.
+It validates advertised generation profiles, networks and terms before sending one creation request.
+Returned source, params and native bindings are checked as a draft, never as publication or spending authority.
+An uncertain generation is not repeated automatically.
 
 `stellar::client` takes a caller-owned signer capability and private core `Store`.
 It saves the original intent before preparation and the exact signed proof before transmission.

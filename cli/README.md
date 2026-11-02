@@ -1,6 +1,6 @@
 # Allowit CLI
 
-The `allowit` command selects a Stellar network, keeps local keys, inspects public wallet profiles and sends agent requests.
+The `allowit` command selects a Stellar network, keeps local keys, generates portable drafts, inspects public wallet profiles and sends agent requests.
 [`allowit-sdk-engine`](../engine/) supplies reusable workflows for CLI and server callers.
 Rail core owns native encoding, signing, simulation and settlement semantics.
 [Allowit core](https://github.com/allowit-hq/allowit-core) supplies deterministic policy logic and host transport and journal primitives.
@@ -22,6 +22,7 @@ allowit keys use NAME
 allowit keys ls | show NAME | fund NAME | export NAME | rm NAME
 allowit config show | path
 allowit wallet ls | show | use ADDR
+allowit policy generate --owner-key NAME --origin ORIGIN --profile PROFILE (--new-wallet | --installation ID) PROMPT
 allowit policy show [--source]
 allowit policy check POLICY.rs
 allowit policy build POLICY.rs [-o OUT]
@@ -36,6 +37,29 @@ allowit guide
 Private Stellar S seeds remain in `secrets/NAME` with mode 0600 inside a 0700 directory.
 `keys use` selects an existing private key for that network. It performs no server registration.
 Public keys added with `keys add` cannot sign. `keys export` explicitly prints a private seed.
+
+## Generate an owner policy
+
+Select the network and import the owner key by name. Generation does not change the selected agent key.
+`ALLOWIT_URL` names the backend; `--origin` names an Origin allowed by that backend for owner sign-in.
+
+```sh
+allowit rail use stellar:testnet
+allowit keys import owner owner.key
+allowit --json policy generate --owner-key owner --origin http://localhost:5173 \
+  --profile allowit-stellar-policy-wallet-v1 --new-wallet \
+  'Pay only my approved recipient, up to 1 XLM per payment'
+```
+
+The shared SDK client validates the exact sign-in message before requesting an owner signature.
+Its session stays in memory and is bound to that backend, Origin and owner account.
+`--new-wallet` requires an advertised contract-wallet template. To use an existing owner installation,
+replace it with `--installation ID` and that installation's advertised profile. Selection never falls back between them.
+The complete prompt, selected network, profile and transfer operation go to the server.
+
+The result is a public portable draft with exact source and typed owner params. Exit 11 means that owner input remains unresolved.
+Generation does not deploy, fund or activate a wallet. Its build report does not authorize publication.
+After uncertain generation (exit 5), inspect the owner workspace before submitting another generation; the CLI sends no automatic retry.
 
 ## Stellar agent requests
 
@@ -67,7 +91,7 @@ Classic execution and signed recovery require no RPC override.
 
 The hidden `wallet configure` and `wallet approve` commands produce browser signing links for Stellar Testnet.
 `configure` binds the signer-setting operations of a funded classic account.
-`approve` binds the complete policy source, revision and public wallet configuration.
+`approve` binds the policy source, revision, typed params, tier, rules, network and wallet subject.
 Both retain their original intent in a working-directory journal and exit 10.
 
 ## Output and exits

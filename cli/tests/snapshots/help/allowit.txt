@@ -13,7 +13,7 @@ Commands:
   rail        List rails, show what a rail supports and choose the current rail
   config      Show the configuration and where it lives
   wallet      Select and inspect installed Stellar policy wallets
-  policy      Validate portable Rust source, emit its source or inspect an installed policy
+  policy      Generate and validate portable policies or inspect an installed policy
   exec        Submit an agent request: the policy checks it and the rail settles it
   status      Read a request's state. The local journal supplies its rail and wallet; --rail and
               --wallet are the fallback

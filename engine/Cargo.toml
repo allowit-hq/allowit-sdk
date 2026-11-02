@@ -9,7 +9,7 @@ publish = false
 description = "Shared Stellar request and caller bindings, with no terminal I/O"
 
 [dependencies]
-allowit-sdk = { workspace = true, features = ["std", "typed-workflow", "client", "transport"] }
+allowit-sdk = { workspace = true, features = ["std", "policy-source", "client", "transport"] }
 allowit-stellar-wallet.workspace = true
 getrandom = "0.3"
 base64 = "0.22.1"
@@ -22,6 +22,7 @@ serde_json = { version = "1.0.143", features = ["raw_value", "arbitrary_precisio
 sha2 = "0.10.9"
 zeroize = "1.8.2"
 tempfile = "3.27"
+time = { version = "0.3.55", features = ["parsing", "formatting"] }
 
 [dev-dependencies]
 stellar-xdr = { version = "=28.0.0", features = ["std", "base64"] }

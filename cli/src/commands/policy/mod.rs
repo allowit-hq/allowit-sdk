@@ -1,13 +1,16 @@
 //! Portable source validation, source output and installed-policy inspection.
 mod build;
 mod check;
+mod generate;
 mod show;
 use crate::{ctx::Ctx, error::Result};
 use clap::Subcommand;
 pub(crate) const EXAMPLES: &str = "Examples:\n  allowit policy check policy.rs\n  allowit policy build policy.rs -o wallet.rs\n  allowit policy show --source";
-/// Validate portable Rust source, emit its source or inspect an installed policy
+/// Generate and validate portable policies or inspect an installed policy
 #[derive(Subcommand, Debug)]
 pub(crate) enum Command {
+    #[command(before_help=generate::EXAMPLES)]
+    Generate(generate::Args),
     #[command(before_help=show::EXAMPLES)]
     Show(show::Args),
     #[command(before_help=check::EXAMPLES)]
@@ -17,6 +20,7 @@ pub(crate) enum Command {
 }
 pub(crate) fn run(command: Command, cx: &mut Ctx) -> Result<i32> {
     match command {
+        Command::Generate(a) => generate::run(a, cx),
         Command::Show(a) => show::run(a, cx),
         Command::Check(a) => check::run(a, cx),
         Command::Build(a) => build::run(a, cx),

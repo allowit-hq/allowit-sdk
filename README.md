@@ -30,7 +30,7 @@ cargo run --locked --bin allowit -- --help
 cargo build --locked --release --bin allowit
 ```
 
-The [CLI reference](cli/README.md) describes local keys, public wallet profiles and agent execution.
+The [CLI reference](cli/README.md) describes owner-authenticated draft generation, local keys, public wallet profiles and agent execution.
 
 ```sh
 allowit rail use stellar:testnet
@@ -80,6 +80,7 @@ See the [portable policy reference](docs/policy-reference.md) for source restric
 [`engine/`](engine/) contains shared workflows without terminal I/O:
 
 - `stellar::Runtime` composes native preparation, required durable retention, submission and recovery.
+- `stellar::owner_client` validates owner sign-in, binds its private session to the backend and Origin, and generates a portable draft with an explicit template or installation selection.
 - `stellar::client` implements the authenticated server protocol, exact-intent resumption and receipt validation. Callers pass their signer capability and a private core `Store`.
 - `typed_request` bounds document ingress and derives the versioned operation identity.
 - `wallet`, `routing` and `config` supply explicit caller bindings and Stellar network selection.
