@@ -184,10 +184,10 @@ Cargo features select how much of the SDK you take along:
 
 [The allowit-core README](https://github.com/allowit-hq/allowit-core#readme) lists every module and feature, and shows how to build the WebAssembly module (`allowit_sdk.wasm`) for WebAssembly hosts.
 
-To type-check policy source in an ordinary Rust project, depend on the facade:
+To type-check policy source in an ordinary Rust project, depend on the facade.
+This example uses the core revision pinned by the SDK workspace:
 
 ```toml
-# TODO: replace rev with tag = "v0.1.0" once allowit-core releases it.
 allowit = { package = "allowit-sdk", git = "https://github.com/allowit-hq/allowit-core.git", rev = "6aa00597a0796acf6f6fa911a86c0fe57c055b67", version = "0.1" }
 ```
 
