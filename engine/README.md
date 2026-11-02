@@ -1,39 +1,54 @@
 # Allowit SDK engine
 
-*Backend requests and service composition for Allowit hosts and the `allowit` command, with no terminal I/O.*
+`allowit-sdk-engine` is the shared offchain engine for the CLI, server engine and SDK callers.
+It composes reusable rail communication and execution workflows without terminal I/O.
+Callers supply arguments, configuration and the required RPC, signing, storage and authorization capabilities.
 
-`allowit-sdk-engine` (library `allowit_sdk_engine`) holds the request side of Allowit that does not depend on a terminal. Callers pass arguments and readers in and get values or `String` output back. The [`allowit` CLI](../cli/) adds argument parsing, standard streams and vendor command code on top. The compiler, evaluator and shared client, service and transport primitives are in [Allowit core](https://github.com/allowit-hq/allowit-core) (package `allowit-sdk`).
+[Allowit core](https://github.com/allowit-hq/allowit-core) provides deterministic policy logic and
+feature-gated host primitives. Rail cores provide native protocol and settlement semantics.
+
+## Responsibilities
+
+| Component | Responsibility |
+| --- | --- |
+| SDK engine | Shared preparation, execution, status and recovery workflows for CLI and server callers |
+| Allowit core | Shared types, validation, deterministic policy logic and host-only transport and journal primitives |
+| Rail core | Native request encoding, addresses, signatures, simulation and settlement validation |
+| Server engine | Authentication, trusted policy context, server authority, enforcement and durable application state |
+| CLI | Commands, input/output, local key custody and actor-specific configuration |
+| Vendor adapter | Provider request/response protocols and typed facts, using common transport and workflow capabilities |
+
+Placement follows responsibility. A reusable rail workflow belongs in SDK engine even when its first caller is the server.
+Rail packages can use common core primitives directly. Core has no dependency on SDK engine or a rail package.
 
 ## Modules
 
 | Module | Purpose |
 | --- | --- |
-| `client` | The bounded HTTP client for the Allowit harness API, with single-send semantics for payment-bearing requests |
-| `config` | Origin, policy and token configuration from the environment |
-| `request` | Request flags, request bodies and derived request IDs |
-| `typed_request` | Bounded typed request files and operation nonces |
-| `output` | Result classification and printable result text |
-| `skill` | Policy descriptions and network selection from them |
-| `wallet` | Local agent wallets for Solana, Stellar and Tempo |
-| `routing` | Network identifiers and the network selected for one command |
-| `gateway` | The `/api/gateway/*` transport and its shared flag types |
-| `services` | The typed service facade (feature `services`) |
-| `error` | The shared error type, re-exported from `allowit_sdk::client::error` |
+| `client` | Allowit backend requests with bounded responses and single-send semantics for payment-bearing requests |
+| `gateway` | Gateway requests and shared request options |
+| `request`, `typed_request` | Request fields, bounded input documents and operation identities |
+| `config`, `routing`, `wallet` | Configuration, network selection and calling-actor wallet bindings |
+| `output`, `skill` | Result classification, printable values and public operation descriptions |
+| `services` | Shared service contracts and selected rail/vendor capabilities, enabled by the `services` feature |
+| `error` | The error type from `allowit_sdk::client::error` |
 
-## Services facade
+## Communication and authority
 
-`allowit_sdk_engine::services` needs the `services` feature. It is the module a server reaches for when a policy decision has to become a real call: a PaySH purchase, an x402 payment, a Tempo transaction. It gives those calls one import path and one set of types. The service contracts and transports are in `allowit_sdk::service` and `allowit_sdk::transport`. The concrete protocols live in the rail repositories, and this module re-exports them.
+Common host transport owns HTTP and JSON-RPC bounds, deadlines and connection behavior.
+SDK engine composes those primitives with rail capabilities and caller-supplied state.
+Rail semantics determine whether an exact operation can be queried, resumed or resubmitted.
+An uncertain mutation retains its original identity and signed bytes.
+Provider delivery and chain settlement remain separate results.
 
-It stays small. It does not start a CLI process and it does not call the Allowit backend. The `allowit` binary does not enable the feature, so the rail service crates are not linked into it. The caller supplies deployment configuration and the bound operation data. The server keeps policy admission, spending limits, signer selection, journals and recovery decisions to itself.
+The server supplies policy admission, spending limits, trusted context and server-authority bindings.
+Its durable journal binds approved requests and settlement evidence to application accounting.
+The CLI supplies local signing custody and private journal storage.
+SDK engine shares workflow logic between those callers without transferring their keys or authority.
 
-| Export | Purpose |
-| --- | --- |
-| `upstream_from_env` | Select the configured PaySH service implementations from the environment |
-| `catalog` | Discovery data for PaySH services |
-| `stock`, `cooperating`, `x402` | The PaySH protocols |
-| `rpc` | Bounded transports and typed rail requests, with `rpc::solana` and `rpc::tempo` |
-| `tempo_transaction` | Native Tempo transaction encoding |
-| `http` | The shared service transport |
+Vendor adapters translate provider protocols. Generic transport, retry budgets and journal mechanics belong in common code.
+An adapter exposes an explicit provider recovery contract instead of duplicating the provider's delivery workflow.
+The shared core's `Upstream::cached` and `Upstream::resume` contracts preserve that boundary.
 
 ## Develop
 

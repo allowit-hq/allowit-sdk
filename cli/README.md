@@ -2,7 +2,12 @@
 
 *The `allowit` command: rails, local keys, policy wallets, agent requests and the policy compiler tools.*
 
-This crate (`allowit-cli`, library `allowit_cli`) builds the `allowit` binary. It acts for the agent and the owner. It selects the rail, signs with keys that stay on the machine, validates receipts and recovers uncertain submissions. Backend requests come from [`allowit-sdk-engine`](../engine/), which has no terminal I/O. Errors, configuration and private storage are the `client` module of [Allowit core](https://github.com/allowit-hq/allowit-core) (package `allowit-sdk`), which also holds the compiler and evaluator. Rail crates live in their rail repositories and depend on the same core.
+This crate (`allowit-cli`, library `allowit_cli`) builds the `allowit` binary for agents and owners.
+It provides commands, input/output, local key custody and actor-specific configuration.
+[`allowit-sdk-engine`](../engine/) supplies reusable offchain communication and execution workflows for both CLI and server callers.
+Rail cores provide native encoding, signing and settlement semantics.
+[Allowit core](https://github.com/allowit-hq/allowit-core) supplies shared types, deterministic policy logic and host-only transport and journal primitives.
+The server adds trusted policy enforcement and server authority. A client operation does not transfer its private keys to the server.
 
 ```sh
 cargo run --locked --bin allowit -- --help
@@ -10,7 +15,7 @@ cargo build --locked --release --bin allowit
 cargo build --locked --release --bin allowit --no-default-features   # the Stellar rail only
 ```
 
-Release builds use the workspace release profile (`lto`, `opt-level = "s"`, `panic = "abort"`, `strip`). The default features `solana` and `tempo` build those rails and their crates. Without them, every command on a Solana or Tempo rail exits 3.
+Release builds use the workspace release profile: fat LTO, `opt-level = "z"`, overflow checks and symbol stripping. The default features `solana` and `tempo` build those rails and their crates. Without them, every command on a Solana or Tempo rail exits 3.
 
 ## Commands
 

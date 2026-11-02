@@ -14,7 +14,11 @@
 
 </div>
 
-Allowit lets your AI agents spend and invest, within a policy you set. This repository is where those policies are born: the restricted Rust dialect they are written in, the compiler that checks them, the deterministic interpreter that decides them, and the tools that make writing them pleasant.
+Allowit lets your AI agents spend and invest, within a policy you set.
+This repository contains the shared offchain engine library and the `allowit` CLI.
+Both the CLI and server engine use SDK engine for reusable rail communication and execution workflows.
+[Allowit core](https://github.com/allowit-hq/allowit-core) contains the deterministic policy compiler,
+evaluator and shared host primitives. Rail repositories provide native protocol capabilities.
 
 ## Overview
 
@@ -40,7 +44,7 @@ pub async fn evaluate(ctx: &Context) -> PolicyResult {
 }
 ```
 
-That is [`docs/examples/research.rs`](docs/examples/research.rs), and it compiles as written. The SDK turns it into a validated intermediate representation (IR) with content hashes, a human-readable workflow, and a list of what the policy needs at runtime. Hosts evaluate the IR; they never execute arbitrary code.
+That is [`docs/examples/research.rs`](docs/examples/research.rs), and it compiles as written. Allowit core compiles it into validated intermediate representation (IR), content hashes, a workflow and runtime requirements. The SDK exposes those operations to callers. Hosts evaluate the IR without executing arbitrary code.
 
 ### Features
 
@@ -180,10 +184,10 @@ Cargo features select how much of the SDK you take along:
 
 [The allowit-core README](https://github.com/allowit-hq/allowit-core#readme) lists every module and feature, and shows how to build the WebAssembly module (`allowit_sdk.wasm`) for WebAssembly hosts.
 
-To type-check policy source in an ordinary Rust project, depend on the facade:
+To type-check policy source in an ordinary Rust project, depend on the facade.
+This example uses the core revision pinned by the SDK workspace:
 
 ```toml
-# TODO: replace rev with tag = "v0.1.0" once allowit-core releases it.
 allowit = { package = "allowit-sdk", git = "https://github.com/allowit-hq/allowit-core.git", rev = "6aa00597a0796acf6f6fa911a86c0fe57c055b67", version = "0.1" }
 ```
 
@@ -193,14 +197,30 @@ The facade is for your editor. Compilation and evaluation still go through the S
 
 | Path | Crate or package | What it is |
 | --- | --- | --- |
-| [`engine/`](engine/) | `allowit-sdk-engine` | Backend requests, wallets, network routing and the service facade, with no terminal I/O |
-| [`cli/`](cli/) | `allowit-cli` | The `allowit` binary: commands, vendor command code and packaging |
+| [`engine/`](engine/) | `allowit-sdk-engine` | Shared offchain communication and execution workflows for CLI, server and SDK callers |
+| [`cli/`](cli/) | `allowit-cli` | The `allowit` binary: commands, input/output, local actor bindings and packaging |
 | [`cli/templates/policy/`](cli/templates/policy/) | `allowit-policy-template` | A Cargo crate to write and type-check your own policy in |
 | [`cli/skills/allowit/`](cli/skills/allowit/SKILL.md) | | Instructions for an AI agent that compiles and evaluates policies |
 | [`docs/`](docs/) | | Policy language reference and execution requirements |
 | [`docs/examples/`](docs/examples/) | | Three policies and two request contexts used throughout this README. They copy the allowit-core test inputs, and `cli/tests/examples.rs` keeps the copies identical at the core release in `Cargo.toml` |
 
-All packages share one Cargo workspace, one `Cargo.lock` and one version, and depend on each other by path. Code from other repositories comes in as git dependencies on release tags in the root `Cargo.toml`. Dependencies point one way: this SDK depends on the rail crates and on Allowit core, and the rail crates depend on Allowit core. Every crate in the build names the same core release.
+All packages share one Cargo workspace, one `Cargo.lock` and one version, and depend on each other by path.
+The root `Cargo.toml` pins git dependencies from other repositories.
+This SDK depends on the rail crates and Allowit core. The rail crates depend on Allowit core.
+Every crate in the build names the same core revision.
+
+The CLI and server engine depend on SDK engine. SDK engine composes rail and vendor capabilities.
+Those capabilities use common core types and host primitives directly.
+The deterministic policy and contract profiles exclude host network and filesystem I/O.
+
+```mermaid
+flowchart LR
+    CLI[CLI] --> SDK[SDK engine]
+    Server[Server engine] --> SDK
+    SDK --> Rails[Rail and vendor capabilities]
+    SDK --> Core[Allowit core]
+    Rails --> Core
+```
 
 | Repository | Crates this SDK uses |
 | --- | --- |
@@ -218,7 +238,9 @@ Allowit is a small constellation of repositories, and this one sits in the middl
 - [**allowit-core**](https://github.com/allowit-hq/allowit-core) defines the policy language and decides requests. Everything else trusts its hashes and its IR.
 - **The `allowit` CLI** in [`cli/`](cli/) is the command an agent actually runs: `show`, `eval`, `exec` and `status` against a running Allowit service, built on [`engine/`](engine/).
 - [**allowit-contracts-solana**](https://github.com/allowit-hq/allowit-contracts-solana), [**allowit-contracts-stellar**](https://github.com/allowit-hq/allowit-contracts-stellar) and [**allowit-contracts-tempo**](https://github.com/allowit-hq/allowit-contracts-tempo) hold the on-chain custody that enforces an approved policy on each rail, together with the rail crates that the engine and the CLI use to speak to it. They depend on Allowit core.
-- The hosted Allowit service and app, introduced at [allowit.xyz](https://allowit.xyz), own HTTP transport, owner input and the durable record of each request. Restricted Rust stays the source of truth for what an agent may do.
+- The hosted Allowit service, introduced at [allowit.xyz](https://allowit.xyz), owns authentication,
+  trusted policy enforcement, server authority and durable application state.
+  It shares SDK engine workflows with the CLI. Common host transport and journal primitives live in Allowit core.
 
 A compiled artifact is bound by its `source_hash` and `ir_hash`, so an owner can read the exact source that a wallet enforces, and a contract can verify that it is running the policy the owner approved.
 
