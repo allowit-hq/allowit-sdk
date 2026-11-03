@@ -275,7 +275,7 @@ pub(crate) trait RuntimeProvider {
     fn problem(&self, error: &Error) -> crate::runtime::Problem {
         crate::runtime::Problem {
             status: 409,
-            code: String::new(),
+            code: "",
             message: error.to_string(),
             details: None,
         }

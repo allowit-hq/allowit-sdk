@@ -5,15 +5,15 @@ use serde_json::json;
 fn fail(message: impl Into<String>) -> Problem {
     Problem {
         status: 409,
-        code: String::new(),
+        code: "",
         message: message.into(),
         details: None,
     }
 }
-fn coded(status: u16, code: &str, message: impl Into<String>) -> Problem {
+fn coded(status: u16, code: &'static str, message: impl Into<String>) -> Problem {
     Problem {
         status,
-        code: code.into(),
+        code,
         message: message.into(),
         details: None,
     }

@@ -980,11 +980,7 @@ pub(in crate::vendors) fn prepared_metadata(p: &Packet) -> Result<PreparedMetada
         .ok_or_else(|| Error::config("Missing original effect bound"))?;
     let mut amount = [0u8; 16];
     amount.copy_from_slice(&effect.max_debit.0[16..]);
-    let operation = native::operation_from_request(&value.config, &value.request)
-        .or_else(|_| {
-            native::transfer_from_request(&value.config, &value.request)
-                .map(native::StellarOperation::Transfer)
-        })
+    let operation = native::retained_operation_from_request(&value.config, &value.request)
         .map_err(Error::config)?;
     let (recipient, units) = operation.debit();
     let token = operation.debit_token(&value.config.asset);

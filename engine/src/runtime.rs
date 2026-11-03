@@ -565,7 +565,7 @@ pub fn signer_identity(network: &str, public_key: &[u8; 32]) -> Result<String> {
 #[derive(Clone, Debug)]
 pub struct Problem {
     pub status: u16,
-    pub code: String,
+    pub code: &'static str,
     pub message: String,
     pub details: Option<serde_json::Value>,
 }
