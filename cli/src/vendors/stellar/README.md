@@ -1,20 +1,25 @@
 # Stellar CLI adapter
 
-This adapter binds the common CLI commands to the [Stellar rail library](https://github.com/allowit-hq/allowit-contracts-stellar/tree/v0.2.0/stellar/core).
+This adapter binds the common CLI commands to the [Stellar rail library](https://github.com/allowit-hq/allowit-contracts-stellar/tree/main/stellar/core).
 The [workspace manifest](../../../../Cargo.toml) selects its release and the [lockfile](../../../../Cargo.lock) fixes the exact source.
-[Adapter wiring](../mod.rs) and the [rail table](../../../../engine/src/routing.rs) register it in the executable.
+[SDK registration](../../../../engine/src/vendors/stellar.rs) maps the vendor library’s network metadata and capabilities into the executable.
 Run `allowit rail ls --json` and `allowit rail show RAIL --json` for the installed build's networks, aliases and capabilities.
 
-[Known issues](../../../../known_issues.md) tracks the profile resolution workaround.
+[Known issues](../../../../known_issues.md) describes compatibility limits for older public exports.
 
 ## Public wallet profile
 
-Set `ALLOWIT_STELLAR_BUNDLE` to the owner's public wallet profile file.
-`ALLOWIT_URL` names the policy server origin.
-The profile names the network, wallet, owner, agent, server, installed asset and engine endpoints.
-It contains no signing material. The adapter checks its network and wallet against the CLI selection.
-Selecting an address with `wallet use` does not discover or import this profile.
-The selected private key must match the profile's agent before transport or signing.
+`policy export` verifies the completed activation and saves the public profile in the shared SDK cache.
+For a public export from another device, run `wallet import FILE --rpc-url URL`.
+Native imports require the existing administrator signatures over the exact source, parameters and wallet binding.
+The SDK checks those signatures against current account authority.
+Policy-wallet imports check the installed code, source, parameters and roles through independent RPC.
+
+The profile contains no signing material. Import and export do not change the selected agent key.
+`wallet show`, `policy show`, `exec` and `status` use the same cache resolver.
+`wallet use ADDRESS --profile VERSION` selects an exact cached version when several profiles match.
+Selecting an address does not discover source or import a profile.
+`ALLOWIT_URL` selects the server origin for export and import. The cached profile retains that origin for execution.
 
 ## Keys and asset amounts
 

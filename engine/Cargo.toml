@@ -6,11 +6,15 @@ edition = "2024"
 rust-version = "1.98"
 license = "MIT"
 publish = false
-description = "Shared Stellar request and caller bindings, with no terminal I/O"
+description = "Shared rail execution and owner workflows, with no terminal I/O"
+
+[features]
+default = ["stellar"]
+stellar = ["dep:allowit-stellar-wallet"]
 
 [dependencies]
 allowit-sdk = { workspace = true, features = ["std", "policy-source", "client", "transport"] }
-allowit-stellar-wallet.workspace = true
+allowit-stellar-wallet = { workspace = true, optional = true }
 getrandom = "0.3"
 base64 = "0.22.1"
 libc = "0.2.190"

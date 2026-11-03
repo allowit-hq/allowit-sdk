@@ -78,7 +78,7 @@ pub(crate) fn run(args: Args, cx: &mut Ctx) -> Result<i32> {
     let code = routing::with_network(Some(rail.id.into()), || {
         // A request reads only under the policy that sent it.
         if let Some(recorded) = entry.as_ref().and_then(|e| e.policy.as_deref()) {
-            let binding = vendor.exec_binding(cx, wallet.as_deref())?;
+            let binding = vendor.status_binding(cx, wallet.as_deref(), &args.id)?;
             if binding.policy.as_deref() != Some(recorded) {
                 return Err(Error::config(format!(
                     "request {} was sent under policy {recorded}; the installed profile names {}",

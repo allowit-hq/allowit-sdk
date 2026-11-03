@@ -2,7 +2,9 @@
 //! address; `wallet use` caches it as the rail's default.
 mod approve;
 mod configure;
+mod import;
 mod ls;
+mod setup;
 mod show;
 mod r#use;
 
@@ -17,6 +19,9 @@ Examples:
 /// Select and inspect installed policy wallets
 #[derive(Subcommand, Debug)]
 pub(crate) enum Command {
+    Import(import::Args),
+    #[command(before_help=setup::EXAMPLES)]
+    Setup(setup::Args),
     #[command(visible_alias = "list", before_help = ls::EXAMPLES)]
     Ls(ls::Args),
     #[command(before_help = show::EXAMPLES)]
@@ -31,6 +36,8 @@ pub(crate) enum Command {
 
 pub(crate) fn run(command: Command, cx: &mut Ctx) -> Result<i32> {
     match command {
+        Command::Import(a) => import::run(a, cx),
+        Command::Setup(a) => setup::run(a, cx),
         Command::Ls(a) => ls::run(a, cx),
         Command::Show(a) => show::run(a, cx),
         Command::Use(a) => r#use::run(a, cx),

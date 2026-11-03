@@ -1,4 +1,10 @@
 //! Registration shims for Stellar-owned key and signature semantics.
+pub(super) mod execution;
+pub(super) mod formats;
+pub(super) mod owner;
+pub(super) mod profiles;
+pub(super) mod request;
+mod typed;
 use super::{KeyProvider, PrivateSigner};
 use crate::{
     error::{Error, Result},
@@ -49,9 +55,7 @@ impl PrivateSigner for Key {
 }
 
 fn signature(signer: &LocalSigner, digest: &[u8; 32]) -> native::Result<[u8; 64]> {
-    if crate::routing::family(signer.network()).map_err(|_| "Unknown signing network")?
-        != crate::routing::Family::Stellar
-    {
+    if crate::routing::family(signer.network()).map_err(|_| "Unknown signing network")? != FAMILY {
         return Err("Signer does not serve the selected native protocol".into());
     }
     signer
@@ -95,5 +99,92 @@ pub(super) fn generate(
     Ok(crate::generation::GeneratedDraft {
         document,
         unresolved,
+    })
+}
+
+use crate::input::asset::Token;
+const TESTNET: &[Token] = &[
+    Token {
+        code: "XLM",
+        decimals: 7,
+        native: true,
+        issuer: None,
+    },
+    Token {
+        code: "USDC",
+        decimals: 7,
+        native: false,
+        issuer: Some("GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5"),
+    },
+];
+const PUBNET: &[Token] = &[
+    Token {
+        code: "XLM",
+        decimals: 7,
+        native: true,
+        issuer: None,
+    },
+    Token {
+        code: "USDC",
+        decimals: 7,
+        native: false,
+        issuer: Some("GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN"),
+    },
+];
+
+pub(crate) fn tokens_for(rail: &str) -> &'static [Token] {
+    if rail == "stellar:testnet" {
+        TESTNET
+    } else {
+        PUBNET
+    }
+}
+
+pub(super) const FAMILY: crate::routing::Family = crate::routing::Family("stellar");
+pub(super) fn networks() -> Vec<crate::routing::RailInfo> {
+    native::networks::NETWORKS
+        .iter()
+        .map(|n| crate::routing::RailInfo {
+            id: n.id,
+            aliases: n.aliases,
+            family: FAMILY,
+            testnet: n.testnet,
+        })
+        .collect()
+}
+pub(super) fn capabilities(network: &str) -> crate::execution::Capabilities {
+    crate::execution::Capabilities {
+        curve: "ed25519",
+        address_is_key: true,
+        operations: &["transfer", "deposit", "redeem"],
+        build_only: true,
+        verbs: if crate::routing::info(network).is_ok_and(|v| v.testnet) {
+            &[
+                "keys fund",
+                "wallet show",
+                "policy show",
+                "policy generate",
+                "exec",
+                "status",
+            ]
+        } else {
+            &[
+                "wallet show",
+                "policy show",
+                "policy generate",
+                "exec",
+                "status",
+            ]
+        },
+    }
+}
+pub(super) fn fund_key(network: &str, address: &str, endpoint: Option<&str>) -> Result<String> {
+    if !crate::routing::info(network)?.testnet {
+        return Err(Error::unsupported(
+            "The selected network has no test faucet",
+        ));
+    }
+    native::owner::fund_testnet_account(address, endpoint).map_err(|message| {
+        Error::uncertain(format!("{message}; check the balance before retrying"))
     })
 }

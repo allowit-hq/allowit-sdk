@@ -64,7 +64,7 @@ fn bind(text: &str, rail: Option<&str>) -> String {
 }
 
 pub(super) fn render(text: &str, global: &Global) -> String {
-    let rail = selected(global).or_else(|| routing::RAILS.first().map(|rail| rail.id));
+    let rail = selected(global).or_else(|| routing::all().first().map(|rail| rail.id));
     let mut rendered = bind(text, rail);
     if text.ends_with('\n') && !rendered.ends_with('\n') {
         rendered.push('\n');
@@ -82,13 +82,30 @@ pub(super) fn help(text: String, argv: &[String]) -> String {
 #[cfg(test)]
 mod tests {
     #[test]
-    fn a_build_without_rails_omits_rail_examples() {
-        let rendered = super::bind(
-            "Usage: allowit rail use <RAIL>\n\nExamples:\n  allowit rail use __ALLOWIT_EXAMPLE_RAIL__\n\nOptions:\n  --help",
-            None,
-        );
-        assert!(!rendered.contains("__ALLOWIT_EXAMPLE_RAIL__"));
-        assert!(!rendered.contains("Examples:"));
-        assert!(rendered.contains("Usage: allowit rail use <RAIL>"));
+    fn examples_follow_the_actual_compiled_inventory_and_selection() {
+        let global = super::Global {
+            config_dir: Some(crate::settings::temp_dir("examples-inventory")),
+            ..Default::default()
+        };
+        let text = "Usage: allowit rail use <RAIL>\n\nExamples:\n  allowit rail use __ALLOWIT_EXAMPLE_RAIL__\n\nOptions:\n  --help";
+        let rendered = super::render(text, &global);
+        match crate::routing::all().first() {
+            Some(first) => {
+                assert!(rendered.contains(&format!("allowit rail use {}", first.id)));
+                let selected = crate::routing::all().last().unwrap();
+                let global = super::Global {
+                    rail: Some(selected.id.into()),
+                    ..global
+                };
+                assert!(
+                    super::render(text, &global)
+                        .contains(&format!("allowit rail use {}", selected.id))
+                );
+            }
+            None => {
+                assert!(!rendered.contains("Examples:"));
+                assert!(!rendered.contains("__ALLOWIT_EXAMPLE_RAIL__"));
+            }
+        }
     }
 }

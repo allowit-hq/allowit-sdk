@@ -3,10 +3,15 @@
 pub use allowit_sdk::client::error;
 pub mod authoring;
 pub mod config;
+pub mod execution;
 pub mod generation;
+pub mod input;
 pub mod output;
+pub mod owner;
+pub mod profiles;
 pub mod request;
 pub mod routing;
+#[cfg(feature = "stellar")]
 pub mod stellar;
 pub mod typed_request;
 mod vendors;

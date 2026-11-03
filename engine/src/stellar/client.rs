@@ -47,9 +47,17 @@ pub struct Bundle {
     route: WalletRoute,
     pub config: WalletConfig,
     endpoints: Endpoints,
+    #[serde(default)]
+    source_approval: Option<SourceApproval>,
     /// A public profile never holds this; reading refuses a file that does.
     #[serde(default, deserialize_with = "local_secret")]
     signing_seed: Option<Zeroizing<String>>,
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+struct SourceApproval {
+    revision: u32,
+    signatures: Vec<DetachedSignature>,
 }
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
@@ -248,12 +256,25 @@ fn validate_bundle(policy: &str, bundle: &Bundle) -> Result<()> {
 }
 pub fn read_public_bundle(path: &Path) -> Result<Bundle> {
     // The file reader reports request-file errors; name the profile instead.
-    let mut bundle: Bundle = crate::typed_request::read_request_file(path).map_err(|_| {
+    let bundle: Bundle = crate::typed_request::read_request_file(path).map_err(|_| {
         Error::config(format!(
             "{} is not a readable public Stellar wallet profile",
             path.display()
         ))
     })?;
+    validate_public_bundle(bundle)
+}
+/// Decode a strict public descriptor before any JSON value projection.
+pub fn decode_public_bundle(bytes: &[u8]) -> Result<Bundle> {
+    if bytes.len() > 1_048_576 {
+        return Err(Error::config("Public wallet profile exceeds its limit"));
+    }
+    crate::typed_request::validate_json(bytes, 1_048_576)?;
+    let bundle = serde_json::from_slice(bytes)
+        .map_err(|_| Error::config("Invalid public wallet profile"))?;
+    validate_public_bundle(bundle)
+}
+fn validate_public_bundle(mut bundle: Bundle) -> Result<Bundle> {
     if let Some(_private) = bundle.signing_seed.take() {
         return Err(Error::config(
             "The public Stellar bundle must not contain signing material",
@@ -824,6 +845,124 @@ mod public_bundle_tests {
         std::fs::write(&path, serde_json::to_vec(&value).unwrap()).unwrap();
         assert!(read_public_bundle(&path).is_err());
         std::fs::remove_file(path).unwrap();
+    }
+}
+
+/// Read only the original configuration. It never supplies authority for a new signature.
+pub(crate) fn retained_config(
+    journal: &Store,
+    policy: &str,
+    id: &str,
+) -> Result<Option<WalletConfig>> {
+    let name = sdk::hex(&operation_nonce(policy, id));
+    let record: Option<Record> = journal.load(&name).map_err(journal_error)?;
+    record
+        .map(|r| {
+            if r.policy_id != policy
+                || r.request_id != id
+                || r.request.operation.nonce != operation_nonce(policy, id)
+            {
+                return Err(Error::config("Original journal identity changed"));
+            }
+            checked(sdk::validate_config(&r.config))?;
+            Ok(r.config)
+        })
+        .transpose()
+}
+/// Consume a currently authenticated client for status using its exact historical public binding.
+/// The replaced binding never escapes into a client that can prepare or sign an operation.
+pub(crate) fn historical_status(
+    mut current: Client,
+    historical: Bundle,
+    journal: &Store,
+    id: &str,
+    wait: Duration,
+) -> Result<ExecutionOutcome> {
+    validate_bundle(&historical.policy_id, &historical)?;
+    if current.bundle.policy_id != historical.policy_id
+        || checked(sdk::network_id(&current.bundle.network))?
+            != checked(sdk::network_id(&historical.network))?
+        || current.bundle.wallet != historical.wallet
+    {
+        return Err(Error::config(
+            "Historical profile belongs to another wallet or policy",
+        ));
+    }
+    current.bundle = historical;
+    status(&current, journal, id, wait)
+}
+pub(crate) fn matches_retained(expected: &WalletConfig, actual: &WalletConfig) -> bool {
+    same_retained_policy_config(expected, actual)
+}
+
+impl Bundle {
+    /// Verify a portable imported installation against current native authority.
+    pub(crate) fn verify_import(&self, endpoint: &str) -> Result<()> {
+        let rpc = checked(sdk::rpc::HttpRpc::new(endpoint))?;
+        self.verify_import_with(&rpc)
+    }
+    pub(crate) fn verify_import_with(&self, rpc: &dyn sdk::rpc::Rpc) -> Result<()> {
+        let c = &self.config;
+        if checked(rpc.call("getNetwork", json!({})))?["passphrase"]
+            != checked(sdk::passphrase(&c.network))?
+        {
+            return Err(Error::config("Import RPC belongs to another network"));
+        }
+        if c.language != sdk::PolicyLanguage::Portable {
+            return Err(Error::unsupported(
+                "Retired profiles support retained operation recovery only",
+            ));
+        }
+        if c.route == WalletRoute::PolicyWallet {
+            let live = checked(sdk::rpc::trusted_state_for_discovery(rpc, c, None))?;
+            if live.paused
+                || live.state.owner != c.owner
+                || live.state.agent != c.agent
+                || live.state.server != c.server
+                || live.state.policy_instance != c.policy_instance
+                || live.state.module_digest != c.module_digest
+                || live.state.policy_state.as_ref().is_none_or(|p| {
+                    p.params != c.params || p.rules != c.rules || p.source_digest != c.source_digest
+                })
+            {
+                return Err(Error::config(
+                    "Imported profile differs from current native policy or authority",
+                ));
+            }
+            return Ok(());
+        }
+        let proof=self.source_approval.as_ref().filter(|p|p.revision>0 && (1..=20).contains(&p.signatures.len()))
+            .ok_or_else(||Error::config("Native import requires the exact administrator source approval. Export this active policy from the owner workspace."))?;
+        let portable = self
+            .portable
+            .as_ref()
+            .ok_or_else(|| Error::config("Native source binding is missing"))?;
+        let payload = json!({"version":1,"policyId":self.policy_id,"revision":proof.revision,"network":c.network,"wallet":c.wallet,"route":c.route,"policyInstance":sdk::hex(&c.policy_instance),"source":c.policy_source,"sourceHash":self.source_hash,"irHash":self.ir_hash,"moduleDigest":self.module_digest,"asset":c.asset,"assetSymbol":c.asset_symbol,"assetIssuer":c.asset_issuer,"maxFeeStroops":c.max_fee_stroops,"language":portable.language,"tier":portable.tier,"rules":portable.rules,"params":portable.params,"paramsHash":portable.params_hash});
+        let message = format!(
+            "AllowIt Native policy approval v1\n{}",
+            serde_json_canonicalizer::to_string(&payload)
+                .map_err(|_| Error::config("Cannot encode exact imported source consent"))?
+        );
+        let digest = sdk::signing::signed_message_digest(&message);
+        let mut signers = std::collections::BTreeSet::new();
+        for signature in &proof.signatures {
+            if !signers.insert(signature.signer.as_str()) {
+                return Err(Error::config(
+                    "Imported administrator signature is repeated",
+                ));
+            }
+            checked(sdk::signing::verify_digest(
+                &signature.signer,
+                &digest,
+                &signature.signature,
+            ))?;
+        }
+        let live = checked(sdk::rpc::get_account(rpc, &c.wallet))?;
+        checked(live.validate_wallet(c))?;
+        checked(live.validate_signer_quorum(
+            &signers.into_iter().collect::<Vec<_>>(),
+            live.high_threshold,
+        ))
     }
 }
 

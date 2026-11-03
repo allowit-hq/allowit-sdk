@@ -1,4 +1,5 @@
 //! Owner HTTP authentication and portable generation. This workflow grants no spending authority.
+pub mod workflow;
 use crate::{
     config::parse_origin,
     error::{Error, Result},
@@ -114,7 +115,7 @@ struct Generated {
 }
 
 /// Only public generation fields are returned. Extra server state and credentials are never copied.
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct GeneratedPolicy {
     pub id: String,
@@ -132,7 +133,7 @@ pub struct GeneratedPolicy {
     pub mint: String,
     pub runtime: PublicRuntime,
 }
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PublicRuntime {
     pub source_profile: String,
@@ -140,12 +141,12 @@ pub struct PublicRuntime {
     pub operation: String,
     pub instance_binding: PolicyBinding,
 }
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct WalletSelection {
     pub kind: String,
     pub profile: String,
 }
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct PolicyBinding {
     pub profile: String,
@@ -165,7 +166,7 @@ pub struct PolicyBinding {
     pub template: Option<bool>,
     pub portable: PortableDraft,
 }
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct PortableDraft {
     pub language: String,
@@ -181,14 +182,14 @@ pub struct PortableDraft {
     #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
     pub kinds: std::collections::BTreeMap<String, String>,
 }
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct PortableAsset {
     pub symbol: String,
     pub address: String,
     pub decimals: u32,
 }
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct BuildReport {
     pub prefix: Vec<String>,

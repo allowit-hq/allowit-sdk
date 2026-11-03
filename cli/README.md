@@ -54,8 +54,8 @@ allowit guide
 ## Vendors and build output
 
 The [workspace manifest](../Cargo.toml) selects vendor dependencies. The [lockfile](../Cargo.lock) fixes their source revisions.
-The [rail table](../engine/src/routing.rs) admits networks and aliases, and [CLI adapter wiring](src/vendors/mod.rs) dispatches their capabilities.
-These are compiled registrations. Adding a dependency alone does not make a vendor available.
+The [SDK registry](../engine/src/vendors/mod.rs) selects compiled vendor bindings. Each vendor library supplies its network identities and aliases.
+[CLI adapter wiring](src/vendors/mod.rs) calls the shared capabilities. Adding a dependency alone does not make a vendor available.
 
 ```sh
 allowit version
@@ -81,7 +81,7 @@ Public keys added with `keys add` cannot sign. `keys export` explicitly prints p
 ## Generate an owner policy
 
 Select the network and import the owner key by name. Generation does not change the selected agent key.
-`ALLOWIT_URL` names the backend; `--origin` names an Origin allowed by that backend for owner sign-in.
+`ALLOWIT_URL` names the backend. `--origin` names an Origin that the backend allows for owner sign-in.
 
 ```sh
 allowit rail use RAIL
@@ -106,20 +106,22 @@ After uncertain generation (exit 5), inspect the owner workspace before submitti
 
 ## Execute and recover
 
-Configure the owner's public profile through the selected adapter, then inspect it with `wallet show` and `policy show`.
+Use `policy export` after activation, or `wallet import FILE --rpc-url URL` for a verified public export from another device.
+Then inspect it with `wallet show` and `policy show`.
 Each [adapter reference](src/vendors/) describes its public profile configuration and native request formats.
-[Known issues](../known_issues.md) describes the profile-file workaround and native-binding limits.
-`ALLOWIT_URL` selects the server origin. Selecting a wallet address does not fetch or import its profile.
+[Known issues](../known_issues.md) describes compatibility with older exports.
+`ALLOWIT_URL` selects the server origin for owner requests and profile import.
+The SDK retains that origin with each cached profile. Selecting an address does not fetch or import a profile.
 
 Use only commands and operations advertised by `rail show`.
 The CLI journals each operation before sending it. An uncertain result retains its request ID and exact bytes.
-Repeat the same `exec` or read `status`; a new request ID represents a new operation.
+Repeat the same `exec` or read `status`. A new request ID represents a new operation.
 Terminal status requires a verified receipt. A rotated agent key can recover an original receipt without signing again.
 
 ## Output and exits
 
 Data goes to stdout. Diagnostics and generated request IDs go to stderr.
-`--json` selects JSON; `NO_DNA` selects compact JSON and disables prompts.
+`--json` selects JSON. `NO_DNA` selects compact JSON and disables prompts.
 `--build-only` always prints JSON. Destructive commands need `--yes` without a terminal.
 
 | Exit | Meaning |
@@ -129,7 +131,7 @@ Data goes to stdout. Diagnostics and generated request IDs go to stderr.
 | 2 | Invalid command or input |
 | 3 | Configuration or unavailable capability |
 | 4 | Contract rejection |
-| 5 | Uncertain; preserve the request ID |
+| 5 | Uncertain. Preserve the request ID |
 | 6 | Replayed result |
 | 10 | Owner signature needed |
 | 11 | Owner input needed |
@@ -143,18 +145,40 @@ Data goes to stdout. Diagnostics and generated request IDs go to stderr.
 - [`src/vendors/`](src/vendors/) connects commands to registered rail libraries and validates their native input formats.
 - `src/settings/` owns caller configuration, private keys and local request records.
 - `src/ctx.rs` resolves caller settings. `src/term.rs` renders output.
-- [`templates/policy/`](templates/policy/) contains the policy crate; [`skills/allowit/`](skills/allowit/SKILL.md) describes authoring.
+- [`templates/policy/`](templates/policy/) contains the policy crate. [`skills/allowit/`](skills/allowit/SKILL.md) describes authoring.
 
 Help snapshots live in `tests/snapshots/help/`.
 After an intended command change, run `ALLOWIT_UPDATE_SNAPSHOTS=1 cargo test -p allowit-cli --test help`.
+
+## Deploy, activate and export
+
+Owner commands use an explicit named owner key. They do not change the selected agent key.
+Pass an independent RPC endpoint with `--rpc-url URL`, or configure it for the selected rail.
+Use stable request IDs to resume interrupted owner operations.
+
+1. Generate and review the public policy draft.
+2. For a contract wallet, supply the reviewed executable and run `policy deploy` with explicit agent and server addresses.
+3. Run `policy fund` to fund the selected deployment.
+4. Run `policy activate` for the exact source and parameters.
+5. Run `policy export` with the completed activation ID. This saves the verified public profile locally and prints its public descriptor.
+6. Select the agent key and wallet. Then use `exec` and `status`.
+
+For account policies, configure native roles with `wallet setup` before activation.
+The selected capability validates addresses, fee units, executable format and native signing intent.
+Use each command’s `--help` for its required files and flags.
+`policy owner-status ID` reads original owner receipts without the owner key or a new signature.
+
+Public profile versions are immutable. A new export does not replace a profile retained for historical status.
+If several profiles match, use `wallet use ADDRESS --profile VERSION` to select one explicitly.
+Imports never infer approved source from an address. Native imports validate portable administrator consent and current native authority.
 
 ## Owner capabilities and native policy binding
 
 The shared Core admin traits describe deployment, pause and full-balance recovery capabilities.
 Rail libraries prepare native arguments, trusted reads and unsigned transactions.
 Preparation returns native transaction bytes and required authorizers. The caller reviews and signs the exact transaction.
-SDK engine controls submission and original-hash recovery; keys remain with the caller.
+SDK engine controls submission and original-hash recovery. Keys remain with the caller.
 
 Portable policy source uses `pub fn execute(ctx: &AllowitContext) -> allowit::Result`.
-Owner params supply configuration; authenticated request facts and committed state come from the host and rail.
+Owner params supply configuration. Authenticated request facts and committed state come from the host and rail.
 See the [portable policy reference](../docs/policy-reference.md) and the selected [adapter reference](src/vendors/).

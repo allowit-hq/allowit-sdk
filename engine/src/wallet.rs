@@ -177,7 +177,7 @@ pub fn inspect_wallet(network: &str, path: &Path) -> Result<PublicWallet> {
 
 #[cfg(test)]
 fn built_networks() -> impl Iterator<Item = &'static str> {
-    routing::RAILS.iter().map(|rail| rail.id)
+    routing::all().iter().map(|rail| rail.id)
 }
 
 #[cfg(test)]
@@ -249,35 +249,46 @@ mod storage_tests {
     #[test]
     fn symlink_hardlink_and_insecure_files_are_refused() {
         let p = path();
-        generate_wallet("stellar:testnet", &p).unwrap();
+        let Some(network) = built_networks().next() else {
+            assert!(generate_wallet("unavailable", &p).is_err());
+            assert!(!p.exists());
+            return;
+        };
+        generate_wallet(network, &p).unwrap();
         let alias = p.with_file_name("alias");
         symlink(&p, &alias).unwrap();
-        assert!(inspect_wallet("stellar:testnet", &alias).is_err());
-        assert!(generate_wallet("stellar:testnet", &alias).is_err());
+        assert!(inspect_wallet(network, &alias).is_err());
+        assert!(generate_wallet(network, &alias).is_err());
         std::fs::remove_file(&alias).unwrap();
         std::fs::hard_link(&p, &alias).unwrap();
-        assert!(inspect_wallet("stellar:testnet", &p).is_err());
+        assert!(inspect_wallet(network, &p).is_err());
         std::fs::remove_file(&alias).unwrap();
         std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o644)).unwrap();
-        assert!(inspect_wallet("stellar:testnet", &p).is_err());
+        assert!(inspect_wallet(network, &p).is_err());
         std::fs::remove_dir_all(p.parent().unwrap()).unwrap();
     }
     #[test]
     fn concurrent_generation_has_exactly_one_winner() {
         let p = path();
+        let selected = built_networks().next();
+        let network = selected.unwrap_or("unavailable");
         let mut threads = vec![];
         for _ in 0..8 {
             let p = p.clone();
             threads.push(std::thread::spawn(move || {
-                generate_wallet("stellar:testnet", &p).is_ok()
+                generate_wallet(network, &p).is_ok()
             }));
         }
         let wins = threads
             .into_iter()
             .map(|t| usize::from(t.join().unwrap()))
             .sum::<usize>();
-        assert_eq!(wins, 1);
-        inspect_wallet("stellar:testnet", &p).unwrap();
-        std::fs::remove_dir_all(p.parent().unwrap()).unwrap();
+        assert_eq!(wins, usize::from(selected.is_some()));
+        if selected.is_some() {
+            inspect_wallet(network, &p).unwrap();
+            std::fs::remove_dir_all(p.parent().unwrap()).unwrap();
+        } else {
+            assert!(!p.exists());
+        }
     }
 }

@@ -9,7 +9,7 @@ use allowit_stellar_wallet::workflow::ExecutionRequest;
 use serde::Serialize;
 
 #[derive(Debug, Clone, PartialEq)]
-pub(crate) struct TypedRequest {
+pub struct TypedRequest {
     pub request_id: String,
     pub request: ExecutionRequest,
 }
@@ -30,11 +30,7 @@ enum WireInput<'a> {
 impl TypedRequest {
     /// Binds a request to its policy and request ID through the version 1
     /// operation nonce.
-    pub(crate) fn new(
-        policy_id: &str,
-        request_id: &str,
-        request: ExecutionRequest,
-    ) -> Result<Self> {
+    pub fn new(policy_id: &str, request_id: &str, request: ExecutionRequest) -> Result<Self> {
         if request.operation.nonce != operation_nonce(policy_id, request_id) {
             return Err(Error::usage(
                 "operation.nonce is not the version 1 nonce for this policy ID and requestId",
@@ -46,7 +42,7 @@ impl TypedRequest {
         })
     }
     /// The canonical envelope of the validated values.
-    pub(crate) fn wire(&self) -> Result<serde_json::Value> {
+    pub fn wire(&self) -> Result<serde_json::Value> {
         serde_json::to_value(Wire {
             request_id: &self.request_id,
             input: WireInput::Execution(&self.request),
@@ -59,8 +55,10 @@ impl TypedRequest {
 mod tests {
     use super::*;
     use serde_json::Value;
-    const ENVELOPE: &str = include_str!("../../tests/fixtures/typed/execution-envelope-v1.json");
-    const VECTOR: &str = include_str!("../../tests/fixtures/typed/operation-vector-v1.json");
+    const ENVELOPE: &str =
+        include_str!("../../../../cli/tests/fixtures/typed/execution-envelope-v1.json");
+    const VECTOR: &str =
+        include_str!("../../../../cli/tests/fixtures/typed/operation-vector-v1.json");
     const POLICY: &str = "owner-policy_Example-A";
     const ID: &str = "cli-native-transfer-01";
 

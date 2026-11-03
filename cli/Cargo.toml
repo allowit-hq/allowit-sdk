@@ -15,10 +15,14 @@ name = "allowit_cli"
 name = "allowit"
 path = "src/main.rs"
 
+[features]
+default = ["stellar"]
+stellar = ["allowit-sdk-engine/stellar", "dep:allowit-stellar-wallet"]
+
 [dependencies]
 allowit-sdk = { workspace = true, features = ["std", "client"] }
 allowit-sdk-engine = { path = "../engine", default-features = false }
-allowit-stellar-wallet.workspace = true
+allowit-stellar-wallet = { workspace = true, optional = true }
 serde_json_canonicalizer = "0.3"
 clap = { version = "4.6", features = ["derive", "env", "wrap_help"] }
 clap_complete = "4.6"

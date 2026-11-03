@@ -287,3 +287,11 @@ pub fn portable_descriptor(config: &mut allowit_stellar_wallet::WalletConfig) ->
         "asset":{"symbol":config.asset_symbol,"address":config.asset,"decimals":7},"unresolved":[],
         "build":{"prefix":shape.prefix,"writesState":shape.writes_state,"libraryRevision":"6aa4235e6229e18d1f9780a6a9fdf80aceb0f348","attempts":1}})
 }
+
+/// Seed an already verified export fixture. Production installation uses owner::export.
+pub fn public_profile_fixture(sandbox: &Sandbox, profile: &Value, backend: &str) {
+    let store =
+        allowit_sdk::client::store::Store::open(&sandbox.config().join("public-profiles/versions"))
+            .unwrap();
+    store.save("fixture",&serde_json::json!({"schema":1,"network":profile["network"],"backend":backend,"descriptor":profile})).unwrap();
+}

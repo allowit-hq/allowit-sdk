@@ -2,14 +2,13 @@
 //! Commands reach native behavior through the Rail trait; unsupported capabilities exit 3.
 pub(crate) mod address;
 pub(crate) mod asset;
-pub(crate) mod stellar;
-pub(crate) mod typed;
+pub(crate) mod registered;
 
 use crate::{
     ctx::Ctx,
     error::{Error, Result},
     exit::not_available,
-    routing::{Family, RailInfo},
+    routing::RailInfo,
     settings::keys::Key,
 };
 use asset::{Amount, Token, Use};
@@ -27,18 +26,7 @@ pub(crate) struct Caps {
     pub verbs: &'static [&'static str],
 }
 
-/// An agent request built from the `exec` flags.
-pub(crate) struct ExecRequest {
-    pub op: String,
-    pub to: String,
-    pub amount: Amount,
-    pub token_out: Option<Amount>,
-    pub args: Option<serde_json::Value>,
-    pub request_id: String,
-    pub wait: Duration,
-    pub build_only: bool,
-    pub wallet: Option<String>,
-}
+pub(crate) use allowit_sdk_engine::execution::Request as ExecRequest;
 
 /// What an agent request runs under: the wallet and the policy that the rail
 /// resolves from the selection and its installed profile. The journal binds a
@@ -81,6 +69,9 @@ pub(crate) trait Rail {
             policy: None,
         })
     }
+    fn status_binding(&self, cx: &mut Ctx, wallet: Option<&str>, _id: &str) -> Result<Binding> {
+        self.exec_binding(cx, wallet)
+    }
     /// Settings that every current command on this rail runs with, in place
     /// of environment values that the user did not set.
     fn settings(&self, _: &mut Ctx) -> Result<Vec<(&'static str, String)>> {
@@ -109,36 +100,9 @@ pub(crate) trait Rail {
     }
 }
 
-/// One address check: the test and the expected form that its error names.
-pub(crate) type Check = (fn(&str) -> bool, &'static str);
-
-/// The address and asset formats of a chain family. Each rail defines its
-/// own in `vendors/<rail>/formats.rs`; [`formats`] picks it.
-pub(crate) struct Formats {
-    /// An account that holds a key.
-    pub account: Check,
-    /// A policy wallet.
-    pub wallet: Check,
-    /// A transfer recipient.
-    pub recipient: Check,
-    /// A token identity: an issuer, mint or token address.
-    pub token: Check,
-    /// The decimals of an asset contract given in place of a token code, or
-    /// `None` when the input is not one.
-    pub asset_contract: fn(&str) -> Option<u8>,
-    /// The decimals of a token that its issuer names and the rail's table
-    /// does not list, when the family fixes them.
-    pub issuer_decimals: Option<u8>,
-}
-
-/// The address and asset formats of a family.
-pub(crate) fn formats(_family: Family) -> &'static Formats {
-    &stellar::formats::FORMATS
-}
-
 /// The adapter for an admitted Stellar rail.
 pub(crate) fn rail(info: &'static RailInfo) -> Box<dyn Rail> {
-    Box::new(stellar::Stellar(info))
+    Box::new(registered::Adapter(info))
 }
 
 /// Refuses an operation other than those the rail lists.

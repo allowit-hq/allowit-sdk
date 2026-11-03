@@ -48,6 +48,9 @@ Rail packages can use common core primitives directly. Core has no dependency on
 | --- | --- |
 | `authoring` | Shared portable source gate and bounded real compilation using embedded Core resources |
 | `generation` | Registered owner-authenticated generation with exact selected-rail binding |
+| `owner` | Common owner deployment, funding, activation, export and receipt workflows |
+| `profiles` | Verified public exports, portable imports, immutable versions and explicit selection |
+| `execution`, `input` | Shared request orchestration, amount parsing and selected native format checks |
 | `stellar` | Native execution, caller-owned OperationStore, ordered authorization retention and exact-hash recovery |
 | `stellar::owner_client` | Owner sign-in and server-backed portable generation with explicit template or installation selection |
 | `stellar::client` | Authenticated server requests, signer capabilities and exact-intent client resumption |
@@ -75,8 +78,8 @@ SDK engine retains secure files, configuration, sessions and workflow sequencing
 
 `stellar::owner_client` takes a distinct caller-owned owner signer. Native helpers check the exact
 sign-in message, account, Origin and nonce. SDK engine checks freshness and requires a rotated owner session.
-It validates advertised generation profiles, networks and terms before sending one creation request.
-Returned source, params and native bindings are checked as a draft, never as publication or spending authority.
+It checks advertised generation profiles, networks and terms before sending one creation request.
+The SDK checks returned source, params and native bindings as a draft. This draft grants no publication or spending authority.
 An uncertain generation is not repeated automatically.
 
 `stellar::client` takes a caller-owned signer capability and private core `Store`.
@@ -100,3 +103,19 @@ Run these commands from the repository root:
 cargo test --locked -p allowit-sdk-engine
 cargo clippy --locked -p allowit-sdk-engine --all-targets -- -D warnings
 ```
+
+## Compiled capabilities and public profiles
+
+The vendor library defines its network identities and aliases. SDK registration maps that metadata into common routing.
+A build without vendor features exposes an empty rail inventory.
+CLI examples use the selected rail, then the first network supported by the build.
+
+Owner export installs only the exact independently checked activation result.
+Explicit public import checks current native authority before saving a profile.
+Native imports also check the existing administrator signatures over the exact source and parameters.
+Common profile parameters use Core `PolicyValue`. The selected vendor checks native addresses and converts values for its execution model.
+
+The SDK stores public profiles separately from signing keys and private execution journals.
+Each profile version retains its complete public binding and server origin.
+Historical status consumes a current agent client with the matching old public binding.
+That status path cannot prepare or sign a replacement operation.

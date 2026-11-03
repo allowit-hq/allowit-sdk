@@ -1,6 +1,6 @@
 //! Stellar address and asset formats: G… accounts, C… contracts and
 //! Stellar Asset Contracts in place of a token code.
-use super::super::Formats;
+use crate::input::Formats;
 
 fn account(s: &str) -> bool {
     s.starts_with('G') && allowit_stellar_wallet::account_key(s).is_ok()
