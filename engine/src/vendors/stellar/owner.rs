@@ -30,7 +30,10 @@ fn selected(bytes: &[u8]) -> Result<OwnerPolicy> {
     Ok(out.selection)
 }
 fn check(cx: &Context<'_>, p: &OwnerPolicy) -> Result<()> {
-    if p.config.network != cx.network || p.config.owner != cx.signer.address() {
+    if crate::routing::normalize(&p.config.network)? != crate::routing::normalize(cx.network)?
+        || p.config.owner != cx.signer.address()
+        || p.config.server != cx.authority.public_key()
+    {
         return Err(Error::config(
             "Policy differs from the selected owner or rail",
         ));
@@ -56,7 +59,7 @@ fn store(root: &Path) -> Result<Store> {
     Store::open(&root.join("stellar-owner-workflows"))
 }
 fn client(cx: &Context<'_>) -> Result<OwnerClient> {
-    let mut c = OwnerClient::new(cx.backend, cx.origin, cx.signer.address())?;
+    let mut c = OwnerClient::with_authority(cx.authority, cx.origin, cx.signer.address())?;
     c.authenticate(cx.signer, (cx.clock)()?)?;
     Ok(c)
 }
@@ -154,9 +157,16 @@ impl OwnerProvider for Owner {
         let runtime = runtime(cx.rpc_url)?;
         let store = store(cx.root)?;
         let raw = client(cx)?.export_raw(&store, &p, runtime.rpc(), id, (cx.clock)()?)?;
-        Cache::open(cx.root)?.install(cx.network, cx.backend, raw)
+        Cache::open(cx.root)?
+            .install(cx.network, cx.backend, raw)?
+            .with_authority(cx.authority)
     }
     fn setup(&self, cx: &Context<'_>, r: owner::Setup<'_>) -> Result<serde_json::Value> {
+        if r.server != cx.authority.public_key() {
+            return Err(Error::usage(
+                "Setup server differs from independently configured authority",
+            ));
+        }
         if !crate::routing::info(cx.network)?.testnet {
             return Err(Error::unsupported(
                 "Native setup is available on the selected test network only",

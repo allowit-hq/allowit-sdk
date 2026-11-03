@@ -24,6 +24,42 @@ pub fn env_present(name: &str) -> bool {
 pub fn with_settings<T>(settings: &[(&str, String)], f: impl FnOnce() -> Result<T>) -> Result<T> {
     with_overrides(settings, f)
 }
+/// Independently configured public authority for one backend and selected rail.
+#[derive(Clone, Debug)]
+pub struct ServerAuthority {
+    network: String,
+    origin: String,
+    public_key: String,
+}
+impl ServerAuthority {
+    pub fn new(network: &str, origin: &str, public_key: &str) -> Result<Self> {
+        if origin.is_empty() {
+            return Err(crate::error::Error::config(
+                "Configure an explicit server origin and public identity",
+            ));
+        }
+        let network = crate::routing::normalize(network)?;
+        crate::input::address::check_account(crate::routing::family(network)?, public_key)
+            .map_err(|_| {
+                crate::error::Error::usage("Invalid public server identity for the selected rail")
+            })?;
+        Ok(Self {
+            network: network.into(),
+            origin: parse_origin(origin)?,
+            public_key: public_key.into(),
+        })
+    }
+    pub fn network(&self) -> &str {
+        &self.network
+    }
+    pub fn origin(&self) -> &str {
+        &self.origin
+    }
+    pub fn public_key(&self) -> &str {
+        &self.public_key
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

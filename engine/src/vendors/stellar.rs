@@ -161,6 +161,13 @@ pub(super) fn capabilities(network: &str) -> crate::execution::Capabilities {
         verbs: if crate::routing::info(network).is_ok_and(|v| v.testnet) {
             &[
                 "keys fund",
+                "wallet setup",
+                "wallet import",
+                "policy deploy",
+                "policy fund",
+                "policy activate",
+                "policy export",
+                "policy owner-status",
                 "wallet show",
                 "policy show",
                 "policy generate",
@@ -169,6 +176,12 @@ pub(super) fn capabilities(network: &str) -> crate::execution::Capabilities {
             ]
         } else {
             &[
+                "wallet import",
+                "policy deploy",
+                "policy fund",
+                "policy activate",
+                "policy export",
+                "policy owner-status",
                 "wallet show",
                 "policy show",
                 "policy generate",

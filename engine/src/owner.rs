@@ -9,6 +9,7 @@ use std::path::Path;
 pub struct Context<'a> {
     pub network: &'a str,
     pub backend: &'a str,
+    pub authority: &'a crate::config::ServerAuthority,
     pub origin: &'a str,
     pub rpc_url: &'a str,
     pub root: &'a Path,
@@ -17,6 +18,13 @@ pub struct Context<'a> {
 }
 impl Context<'_> {
     fn check(&self) -> Result<()> {
+        if self.authority.origin() != crate::config::parse_origin(self.backend)?
+            || self.authority.network() != routing::normalize(self.network)?
+        {
+            return Err(Error::config(
+                "Owner context differs from independently configured server authority",
+            ));
+        }
         if routing::normalize(self.network)? != self.signer.network() {
             return Err(Error::config(
                 "Owner signer belongs to another selected rail",

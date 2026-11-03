@@ -33,7 +33,7 @@ flowchart TB
 ## Commands
 
 ```
-allowit rail ls | show [RAIL] | use RAIL
+allowit rail ls | show [RAIL] | use RAIL | trust ORIGIN PUBLIC_KEY
 allowit keys generate NAME [--fund]
 allowit keys add NAME --public-key ADDR
 allowit keys import NAME FILE|-
@@ -78,6 +78,23 @@ Private signing material remains in `secrets/NAME` with mode 0600 inside a 0700 
 `keys use` selects an existing private key for that network. It performs no server registration.
 Public keys added with `keys add` cannot sign. `keys export` explicitly prints private signing material.
 
+## Configure public server trust
+
+Select a rail from `allowit rail ls --json` before configuring its backend identity.
+Obtain the public identity through an independent trusted channel.
+For a local server, derive it from the actual configured server signer through the launch setup.
+A public profile or an unauthenticated discovery response cannot install its own trust anchor.
+
+```sh
+allowit rail use RAIL
+allowit rail trust SERVER_ORIGIN PUBLIC_KEY
+```
+
+The command stores the public identity by rail and origin in `config.toml`, under `server_authorities`.
+Repeating the same pin does not change the configuration. It does not create a key or change agent or wallet selection.
+The origin must match `ALLOWIT_URL`. Credentials, paths, queries and fragments are not origins.
+Imports and owner actions require this independent pin. Fresh execution retains that authority and one exact profile through journaling and signing.
+
 ## Generate an owner policy
 
 Select the network and import the owner key by name. Generation does not change the selected agent key.
@@ -116,7 +133,9 @@ The SDK retains that origin with each cached profile. Selecting an address does 
 Use only commands and operations advertised by `rail show`.
 The CLI journals each operation before sending it. An uncertain result retains its request ID and exact bytes.
 Repeat the same `exec` or read `status`. A new request ID represents a new operation.
-Terminal status requires a verified receipt. A rotated agent key can recover an original receipt without signing again.
+Terminal status requires a verified receipt. A rotated agent key can recover an original receipt without a new operation signature.
+Original journal recovery does not require a new profile cache, current source approval or a new authority pin.
+It queries the configured settlement service for the original packet and verifies its receipt. It never prepares another payment.
 
 ## Output and exits
 
@@ -170,7 +189,7 @@ Use each command’s `--help` for its required files and flags.
 
 Public profile versions are immutable. A new export does not replace a profile retained for historical status.
 If several profiles match, use `wallet use ADDRESS --profile VERSION` to select one explicitly.
-Imports never infer approved source from an address. Native imports validate portable administrator consent and current native authority.
+Imports never infer approved source from an address. Native imports validate portable administrator consent, the independent server pin and current native authority.
 
 ## Owner capabilities and native policy binding
 

@@ -17,6 +17,7 @@ use std::{
 pub struct Sandbox {
     pub root: PathBuf,
     env: Vec<(String, String)>,
+    services: Vec<Box<dyn std::any::Any>>,
 }
 
 impl Sandbox {
@@ -29,7 +30,14 @@ impl Sandbox {
         ));
         let _ = std::fs::remove_dir_all(&root);
         std::fs::create_dir_all(root.join("work")).unwrap();
-        Self { root, env: vec![] }
+        Self {
+            root,
+            env: vec![],
+            services: vec![],
+        }
+    }
+    pub fn keep_alive(&mut self, service: impl std::any::Any) {
+        self.services.push(Box::new(service));
     }
     /// The config directory. Commands create it on first use.
     pub fn config(&self) -> PathBuf {

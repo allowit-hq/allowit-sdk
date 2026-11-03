@@ -34,6 +34,7 @@ pub struct OwnerClient {
     origin: String,
     owner: String,
     session: Option<OwnerSession>,
+    pub(super) authority: Option<crate::config::ServerAuthority>,
 }
 struct OwnerSession {
     cookie: Zeroizing<String>,
@@ -283,7 +284,17 @@ impl OwnerClient {
             origin: parse_origin(origin)?,
             owner: owner.into(),
             session: None,
+            authority: None,
         })
+    }
+    pub fn with_authority(
+        authority: &crate::config::ServerAuthority,
+        origin: &str,
+        owner: &str,
+    ) -> Result<Self> {
+        let mut client = Self::new(authority.origin(), origin, owner)?;
+        client.authority = Some(authority.clone());
+        Ok(client)
     }
     fn send(
         &self,

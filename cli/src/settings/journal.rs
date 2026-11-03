@@ -20,6 +20,10 @@ pub(crate) struct Entry {
     /// The policy that the rail resolved for the request.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub policy: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub profile_version: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub server_origin: Option<String>,
     pub op: String,
     pub to: String,
     pub amount: String,
@@ -73,6 +77,12 @@ pub(crate) fn record(dir: &Path, entry: &Entry) -> Result<()> {
             || old.rail != entry.rail
             || old.wallet != entry.wallet
             || old.policy != entry.policy
+            || (old.profile_version.is_some()
+                && entry.profile_version.is_some()
+                && old.profile_version != entry.profile_version)
+            || (old.server_origin.is_some()
+                && entry.server_origin.is_some()
+                && old.server_origin != entry.server_origin)
             || old.op != entry.op
             || old.to != entry.to
             || old.amount != entry.amount
@@ -158,6 +168,8 @@ mod tests {
             op: "transfer".into(),
             to: "GDEST".into(),
             amount: "XLM:5".into(),
+            profile_version: None,
+            server_origin: None,
             created_at: at,
             exit: None,
         }

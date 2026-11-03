@@ -124,7 +124,6 @@ pub(crate) fn submit(a: RequestArgs, build_only: bool, cx: &mut Ctx) -> Result<i
         ));
     }
     let selected = cx.wallet(rail)?;
-    let binding = vendor.exec_binding(cx, selected.as_deref())?;
     let request_id = match a.request_id {
         Some(id) => id,
         None => {
@@ -133,6 +132,7 @@ pub(crate) fn submit(a: RequestArgs, build_only: bool, cx: &mut Ctx) -> Result<i
             id
         }
     };
+    let binding = vendor.exec_binding(cx, selected.as_deref(), &request_id)?;
     cx.out.request_id = Some(request_id.clone());
     let request = ExecRequest {
         op: a.op,
@@ -164,10 +164,12 @@ pub(crate) fn submit(a: RequestArgs, build_only: bool, cx: &mut Ctx) -> Result<i
                 amount: request.amount.text.clone(),
                 created_at: journal::now(),
                 exit: None,
+                profile_version: binding.profile.as_ref().map(|p| p.version.clone()),
+                server_origin: binding.profile.as_ref().map(|p| p.server_origin().into()),
             },
         )?;
     }
-    let result = vendor.exec(cx, &request);
+    let result = vendor.exec(cx, &request, binding);
     if !build_only {
         let code = match &result {
             Ok(code) => *code,
@@ -207,6 +209,8 @@ mod tests {
             op: "transfer".into(),
             to: "G".into(),
             amount: "1".into(),
+            profile_version: None,
+            server_origin: None,
             created_at: 0,
             exit: None,
         };

@@ -42,6 +42,7 @@ pub struct Profile {
     #[cfg_attr(not(feature = "stellar"), allow(dead_code))]
     pub(crate) binding: vendors::ProfileBinding,
     descriptor: Box<RawValue>,
+    authority: Option<crate::config::ServerAuthority>,
 }
 #[derive(Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -68,6 +69,24 @@ fn canonical(value: &impl Serialize) -> Result<Vec<u8>> {
         .map_err(|_| Error::config("Cannot encode public profile"))
 }
 impl Profile {
+    pub fn with_authority(mut self, authority: &crate::config::ServerAuthority) -> Result<Self> {
+        if self.description.network != authority.network() || self.backend != authority.origin() {
+            return Err(Error::config(
+                "Configured server authority belongs to another backend or rail",
+            ));
+        }
+        vendors::verify_server_role(&self.binding, authority.public_key())?;
+        self.authority = Some(authority.clone());
+        Ok(self)
+    }
+    pub fn server_origin(&self) -> &str {
+        &self.backend
+    }
+    pub(crate) fn require_authority(&self) -> Result<&crate::config::ServerAuthority> {
+        self.authority.as_ref().ok_or_else(|| {
+            Error::config("Fresh execution requires independently configured server authority")
+        })
+    }
     pub fn description(&self) -> &Description {
         &self.description
     }
@@ -89,6 +108,7 @@ impl Profile {
             version,
             backend: envelope.backend,
             descriptor: envelope.descriptor,
+            authority: None,
         })
     }
     pub fn document(&self) -> Result<serde_json::Value> {
@@ -153,13 +173,13 @@ impl Cache {
     /// Import a strict public export after native source and current authority checks.
     pub fn import(
         &self,
-        network: &str,
-        backend: &str,
+        authority: &crate::config::ServerAuthority,
         endpoint: &str,
         bytes: &[u8],
     ) -> Result<Profile> {
-        let network = routing::normalize(network)?;
+        let network = authority.network();
         let (_, binding) = vendors::decode_profile(network, bytes)?;
+        vendors::verify_server_role(&binding, authority.public_key())?;
         vendors::verify_profile_import(&binding, endpoint)?;
         let raw = RawValue::from_string(
             std::str::from_utf8(bytes)
@@ -167,31 +187,8 @@ impl Cache {
                 .into(),
         )
         .map_err(|_| Error::usage("Invalid public profile JSON"))?;
-        self.install(network, backend, raw)
-    }
-    #[cfg_attr(not(feature = "stellar"), allow(dead_code))]
-    pub(crate) fn historical(
-        &self,
-        network: &str,
-        wallet: &str,
-        policy: &str,
-    ) -> Result<Vec<Profile>> {
-        self.versions
-            .entries::<Envelope>()?
-            .into_iter()
-            .map(Profile::decode)
-            .filter_map(|v| match v {
-                Ok(p)
-                    if p.description.network == network
-                        && p.description.wallet == wallet
-                        && p.description.policy_id == policy =>
-                {
-                    Some(Ok(p))
-                }
-                Ok(_) => None,
-                Err(e) => Some(Err(e)),
-            })
-            .collect()
+        self.install(network, authority.origin(), raw)?
+            .with_authority(authority)
     }
     pub fn resolve(&self, selector: &Selector) -> Result<Profile> {
         let network = routing::normalize(&selector.network)?;

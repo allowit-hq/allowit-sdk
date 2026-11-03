@@ -68,6 +68,23 @@ pub fn compile(source: &str, tools: &HostTools) -> Result<()> {
     }
     let digest = allowit_sdk::digest(source.as_bytes());
     let mut command = Command::new(&tools.python);
+    // Compiler tools receive only public runtime/toolchain paths, never provider or signer environment.
+    command
+        .env_clear()
+        .env("PATH", std::env::var_os("PATH").unwrap_or_default())
+        .env("LANG", "C")
+        .env("LC_ALL", "C");
+    for (name, suffix) in [("RUSTUP_HOME", ".rustup"), ("CARGO_HOME", ".cargo")] {
+        if let Some(path) = std::env::var_os(name)
+            .map(PathBuf::from)
+            .or_else(|| std::env::var_os("HOME").map(|home| PathBuf::from(home).join(suffix)))
+        {
+            command.env(name, path);
+        }
+    }
+    if let Some(toolchain) = std::env::var_os("RUSTUP_TOOLCHAIN") {
+        command.env("RUSTUP_TOOLCHAIN", toolchain);
+    }
     command
         .args(["-I", "-c", DRIVER])
         .arg(root)

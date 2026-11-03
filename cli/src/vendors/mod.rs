@@ -15,7 +15,21 @@ use asset::{Amount, Token, Use};
 use std::time::Duration;
 
 /// Every verb a rail may serve, in `rail show` order.
-pub(crate) const VERBS: &[&str] = &["keys fund", "wallet show", "policy show", "exec", "status"];
+pub(crate) const VERBS: &[&str] = &[
+    "keys fund",
+    "wallet setup",
+    "wallet import",
+    "wallet show",
+    "policy generate",
+    "policy deploy",
+    "policy fund",
+    "policy activate",
+    "policy export",
+    "policy owner-status",
+    "policy show",
+    "exec",
+    "status",
+];
 
 /// What a rail supports. It drives `rail show`, help and the exit-3 errors.
 pub(crate) struct Caps {
@@ -31,10 +45,12 @@ pub(crate) use allowit_sdk_engine::execution::Request as ExecRequest;
 /// What an agent request runs under: the wallet and the policy that the rail
 /// resolves from the selection and its installed profile. The journal binds a
 /// request ID to it, so a retry cannot run under another wallet or policy.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Default)]
 pub(crate) struct Binding {
     pub wallet: Option<String>,
     pub policy: Option<String>,
+    pub profile: Option<allowit_sdk_engine::profiles::Profile>,
+    pub recovery: Option<allowit_sdk_engine::execution::Recovery>,
 }
 
 /// A rail adapter. Defaults exit 3: the verb is not available on this rail.
@@ -63,14 +79,15 @@ pub(crate) trait Rail {
     /// the selected wallet (if any) and the rail's installed profile. Refuses
     /// a selection that the request path cannot confirm. Runs before a
     /// request ID is spent; `status` also runs it to check the journal.
-    fn exec_binding(&self, _: &mut Ctx, wallet: Option<&str>) -> Result<Binding> {
+    fn exec_binding(&self, _: &mut Ctx, wallet: Option<&str>, _id: &str) -> Result<Binding> {
         Ok(Binding {
             wallet: wallet.map(str::to_owned),
             policy: None,
+            ..Default::default()
         })
     }
     fn status_binding(&self, cx: &mut Ctx, wallet: Option<&str>, _id: &str) -> Result<Binding> {
-        self.exec_binding(cx, wallet)
+        self.exec_binding(cx, wallet, _id)
     }
     /// Settings that every current command on this rail runs with, in place
     /// of environment values that the user did not set.
@@ -92,10 +109,17 @@ pub(crate) trait Rail {
     fn policy_show(&self, _: &mut Ctx, _: bool) -> Result<i32> {
         Err(self.na("policy show"))
     }
-    fn exec(&self, _: &mut Ctx, _: &ExecRequest) -> Result<i32> {
+    fn exec(&self, _: &mut Ctx, _: &ExecRequest, _binding: Binding) -> Result<i32> {
         Err(self.na("exec"))
     }
-    fn status(&self, _: &mut Ctx, _: &str, _: Option<&str>, _: Duration) -> Result<i32> {
+    fn status(
+        &self,
+        _: &mut Ctx,
+        _: &str,
+        _binding: Binding,
+        _: Duration,
+        _backend: Option<&str>,
+    ) -> Result<i32> {
         Err(self.na("status"))
     }
 }

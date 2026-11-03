@@ -1,4 +1,6 @@
 //! Current owner authentication/generation HTTP invariants. All model output is recorded replay.
+#[path = "support/owner_chain.rs"]
+mod chain;
 #[path = "support/owner_server.rs"]
 mod wire;
 use allowit_sdk_engine::stellar::owner_client::{
@@ -329,6 +331,64 @@ fn mainnet_alias_uses_the_exact_advertised_network_and_never_testnet_terms() {
     input.network = "stellar:pubnet".into();
     let out = client.generate(&input, wire::now()).unwrap();
     assert_eq!(out.network, "stellar:mainnet");
+    // The next common owner operation accepts the canonical local alias without changing the draft literal.
+    let root = tempfile::tempdir().unwrap();
+    let root = root.path().canonicalize().unwrap();
+    let secret_dir = allowit_sdk::client::store::Store::open(&root.join("secrets")).unwrap();
+    drop(secret_dir);
+    let path = root.join("secrets/owner");
+    {
+        use std::io::Write;
+        use std::os::unix::fs::OpenOptionsExt;
+        let secret = native::signing::LocalSigner::from_entropy(&[11; 32])
+            .unwrap()
+            .encoded_secret();
+        let mut f = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .mode(0o600)
+            .open(&path)
+            .unwrap();
+        f.write_all(secret.as_bytes()).unwrap();
+    }
+    let signer = allowit_sdk_engine::wallet::local_signer("stellar:pubnet", &path).unwrap();
+    let authority = allowit_sdk_engine::config::ServerAuthority::new(
+        "stellar:pubnet",
+        &server.url,
+        &chain::account(13),
+    )
+    .unwrap();
+    let stop = || {
+        Err(allowit_sdk_engine::error::Error::config(
+            "alias reached authenticated owner workflow",
+        ))
+    };
+    let context = allowit_sdk_engine::owner::Context {
+        network: "stellar:pubnet",
+        backend: &server.url,
+        authority: &authority,
+        origin: "http://localhost:5173",
+        rpc_url: "http://127.0.0.1:1",
+        root: &root,
+        signer: &signer,
+        clock: &stop,
+    };
+    let draft = serde_json::to_vec(&out).unwrap();
+    let executable = chain::wasm();
+    let error = allowit_sdk_engine::owner::deploy(
+        &context,
+        allowit_sdk_engine::owner::Deploy {
+            draft: &draft,
+            agent: &chain::account(12),
+            server: &chain::account(13),
+            executable: &executable,
+            request_id: "mainnet-alias-deploy-001",
+            fee_limit: "10000",
+        },
+    )
+    .unwrap_err();
+    assert_eq!(error.message, "alias reached authenticated owner workflow");
+
     assert_eq!(
         server.state.lock().unwrap().generated[0]["network"],
         "stellar:mainnet"

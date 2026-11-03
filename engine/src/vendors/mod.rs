@@ -206,14 +206,67 @@ pub(crate) fn verify_profile_import(_binding: &ProfileBinding, _endpoint: &str) 
         Err(unavailable())
     }
 }
-pub(crate) fn status_binding(
-    p: &crate::profiles::Profile,
+
+pub(crate) fn verify_server_role(_binding: &ProfileBinding, _server: &str) -> Result<()> {
+    #[cfg(feature = "stellar")]
+    {
+        let ProfileBinding::Stellar(b) = _binding;
+        b.verify_server_role(_server)
+    }
+    #[cfg(not(feature = "stellar"))]
+    {
+        Err(unavailable())
+    }
+}
+
+pub(crate) enum RecoveryBinding {
+    #[cfg(feature = "stellar")]
+    Stellar(crate::stellar::client::Retained),
+}
+pub(crate) fn recovery_binding(binding: &RecoveryBinding) -> crate::execution::Binding {
+    match *binding {
+        #[cfg(feature = "stellar")]
+        RecoveryBinding::Stellar(ref r) => crate::execution::Binding {
+            wallet: r.config().wallet.clone(),
+            policy: format!(
+                "{}@{}",
+                r.policy_id(),
+                allowit_stellar_wallet::hex(&r.config().module_digest)
+            ),
+        },
+    }
+}
+pub(crate) fn recovery_signed(binding: &RecoveryBinding) -> bool {
+    match *binding {
+        #[cfg(feature = "stellar")]
+        RecoveryBinding::Stellar(ref r) => r.signed(),
+    }
+}
+pub(crate) fn retained(
+    _root: &std::path::Path,
+    network: &str,
+    _wallet: Option<&str>,
+    _id: &str,
+) -> Result<Option<crate::execution::Recovery>> {
+    match routing::family(network)? {
+        #[cfg(feature = "stellar")]
+        stellar::FAMILY => stellar::execution::retained(_root, network, _wallet, _id),
+        _ => Err(unavailable()),
+    }
+}
+pub(crate) fn recover(
+    original: crate::execution::Recovery,
+    _signer: crate::wallet::LocalSigner,
+    _backend: &str,
     _root: &std::path::Path,
     _id: &str,
-) -> Result<crate::execution::Binding> {
-    match routing::family(&p.description().network)? {
+    _wait: std::time::Duration,
+    _request: Option<&crate::execution::Request>,
+) -> Result<crate::execution::Outcome> {
+    match original.binding {
         #[cfg(feature = "stellar")]
-        stellar::FAMILY => stellar::execution::status_binding(p, _root, _id),
-        _ => Err(unavailable()),
+        RecoveryBinding::Stellar(r) => {
+            stellar::execution::recover(r, _signer, _backend, _root, _id, _wait, _request)
+        }
     }
 }

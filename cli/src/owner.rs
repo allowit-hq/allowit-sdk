@@ -14,6 +14,7 @@ pub(crate) struct LocalOwner {
     root: PathBuf,
     signer: LocalSigner,
     backend: String,
+    authority: allowit_sdk_engine::config::ServerAuthority,
 }
 pub(crate) fn clock() -> Result<u64> {
     SystemTime::now()
@@ -26,6 +27,7 @@ impl LocalOwner {
         Context {
             network: self.network,
             backend: &self.backend,
+            authority: &self.authority,
             origin,
             rpc_url: &self.rpc,
             root: &self.root,
@@ -51,6 +53,7 @@ pub(crate) fn load(cx: &mut Ctx, name: &str) -> Result<LocalOwner> {
         root: cx.dir()?,
         signer,
         backend: crate::config::env_value("ALLOWIT_URL"),
+        authority: cx.server_authority(rail)?,
     })
 }
 pub(crate) fn status(cx: &mut Ctx, id: &str) -> Result<serde_json::Value> {

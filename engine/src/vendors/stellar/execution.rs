@@ -47,8 +47,9 @@ fn client(profile: Profile, signer: LocalSigner, rpc: Option<String>) -> Result<
             "Agent signer belongs to another profile rail",
         ));
     }
+    let authority = profile.require_authority()?.clone();
     let ProfileBinding::Stellar(bundle) = profile.binding;
-    client::Client::new(bundle, Arc::new(signer), &profile.backend, rpc)
+    client::Client::new(bundle, Arc::new(signer), &authority, rpc)
 }
 pub(in crate::vendors) fn execute(
     profile: Profile,
@@ -67,47 +68,54 @@ pub(in crate::vendors) fn execute(
     )
     .map(render)
 }
-fn historical(
-    profile: &Profile,
-    journal: &Store,
+pub(in crate::vendors) fn retained(
     root: &Path,
+    network: &str,
+    wallet: Option<&str>,
     id: &str,
-) -> Result<Option<Profile>> {
-    let ProfileBinding::Stellar(bundle) = &profile.binding;
-    let Some(old) = client::retained_config(journal, &bundle.policy_id, id)? else {
-        return Ok(None);
-    };
-    if client::matches_retained(&bundle.config, &old) {
-        return Ok(None);
-    }
-    let mut matches = crate::profiles::Cache::open(root)?
-        .historical(
-            &profile.description().network,
-            &bundle.wallet,
-            &bundle.policy_id,
-        )?
-        .into_iter()
-        .filter(|p| {
-            let ProfileBinding::Stellar(b) = &p.binding;
-            p.backend == profile.backend && client::matches_retained(&b.config, &old)
+) -> Result<Option<crate::execution::Recovery>> {
+    client::retained(&journal(root)?, network, wallet, id).map(|r| {
+        r.map(|r| crate::execution::Recovery {
+            binding: crate::vendors::RecoveryBinding::Stellar(r),
         })
-        .collect::<Vec<_>>();
-    // Config-equivalent versions differ only in authoring metadata. Their native authority is identical.
-    matches.sort_by(|a, b| a.version.cmp(&b.version));
-    matches.into_iter().next().map(Some).ok_or_else(||Error::config("The exact historical public profile is missing. Retain the original journal and import its verified export."))
+    })
 }
-pub(in crate::vendors) fn status_binding(
-    profile: &Profile,
+pub(in crate::vendors) fn recover(
+    original: client::Retained,
+    signer: LocalSigner,
+    backend: &str,
     root: &Path,
     id: &str,
-) -> Result<crate::execution::Binding> {
-    let store = journal(root)?;
-    let historical = historical(profile, &store, root, id)?;
-    let d = &historical.as_ref().unwrap_or(profile).description();
-    Ok(crate::execution::Binding {
-        wallet: d.wallet.clone(),
-        policy: format!("{}@{}", d.policy_id, d.module_digest),
-    })
+    wait: Duration,
+    request: Option<&Request>,
+) -> Result<Outcome> {
+    if let Some(request) = request {
+        if !original.signed() {
+            return Err(Error::config(
+                "Unsigned history requires current verified execution authority",
+            ));
+        }
+        let rebuilt = super::request::rebuild(
+            original.policy_id(),
+            original.config(),
+            request,
+            original.request(),
+        )?;
+        if rebuilt.request != *original.request() {
+            return Err(Error::usage(
+                "Original request ID already binds different input",
+            ));
+        }
+    }
+    client::recover(
+        original,
+        &journal(root)?,
+        Arc::new(signer),
+        backend,
+        id,
+        wait,
+    )
+    .map(render)
 }
 pub(in crate::vendors) fn status(
     profile: Profile,
@@ -117,19 +125,7 @@ pub(in crate::vendors) fn status(
     id: &str,
     wait: Duration,
 ) -> Result<Outcome> {
-    let journal = journal(root)?;
-    if let Some(historical) = historical(&profile, &journal, root, id)? {
-        let ProfileBinding::Stellar(historical) = historical.binding;
-        return client::historical_status(
-            client(profile, signer, rpc)?,
-            historical,
-            &journal,
-            id,
-            wait,
-        )
-        .map(render);
-    }
-    client::status(&client(profile, signer, rpc)?, &journal, id, wait).map(render)
+    client::status(&client(profile, signer, rpc)?, &journal(root)?, id, wait).map(render)
 }
 
 fn render(out: ExecutionOutcome) -> Outcome {

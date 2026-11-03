@@ -16,6 +16,7 @@ fn prepare(server: &chain::RpcServer) -> Sandbox {
     }
     sandbox.ok(&["keys", "use", "agent"]);
     sandbox.set("ALLOWIT_URL", "http://127.0.0.1:1");
+    sandbox.ok(&["rail", "trust", "http://127.0.0.1:1", &chain::account(13)]);
     let _ = &server.url;
     sandbox
 }
@@ -80,6 +81,27 @@ fn owner_command_preflight_refuses_implicit_keys_conflicting_roles_and_missing_r
 {
     let server = chain::RpcServer::new(chain::Chain::new(chain::selection().config));
     let sandbox = prepare(&server);
+    for network in ["stellar:testnet", "stellar:pubnet"] {
+        let shown = sandbox.json(&["--rail", network, "rail", "show"]);
+        let available = shown["available"].as_array().unwrap();
+        for verb in [
+            "wallet import",
+            "policy deploy",
+            "policy fund",
+            "policy activate",
+            "policy export",
+            "policy owner-status",
+        ] {
+            assert!(
+                available.contains(&serde_json::json!(verb)),
+                "{network} missing {verb}"
+            );
+        }
+        assert_eq!(
+            available.contains(&serde_json::json!("wallet setup")),
+            network == "stellar:testnet"
+        );
+    }
     let out = sandbox.run(&[
         "wallet",
         "setup",
@@ -131,7 +153,38 @@ fn cli_import_verifies_portable_native_consent_then_resolves_without_a_bundle_fi
     let ledger = chain::Chain::new(selected.config.clone());
     *ledger.source.lock().unwrap() = chain::configured_source(&selected.config);
     let rpc = chain::RpcServer::new(ledger);
-    let sandbox = prepare(&rpc);
+    let mut sandbox = Sandbox::new("key-free-native-import");
+    sandbox.ok(&["rail", "use", "stellar:testnet"]);
+    sandbox.set("ALLOWIT_URL", "http://127.0.0.1:1");
+    let input = sandbox.work().join("pre-trust.json");
+    std::fs::write(
+        &input,
+        serde_json::to_vec(&chain::approved_descriptor(&selected)).unwrap(),
+    )
+    .unwrap();
+    let missing = sandbox.run(&[
+        "--rpc-url",
+        &rpc.url,
+        "wallet",
+        "import",
+        input.to_str().unwrap(),
+    ]);
+    assert_eq!(code(&missing), Some(3));
+    assert!(stderr(&missing).contains("independent server authority"));
+    assert!(!sandbox.config().join("public-profiles").exists());
+    sandbox.ok(&["rail", "trust", "http://127.0.0.1:1", &chain::account(13)]);
+    let configured = sandbox.json(&["config", "show"]);
+    sandbox.ok(&["rail", "trust", "http://127.0.0.1:1", &chain::account(13)]);
+    assert_eq!(sandbox.json(&["config", "show"]), configured);
+    let refused = sandbox.run(&[
+        "rail",
+        "trust",
+        "http://user:private-origin-sentinel@localhost",
+        "private-key-sentinel",
+    ]);
+    assert_ne!(code(&refused), Some(0));
+    assert!(!stderr(&refused).contains("private-origin-sentinel"));
+    assert!(!stderr(&refused).contains("private-key-sentinel"));
     let before = sandbox.json(&["config", "show"]);
     let input = sandbox.work().join("public-profile.json");
     std::fs::write(
@@ -162,6 +215,8 @@ fn cli_import_verifies_portable_native_consent_then_resolves_without_a_bundle_fi
     assert!(profile["version"].is_string());
     assert_eq!(sandbox.json(&["config", "show"]), before);
     std::fs::remove_file(input).unwrap();
+    assert!(!sandbox.config().join("keys").exists());
+    assert!(!sandbox.config().join("secrets").exists());
     assert_eq!(
         sandbox.json(&["wallet", "show"])["version"],
         profile["version"]

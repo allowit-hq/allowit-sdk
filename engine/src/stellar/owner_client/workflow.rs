@@ -119,6 +119,9 @@ impl OwnerPolicy {
             || c.tier != b.tier
             || (c.route == WalletRoute::Native
                 && (c.wallet != b.wallet || native::hex(&c.module_digest) != b.module_digest))
+            || (c.route == WalletRoute::Native
+                && (c.source_digest != [0; 32]
+                    || (!c.rules.is_empty() && c.rules != b.portable.rules)))
             || !b.portable.unresolved.is_empty()
         {
             return Err(Error::config(
@@ -228,7 +231,7 @@ pub fn native_policy(
         route: WalletRoute::Native,
         tier: None,
         language: native::PolicyLanguage::Portable,
-        rules: b.portable.rules.clone(),
+        rules: Vec::new(),
         params: b.portable.params.clone(),
         source_digest: [0; 32],
         asset: b.asset.clone(),
@@ -585,6 +588,9 @@ impl OwnerClient {
                         ));
                     }
                 }
+                if matches!(record.work, Work::Fund { .. }) {
+                    self.verify_binding(selection, rpc)?;
+                }
                 let now = clock()?;
                 if now < step.validated_at {
                     return Err(Error::config("Clock moved backwards before owner signing"));
@@ -605,6 +611,9 @@ impl OwnerClient {
                 store.save(id, &record)?;
             }
             verify_retained(&record, &record.steps[index])?;
+            if matches!(record.work, Work::Fund { .. }) && !record.steps[index].submitted {
+                self.verify_binding(selection, rpc)?;
+            }
             let hash = checked(native::unhex(&record.steps[index].packet.transaction_hash))?;
             let observed =
                 rpc::receipt_by_hash(rpc, &selection.config.network, &hash).map_err(|_| {
@@ -710,7 +719,9 @@ impl OwnerClient {
                 "Owner flow retains an unfinished step; resume the same request ID",
             ));
         }
-        self.verify_binding(selection, rpc)?;
+        if matches!(record.work, Work::Deploy) {
+            self.verify_binding(selection, rpc)?;
+        }
         Ok(Outcome {
             request_id: id.into(),
             state: match record.work {
@@ -729,6 +740,17 @@ impl OwnerClient {
     pub fn verify_binding(&self, selection: &OwnerPolicy, rpc: &dyn rpc::Rpc) -> Result<()> {
         selection.validate()?;
         let c = &selection.config;
+        let authority = self.authority.as_ref().ok_or_else(|| {
+            Error::config("Owner action requires independently configured server authority")
+        })?;
+        if authority.origin() != self.backend
+            || authority.network() != crate::routing::normalize(&c.network)?
+            || authority.public_key() != c.server
+        {
+            return Err(Error::config(
+                "Owner selection differs from configured server authority",
+            ));
+        }
         checked(native::validate_config(c))?;
         network(rpc, &c.network)?;
         if c.owner != self.owner {
@@ -737,10 +759,10 @@ impl OwnerClient {
             ));
         }
         if c.route == WalletRoute::Native {
-            checked(rpc::get_account(rpc, &c.wallet))?
-                .validate_wallet(c)
-                .map_err(Error::config)?;
-            return Ok(());
+            return crate::stellar::client::verify_native_members(
+                &checked(rpc::get_account(rpc, &c.wallet))?,
+                c,
+            );
         }
         let live = checked(rpc::trusted_state_for_discovery(rpc, c, None))?;
         if live.paused
@@ -860,12 +882,9 @@ impl OwnerClient {
                 "Source consent differs from the exact locally selected policy",
             ));
         }
-        if consent.required && record.signature.is_none() {
-            if selection.config.route != WalletRoute::Native {
-                return Err(Error::config("Unexpected source signature request"));
-            }
+        if selection.config.route == WalletRoute::Native && record.signature.is_none() {
             let account = checked(rpc::get_account(rpc, &selection.config.wallet))?;
-            checked(account.validate_wallet(&selection.config))?;
+            crate::stellar::client::verify_native_members(&account, &selection.config)?;
             checked(account.validate_signer_quorum(&[&self.owner], account.high_threshold))?;
             let digest = native::signing::signed_message_digest(&message);
             let signature = signer
@@ -949,7 +968,25 @@ impl OwnerClient {
             ));
         }
         self.verify_binding(selection, rpc)?;
-        let value: Box<serde_json::value::RawValue> = self.owner_request(
+        if selection.config.route == WalletRoute::Native {
+            let signature=activation.signature.as_ref().ok_or_else(||Error::config("Native export requires proven owner source consent. Complete source activation on this device."))?;
+            if signature.signer != self.owner {
+                return Err(Error::config(
+                    "Retained source consent belongs to another owner",
+                ));
+            }
+            checked(native::signing::verify_digest(
+                &signature.signer,
+                &native::signing::signed_message_digest(&message),
+                &signature.signature,
+            ))?;
+            let current = checked(rpc::get_account(rpc, &selection.config.wallet))?;
+            checked(current.validate_authority_signatures(
+                &native::signing::signed_message_digest(&message),
+                std::slice::from_ref(signature),
+            ))?;
+        }
+        let mut value: Box<serde_json::value::RawValue> = self.owner_request(
             Method::Post,
             "/api/native/export",
             Some(&json!({"policyId":selection.policy.id})),
@@ -957,10 +994,29 @@ impl OwnerClient {
             false,
         )?;
         let bundle = crate::stellar::client::decode_public_bundle(value.get().as_bytes())?;
-        if bundle.config != selection.config || bundle.policy_id != selection.policy.id {
+        let mut selected_config = selection.config.clone();
+        if selected_config.route == WalletRoute::Native {
+            selected_config.rules = bundle.config.rules.clone();
+        }
+        if bundle.config != selected_config || bundle.policy_id != selection.policy.id {
             return Err(Error::config(
                 "Exported descriptor differs from the selected installation",
             ));
+        }
+        bundle.verify_optional_import_proof(rpc)?;
+        if selection.config.route == WalletRoute::Native {
+            let mut public: Value = serde_json::from_str(value.get())
+                .map_err(|_| Error::config("Invalid checked public descriptor"))?;
+            if public.get("sourceApproval").is_none() {
+                public["sourceApproval"] = json!({"revision":selection.policy.revision,"signatures":activation.signature.iter().collect::<Vec<_>>()});
+                value = serde_json::value::RawValue::from_string(
+                    serde_json::to_string(&public)
+                        .map_err(|_| Error::config("Cannot encode public source consent"))?,
+                )
+                .map_err(|_| Error::config("Cannot encode public source consent"))?;
+                crate::stellar::client::decode_public_bundle(value.get().as_bytes())?
+                    .verify_import_with(rpc)?;
+            }
         }
         Ok(value)
     }

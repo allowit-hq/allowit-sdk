@@ -49,6 +49,7 @@ pub fn execute(
     rpc: Option<String>,
     r: &Request,
 ) -> Result<Outcome> {
+    profile.require_authority()?;
     vendors::execute(profile, signer, root, rpc, r)
 }
 pub fn status(
@@ -80,6 +81,33 @@ pub struct Binding {
     pub wallet: String,
     pub policy: String,
 }
-pub fn status_binding(profile: &Profile, root: &Path, id: &str) -> Result<Binding> {
-    vendors::status_binding(profile, root, id)
+pub struct Recovery {
+    pub(crate) binding: crate::vendors::RecoveryBinding,
+}
+impl Recovery {
+    pub fn binding(&self) -> Binding {
+        crate::vendors::recovery_binding(&self.binding)
+    }
+    pub fn signed(&self) -> bool {
+        crate::vendors::recovery_signed(&self.binding)
+    }
+}
+pub fn retained(
+    root: &Path,
+    network: &str,
+    wallet: Option<&str>,
+    id: &str,
+) -> Result<Option<Recovery>> {
+    vendors::retained(root, network, wallet, id)
+}
+pub fn recover(
+    original: Recovery,
+    signer: LocalSigner,
+    backend: &str,
+    root: &Path,
+    id: &str,
+    wait: Duration,
+    request: Option<&Request>,
+) -> Result<Outcome> {
+    vendors::recover(original, signer, backend, root, id, wait, request)
 }

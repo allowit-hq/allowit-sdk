@@ -117,5 +117,22 @@ Common profile parameters use Core `PolicyValue`. The selected vendor checks nat
 
 The SDK stores public profiles separately from signing keys and private execution journals.
 Each profile version retains its complete public binding and server origin.
-Historical status consumes a current agent client with the matching old public binding.
+Historical status consumes a sealed original journal context and a current request signer.
+It uses the original signed configuration and packet, without a current profile or authority pin.
 That status path cannot prepare or sign a replacement operation.
+
+## Public server authority
+
+`config::ServerAuthority::new(network, origin, public_key)` binds an independently configured public identity to a canonical rail and backend origin.
+`profiles::Cache::import` takes that authority and an independent RPC endpoint.
+`owner::Context` carries the same authority. The selected vendor checks the exact native role and current administrator quorum.
+The common CLI records the pin with `rail trust ORIGIN PUBLIC_KEY` in the selected rail’s `server_authorities` map.
+
+A public descriptor and an unauthenticated server response cannot supply their own trusted identity.
+Fresh Native signing verifies actual source consent and current roles through independent RPC.
+The compiler receives an explicit allowlist of public toolchain paths. Provider credentials, signer values and authoring overrides do not enter Python or rustc.
+
+A resolved execution profile and its authority remain owned by one command across its journal check and dispatch.
+The receipt-only recovery capability instead reads the original private record, without importing an obsolete public profile.
+It accepts no fresh preparation or operation-signing path. Recovery queries the configured settlement service for the original packet.
+A final success requires a verified receipt.

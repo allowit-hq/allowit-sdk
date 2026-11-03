@@ -12,6 +12,7 @@ Run `allowit rail ls --json` and `allowit rail show RAIL --json` for the install
 `policy export` verifies the completed activation and saves the public profile in the shared SDK cache.
 For a public export from another device, run `wallet import FILE --rpc-url URL`.
 Native imports require the existing administrator signatures over the exact source, parameters and wallet binding.
+Configure the independently verified server public identity with the common `rail trust` command first.
 The SDK checks those signatures against current account authority.
 Policy-wallet imports check the installed code, source, parameters and roles through independent RPC.
 
@@ -37,9 +38,10 @@ Policy wallets also accept SEP-56 vault deposits and redemptions with `--token-o
 Use `rail show` to inspect the selected network's operations and available commands.
 `--build-only` prints the typed request and sends nothing.
 
-Policy-wallet signing revalidates the prepared operation through `--rpc-url URL` or the rail's `rpc_url` setting.
+Fresh signing revalidates the prepared operation through `--rpc-url URL` or the rail's `rpc_url` setting.
 This RPC receives only public observations and unsigned simulation bytes.
-Classic execution and signed recovery require no RPC override.
+Fresh Native signing also checks source consent, current native roles and the exact source account through this RPC.
+Original signed recovery skips current source, role and cache admission. It still requires an original-packet observation from the configured settlement service.
 Shared SDK engine retains the original operation, submits it and recovers verified receipts.
 The adapter supplies native rules. It does not own a separate transport retry or delivery coordinator.
 

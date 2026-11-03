@@ -13,6 +13,11 @@ use allowit_sdk_engine::stellar::{
     },
 };
 use chain::*;
+fn authority(origin: &str) -> allowit_sdk_engine::config::ServerAuthority {
+    allowit_sdk_engine::config::ServerAuthority::new("stellar:testnet", origin, &account(13))
+        .unwrap()
+}
+
 use serde_json::{Value, json};
 use std::{
     cell::Cell,
@@ -100,8 +105,12 @@ fn changed_fund_packets_never_reach_the_signer_and_rebound_records_are_not_signi
         );
         plan.owner_prepare = Some(json!({"policyId":selected.policy.id,"step":step}));
         let server = wire::Server::new(plan);
-        let mut client =
-            OwnerClient::new(&server.url, "http://localhost:5173", &account(11)).unwrap();
+        let mut client = OwnerClient::with_authority(
+            &authority(&server.url),
+            "http://localhost:5173",
+            &account(11),
+        )
+        .unwrap();
         let auth = key();
         client.authenticate(&auth, now).unwrap();
         let dir = tempfile::tempdir().unwrap();
@@ -169,7 +178,12 @@ fn funded_wallet_receipt_and_restart_preserve_exact_signed_bytes_and_single_owne
     );
     plan.lose_owner_reply = true;
     let server = wire::Server::new(plan);
-    let mut client = OwnerClient::new(&server.url, "http://localhost:5173", &account(11)).unwrap();
+    let mut client = OwnerClient::with_authority(
+        &authority(&server.url),
+        "http://localhost:5173",
+        &account(11),
+    )
+    .unwrap();
     let signer = key();
     client.authenticate(&signer, now).unwrap();
     let prior = signer.calls.load(Ordering::SeqCst);
@@ -221,7 +235,12 @@ fn funded_wallet_receipt_and_restart_preserve_exact_signed_bytes_and_single_owne
 
 #[test]
 fn source_consent_checks_exact_payload_and_current_native_authority_before_owner_callback() {
-    for changed in [false, true] {
+    for (changed, required, poisoned_export) in [
+        (false, true, false),
+        (true, true, false),
+        (false, false, false),
+        (false, false, true),
+    ] {
         let selected = native_selection();
         let now = wire::now();
         let mut plan = wire::Plan::new(&account(11));
@@ -229,12 +248,21 @@ fn source_consent_checks_exact_payload_and_current_native_authority_before_owner
         if changed {
             consent["payload"]["params"]["payment_limit"] = json!({"Int":"20000000"});
         }
+        consent["required"] = json!(required);
         plan.approval = Some(consent);
         plan.activation = Some(json!({"active":true}));
-        plan.export = Some(descriptor(&selected));
+        let mut exported = descriptor(&selected);
+        if poisoned_export {
+            exported["sourceApproval"] = json!({"revision":selected.policy.revision,"signatures":[{"signer":account(11),"signature":vec![0u8;64]}]});
+        }
+        plan.export = Some(exported);
         let server = wire::Server::new(plan);
-        let mut client =
-            OwnerClient::new(&server.url, "http://localhost:5173", &account(11)).unwrap();
+        let mut client = OwnerClient::with_authority(
+            &authority(&server.url),
+            "http://localhost:5173",
+            &account(11),
+        )
+        .unwrap();
         let signer = key();
         client.authenticate(&signer, now).unwrap();
         let before = signer.calls.load(Ordering::SeqCst);
@@ -265,6 +293,24 @@ fn source_consent_checks_exact_payload_and_current_native_authority_before_owner
             usize::from(!changed)
         );
         if !changed {
+            if poisoned_export {
+                assert!(
+                    client
+                        .export(&store, &selected, &chain, "approve-native-001", now)
+                        .is_err()
+                );
+                continue;
+            }
+            let saved: Value = store.load("approve-native-001").unwrap().unwrap();
+            let mut forged = saved.clone();
+            forged["signature"] = Value::Null;
+            store.save("approve-native-001", &forged).unwrap();
+            assert!(
+                client
+                    .export(&store, &selected, &chain, "approve-native-001", now)
+                    .is_err()
+            );
+            store.save("approve-native-001", &saved).unwrap();
             let out = client
                 .export(&store, &selected, &chain, "approve-native-001", now)
                 .unwrap();
@@ -307,6 +353,7 @@ fn source_consent_checks_exact_payload_and_current_native_authority_before_owner
             let cx = allowit_sdk_engine::owner::Context {
                 network: &selected.config.network,
                 backend: &server.url,
+                authority: &authority(&server.url),
                 origin: "http://localhost:5173",
                 rpc_url: &rpc.url,
                 root: &root,
@@ -415,7 +462,7 @@ fn portable_native_import_checks_source_consent_current_authority_and_exact_prof
         agent: Some(selected.config.agent.clone()),
         ..Default::default()
     };
-    for variant in 0..9 {
+    for variant in 0..15 {
         let mut bad = profile.clone();
         match variant {
             0 => {
@@ -434,12 +481,26 @@ fn portable_native_import_checks_source_consent_current_authority_and_exact_prof
             5 => bad["portable"]["params"]["payment_limit"] = json!({"Int":"20000000"}),
             6 => bad["config"]["policySource"] = json!("changed source"),
             7 => bad["signingSeed"] = json!("private-sentinel"),
-            _ => bad["sourceApproval"]["privateKey"] = json!("private-sentinel"),
+            8 => bad["sourceApproval"]["privateKey"] = json!("private-sentinel"),
+            9 => bad["config"]["owner"] = json!(account(14)),
+            10 => bad["config"]["server"] = json!(account(14)),
+            11 => {
+                bad["config"]["agent"] = json!(selected.config.server);
+                bad["config"]["server"] = json!(selected.config.agent);
+            }
+            12 => {
+                let extra = SigningKey::from_bytes(&[14; 32]).sign(&digest).to_bytes();
+                bad["sourceApproval"]["signatures"]
+                    .as_array_mut()
+                    .unwrap()
+                    .push(json!({"signer":account(14),"signature":extra.to_vec()}));
+            }
+            13 => bad["config"]["rules"] = json!(["invalid-rule"]),
+            _ => bad["config"]["sourceDigest"] = json!(vec![1u8; 32]),
         }
         let error = cache
             .import(
-                &selected.config.network,
-                "http://localhost:8080",
+                &authority("http://localhost:8080"),
                 &rpc.url,
                 &serde_json::to_vec(&bad).unwrap(),
             )
@@ -457,8 +518,7 @@ fn portable_native_import_checks_source_consent_current_authority_and_exact_prof
     assert!(
         cache
             .import(
-                &selected.config.network,
-                "http://localhost:8080",
+                &authority("http://localhost:8080"),
                 &rpc.url,
                 duplicate.as_bytes()
             )
@@ -466,16 +526,14 @@ fn portable_native_import_checks_source_consent_current_authority_and_exact_prof
     );
     let first = cache
         .import(
-            &selected.config.network,
-            "http://localhost:8080",
+            &authority("http://localhost:8080"),
             &rpc.url,
             raw.as_bytes(),
         )
         .unwrap();
     let pretty = cache
         .import(
-            &selected.config.network,
-            "http://localhost:8080",
+            &authority("http://localhost:8080"),
             &rpc.url,
             &serde_json::to_vec_pretty(&profile).unwrap(),
         )
@@ -489,8 +547,7 @@ fn portable_native_import_checks_source_consent_current_authority_and_exact_prof
     profile["portable"]["build"]["attempts"] = json!(2);
     let second = cache
         .import(
-            &selected.config.network,
-            "http://localhost:8080",
+            &authority("http://localhost:8080"),
             &rpc.url,
             &serde_json::to_vec(&profile).unwrap(),
         )
@@ -521,8 +578,12 @@ fn owner_funding_renews_only_the_independently_observed_relative_lifetime_target
         change_step(&mut fund, |tx| tx.seq_num.0 = 43);
         plan.owner_next_prepare = Some(json!({"policyId":selected.policy.id,"step":fund}));
         let server = wire::Server::new(plan);
-        let mut client =
-            OwnerClient::new(&server.url, "http://localhost:5173", &account(11)).unwrap();
+        let mut client = OwnerClient::with_authority(
+            &authority(&server.url),
+            "http://localhost:5173",
+            &account(11),
+        )
+        .unwrap();
         let signer = key();
         client.authenticate(&signer, now).unwrap();
         let before = signer.calls.load(Ordering::SeqCst);
@@ -572,4 +633,46 @@ fn owner_funding_renews_only_the_independently_observed_relative_lifetime_target
             assert_eq!(retained["steps"][0]["signedXdr"], bytes);
         }
     }
+}
+
+#[test]
+fn stale_funding_destination_never_receives_an_owner_signature_or_submission() {
+    let p = selection();
+    let now = wire::now();
+    let mut plan = wire::Plan::new(&account(11));
+    plan.owner_prepare =
+        Some(json!({"policyId":p.policy.id,"step":fund_step(&p.config,10_000_000,now)}));
+    let server = wire::Server::new(plan);
+    let mut client = OwnerClient::with_authority(
+        &authority(&server.url),
+        "http://localhost:5173",
+        &account(11),
+    )
+    .unwrap();
+    let signer = key();
+    client.authenticate(&signer, now).unwrap();
+    let before = signer.calls.load(Ordering::SeqCst);
+    let dir = tempfile::tempdir().unwrap();
+    let store = Store::open(&dir.path().canonicalize().unwrap().join("proof")).unwrap();
+    let mut chain = Chain::new(p.config.clone());
+    chain.config.agent = account(14);
+    chain.server = Some(server.state.clone());
+    assert!(
+        client
+            .fund(
+                OwnerCapabilities {
+                    store: &store,
+                    rpc: &chain,
+                    signer: &signer,
+                    clock: &|| Ok(now)
+                },
+                &p,
+                "fund-stale-001",
+                "1",
+                10_000
+            )
+            .is_err()
+    );
+    assert_eq!(signer.calls.load(Ordering::SeqCst), before);
+    assert!(server.state.lock().unwrap().owner_submissions.is_empty());
 }
