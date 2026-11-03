@@ -121,8 +121,26 @@ fn status(v: native::OperationStatus) -> Status {
         native::OperationStatus::Failed => Status::Failed,
     }
 }
+#[derive(Clone, Debug)]
+pub(crate) struct PreparationCapability(PreparedOperation);
+
 fn prepared(p: &Prepared) -> Result<PreparedOperation> {
-    let v = decode(&p.0.document)?;
+    let v =
+        if let Some(crate::vendors::PreparationCapability::Stellar(capability)) = &p.0.capability {
+            let original = &capability.0;
+            if crate::routing::normalize(&original.config.network)? != p.0.network
+                || serde_json::to_string(original)
+                    .map_err(|_| Error::config("Cannot bind native preparation"))?
+                    != p.0.document.get()
+            {
+                return Err(Error::config(
+                    "In-memory preparation differs from its exact retained document",
+                ));
+            }
+            original.clone()
+        } else {
+            decode(&p.0.document)?
+        };
     checked(native::validate_retained_prepared(&v))?;
     Ok(v)
 }
@@ -204,6 +222,7 @@ pub(in crate::vendors) fn restore(k: Kind, document: Box<RawValue>) -> Result<Pa
     Ok(Packet {
         network: crate::routing::normalize(&network)?.into(),
         document,
+        capability: None,
     })
 }
 pub(in crate::vendors) fn owner_info(p: &Packet) -> Result<OwnerInfo> {
@@ -385,7 +404,11 @@ impl Provider {
         }
     }
     fn packet(&self, p: &PreparedOperation) -> Result<Prepared> {
-        Ok(Prepared(Packet::new(&p.config.network, p)?))
+        let mut packet = Packet::new(&p.config.network, p)?;
+        packet.capability = Some(crate::vendors::PreparationCapability::Stellar(
+            PreparationCapability(p.clone()),
+        ));
+        Ok(Prepared(packet))
     }
 }
 impl super::super::RuntimeProvider for Provider {
@@ -491,6 +514,7 @@ impl super::super::RuntimeProvider for Provider {
         Ok(RequestPacket(Packet {
             network: crate::routing::normalize(&c.network)?.into(),
             document,
+            capability: None,
         }))
     }
     fn snapshot(&self, i: &Installation, a: Option<&Accounting>) -> Result<Snapshot> {
@@ -1149,4 +1173,78 @@ pub(in crate::vendors) fn signer_identity(key: &[u8; 32]) -> Result<String> {
 pub(in crate::vendors) fn request_id(p: &Packet) -> Result<[u8; 32]> {
     let request: native::workflow::ExecutionRequest = decode(&p.document)?;
     Ok(request.operation.nonce)
+}
+
+#[cfg(test)]
+mod capability_tests {
+    use super::*;
+    use std::{
+        collections::VecDeque,
+        sync::{Arc, Mutex},
+    };
+
+    struct RecordedRpc(Mutex<VecDeque<serde_json::Value>>);
+    impl rpc::Rpc for RecordedRpc {
+        fn call(
+            &self,
+            method: &str,
+            params: serde_json::Value,
+        ) -> native::Result<serde_json::Value> {
+            let expected = self
+                .0
+                .lock()
+                .unwrap()
+                .pop_front()
+                .expect("Unexpected preflight RPC");
+            assert_eq!(expected["method"], method);
+            assert_eq!(expected["params"], params);
+            Ok(expected["result"].clone())
+        }
+    }
+    #[test]
+    fn genuine_preflight_survives_carrier_but_not_serialization_or_document_changes() {
+        let fixture: serde_json::Value = serde_json::from_str(include_str!(
+            "../../../../cli/tests/fixtures/stellar-policy-wallet-revalidation-rpc.json"
+        ))
+        .unwrap();
+        let original: PreparedOperation =
+            serde_json::from_value(fixture["prepared"].clone()).unwrap();
+        let provider = Provider::from_rpc(
+            "stellar:testnet",
+            Arc::new(RecordedRpc(Mutex::new(
+                fixture["calls"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .cloned()
+                    .collect(),
+            ))),
+        );
+        let config = crate::runtime::owner::configuration(
+            "stellar:testnet",
+            &serde_json::to_vec(&original.config).unwrap(),
+        )
+        .unwrap();
+        let installation = Installation::from_configuration(&config);
+        let runtime = crate::runtime::Runtime {
+            provider: Box::new(provider),
+        };
+        let restored: Prepared = serde_json::from_value(fixture["prepared"].clone()).unwrap();
+        assert!(prepared(&restored).unwrap().native_preflight.is_none());
+        let fresh = runtime.revalidate(&installation, &restored, 86402).unwrap();
+        let admitted = prepared(&fresh).unwrap();
+        assert!(admitted.native_preflight.is_some());
+        native::sign(&admitted, &[2; 32], 86402).unwrap();
+        let serialized = serde_json::to_vec(&fresh).unwrap();
+        let decoded: Prepared = serde_json::from_slice(&serialized).unwrap();
+        assert_eq!(fresh.bytes(), decoded.bytes());
+        assert!(prepared(&decoded).unwrap().native_preflight.is_none());
+        assert!(native::sign(&prepared(&decoded).unwrap(), &[2; 32], 86402).is_err());
+        let mut changed = fresh.clone();
+        changed.0.document = RawValue::from_string(format!("{} ", fresh.0.document.get())).unwrap();
+        assert!(prepared(&changed).is_err());
+        let mut changed = fresh;
+        changed.0.network = "stellar:mainnet".into();
+        assert!(prepared(&changed).is_err());
+    }
 }

@@ -691,3 +691,10 @@ pub(crate) fn runtime_request_id(p: &crate::runtime::Packet) -> Result<[u8; 32]>
         _ => Err(unavailable()),
     }
 }
+
+/// Mechanical capability registration. Only the owning vendor can create its private value.
+#[derive(Clone, Debug)]
+pub(crate) enum PreparationCapability {
+    #[cfg(feature = "stellar")]
+    Stellar(stellar::server::PreparationCapability),
+}

@@ -127,6 +127,7 @@ pub(crate) enum Kind {
 pub(crate) struct Packet {
     pub network: String,
     pub document: Box<RawValue>,
+    pub capability: Option<crate::vendors::PreparationCapability>,
 }
 impl Packet {
     #[cfg_attr(not(feature = "stellar"), allow(dead_code))]
@@ -139,6 +140,7 @@ impl Packet {
         Ok(Self {
             network: crate::routing::normalize(network)?.into(),
             document,
+            capability: None,
         })
     }
 }
