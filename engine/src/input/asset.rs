@@ -252,3 +252,22 @@ fn unknown_code(code: &str, tokens: &[Token]) -> Error {
         known.join(", ")
     ))
 }
+
+/// Native identity and units resolved by the selected adapter.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ResolvedAsset {
+    pub symbol: String,
+    pub address: String,
+    pub decimals: u32,
+}
+/// Resolve an explicit asset identity. Known defaults apply only when requested.
+pub fn resolve(
+    network: &str,
+    symbol: &str,
+    issuer: Option<&str>,
+    known_default: bool,
+) -> Result<ResolvedAsset> {
+    let network = crate::routing::normalize(network)?;
+    let formats = super::formats(crate::routing::family(network)?)?;
+    (formats.resolve_asset)(network, symbol, issuer, known_default)
+}

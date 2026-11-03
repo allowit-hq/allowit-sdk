@@ -8,6 +8,7 @@ pub(super) mod profiles;
 pub(super) mod request;
 pub mod runtime;
 pub(super) mod server;
+pub(crate) mod server_owner;
 mod typed;
 use super::{KeyProvider, PrivateSigner};
 use crate::{
@@ -153,7 +154,16 @@ pub(super) fn networks() -> Vec<crate::routing::RailInfo> {
         .iter()
         .map(|n| crate::routing::RailInfo {
             id: n.id,
-            aliases: n.aliases,
+            label: if n.testnet {
+                "Stellar Testnet"
+            } else {
+                "Stellar Mainnet"
+            },
+            aliases: if n.testnet {
+                &["stellar-testnet"]
+            } else {
+                &["stellar:mainnet", "stellar-mainnet"]
+            },
             family: FAMILY,
             testnet: n.testnet,
         })

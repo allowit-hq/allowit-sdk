@@ -42,3 +42,28 @@ pub fn check_token(family: Family, s: &str) -> Result<()> {
 pub fn same_wallet(family: Family, a: &str, b: &str) -> bool {
     formats(family).is_ok_and(|formats| (formats.same_wallet)(a, b))
 }
+
+/// Address-shaped source tokens, including invalid values that admission must reject.
+pub fn candidates(text: &str) -> impl Iterator<Item = &str> {
+    text.split(|c: char| !c.is_ascii_alphanumeric())
+        .filter(|token| {
+            crate::routing::all().iter().any(|rail| {
+                formats(rail.family).is_ok_and(|format| (format.address_candidate)(token))
+            })
+        })
+}
+/// Whether a compiled adapter accepts this wallet identity.
+pub fn valid_wallet(address: &str) -> bool {
+    crate::routing::all()
+        .iter()
+        .any(|rail| check_wallet(rail.family, address).is_ok())
+}
+
+/// Public signing key decoded by a compiled account adapter.
+pub fn account_key(address: &str) -> Option<[u8; 32]> {
+    crate::routing::all().iter().find_map(|rail| {
+        formats(rail.family)
+            .ok()
+            .and_then(|format| (format.account_key)(address))
+    })
+}

@@ -8,6 +8,10 @@ pub(crate) struct Formats {
     pub wallet: Check,
     pub recipient: Check,
     pub token: Check,
+    pub account_key: fn(&str) -> Option<[u8; 32]>,
+    pub address_candidate: fn(&str) -> bool,
+    pub resolve_asset:
+        fn(&str, &str, Option<&str>, bool) -> crate::error::Result<asset::ResolvedAsset>,
     pub same_wallet: fn(&str, &str) -> bool,
     pub asset_code: fn(&str) -> bool,
     pub asset_contract: fn(&str) -> Option<u8>,

@@ -20,11 +20,48 @@ fn asset_contract(s: &str) -> Option<u8> {
     contract(s).then_some(7)
 }
 
+fn address_candidate(token: &str) -> bool {
+    token.len() == 56
+        && matches!(token.as_bytes()[0], b'G' | b'C' | b'M')
+        && token
+            .bytes()
+            .all(|b| b.is_ascii_uppercase() || (b'2'..=b'7').contains(&b))
+}
+fn resolve_asset(
+    network: &str,
+    symbol: &str,
+    issuer: Option<&str>,
+    known_default: bool,
+) -> crate::error::Result<crate::input::asset::ResolvedAsset> {
+    let issuer = issuer.or_else(|| {
+        known_default
+            .then(|| {
+                super::tokens_for(network)
+                    .iter()
+                    .find(|t| t.code == symbol)
+                    .and_then(|t| t.issuer)
+            })
+            .flatten()
+    });
+    let asset = allowit_stellar_wallet::asset_from_identity(symbol, issuer)
+        .map_err(crate::error::Error::usage)?;
+    let address =
+        allowit_stellar_wallet::sac_address(network, &asset).map_err(crate::error::Error::usage)?;
+    Ok(crate::input::asset::ResolvedAsset {
+        symbol: symbol.into(),
+        address,
+        decimals: 7,
+    })
+}
+
 pub(crate) const FORMATS: Formats = Formats {
     account: (account, "a G… strkey"),
     wallet: (account_or_contract, "a G… account or C… contract strkey"),
     recipient: (account_or_contract, "a G… or C… strkey"),
     token: (account_or_contract, "a G… issuer or C… contract"),
+    account_key: |address| allowit_stellar_wallet::account_key(address).ok(),
+    address_candidate,
+    resolve_asset,
     same_wallet: |a, b| a == b,
     asset_code,
     asset_contract,

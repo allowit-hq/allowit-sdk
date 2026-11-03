@@ -19,8 +19,8 @@ dependencies = [
 
 [[package]]
 name = "allowit"
-version = "0.3.0"
-source = "git+https://github.com/allowit-hq/allowit-core.git?tag=v0.3.0#56e8a0755a20bf2cc786c4ad0d5822c1a9ac63cb"
+version = "0.3.1"
+source = "git+https://github.com/allowit-hq/allowit-core.git?tag=v0.3.1#96b558633d4e01a077d3fd1e75d2b9fe927f2036"
 
 [[package]]
 name = "allowit-cli"
@@ -55,8 +55,8 @@ dependencies = [
 
 [[package]]
 name = "allowit-sdk"
-version = "0.3.0"
-source = "git+https://github.com/allowit-hq/allowit-core.git?tag=v0.3.0#56e8a0755a20bf2cc786c4ad0d5822c1a9ac63cb"
+version = "0.3.1"
+source = "git+https://github.com/allowit-hq/allowit-core.git?tag=v0.3.1#96b558633d4e01a077d3fd1e75d2b9fe927f2036"
 dependencies = [
  "allowit",
  "libc",
@@ -71,6 +71,7 @@ dependencies = [
 name = "allowit-sdk-engine"
 version = "0.4.0"
 dependencies = [
+ "allowit",
  "allowit-sdk",
  "allowit-stellar-wallet",
  "base64 0.22.1",
@@ -91,7 +92,7 @@ dependencies = [
 [[package]]
 name = "allowit-stellar-wallet"
 version = "0.3.0"
-source = "git+https://github.com/allowit-hq/allowit-contracts-stellar.git?tag=v0.3.0#96b81689603fe24986fdd8e18da7f12db9ecafe1"
+source = "git+https://github.com/allowit-hq/allowit-contracts-stellar.git?rev=1f43c515001f77bfd6b460683d5469c7845d0496#1f43c515001f77bfd6b460683d5469c7845d0496"
 dependencies = [
  "allowit",
  "allowit-sdk",

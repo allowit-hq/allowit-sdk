@@ -1,13 +1,16 @@
 //! Local rail communication for server callers. Private admission and key authority remain with the caller.
+pub mod owner;
 use crate::{config::ServerAuthority, error::Result, profiles::Description};
 use allowit_sdk::policy::PolicyValue;
 use serde::{Deserialize, Serialize};
 use serde_json::value::RawValue;
 use std::{collections::BTreeMap, time::Duration};
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub enum Tier {
     Simple,
+    #[serde(rename = "common")]
     Standard,
     Custom,
 }
@@ -70,9 +73,11 @@ pub struct Expense {
     pub observed_height: u64,
     pub day: u64,
 }
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct Accounting {
     pub nonce: u64,
+    #[serde(alias = "revision")]
     pub deployment_version: u64,
     pub spent_daily: i128,
     pub spent_total: i128,
@@ -85,6 +90,7 @@ pub struct Validity {
     pub expires_at: u64,
 }
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub enum Status {
     Prepared,
     Submitted,
@@ -92,9 +98,12 @@ pub enum Status {
     Confirmed,
     Failed,
 }
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Signature {
+    #[serde(rename = "signer")]
     pub identity: String,
+    #[serde(rename = "signature")]
     pub bytes: Vec<u8>,
 }
 /// The caller owns the private key and decides when this capability is available.
@@ -171,6 +180,19 @@ carrier!(Receipt, Receipt);
 carrier!(OwnerPacket, Owner);
 carrier!(OwnerSigned, OwnerSigned);
 carrier!(RequestPacket, Request);
+impl RequestPacket {
+    pub fn operation_id(&self) -> Result<[u8; 32]> {
+        crate::vendors::runtime_request_id(&self.0)
+    }
+}
+impl PartialEq for RequestPacket {
+    fn eq(&self, other: &Self) -> bool {
+        self.network() == other.network()
+            && serde_json::from_slice::<serde_json::Value>(self.bytes()).ok()
+                == serde_json::from_slice::<serde_json::Value>(other.bytes()).ok()
+    }
+}
+
 /// Native owner-signing input and common immutable transaction identity.
 #[derive(Clone, Debug)]
 pub struct OwnerInfo {
@@ -191,17 +213,48 @@ pub struct PacketInfo {
     pub wallet: String,
     pub expires_at: u64,
 }
+/// Read-only common projection of a validated retained operation.
+pub struct PreparedMetadata {
+    pub configuration: owner::Configuration,
+    pub request: RequestPacket,
+    pub operation_id: [u8; 32],
+    pub created_at: u64,
+    pub expires_at: u64,
+    pub transaction_hash: [u8; 32],
+    pub debit_units: i128,
+    pub request_hash: [u8; 32],
+    pub debit: Debit,
+}
+#[derive(Clone, Debug)]
+pub struct Debit {
+    pub units: i128,
+    pub token: String,
+    pub recipient: String,
+    pub kind: String,
+    pub display_amount: String,
+    pub display_token: String,
+}
 impl Prepared {
+    pub fn metadata(&self) -> Result<PreparedMetadata> {
+        crate::vendors::runtime_prepared_metadata(&self.0)
+    }
     pub fn info(&self) -> Result<PacketInfo> {
         crate::vendors::runtime_info(&self.0, Kind::Prepared)
     }
 }
 impl Signed {
+    pub fn validate_signatures(&self) -> Result<()> {
+        crate::vendors::runtime_validate_signed(&self.0)
+    }
+    pub fn preparation(&self) -> Result<Prepared> {
+        crate::vendors::runtime_signed_preparation(&self.0)
+    }
     pub fn info(&self) -> Result<PacketInfo> {
         crate::vendors::runtime_info(&self.0, Kind::Signed)
     }
 }
 /// Values observed by the selected native implementation. This is not a complete economic-state commitment.
+#[derive(Clone)]
 pub struct Snapshot {
     pub accounting: Accounting,
     pub observed_height: u64,
@@ -211,6 +264,15 @@ pub struct Snapshot {
     pub(crate) evidence: Packet,
 }
 impl Snapshot {
+    pub fn verify_consent(&self, message: &str, signatures: &[Signature]) -> Result<()> {
+        crate::vendors::runtime_verify_consent(self, message, signatures)
+    }
+    pub fn signer_weight(&self, identity: &str) -> Result<u32> {
+        crate::vendors::runtime_signer_weight(self, identity)
+    }
+    pub fn authority_document(&self) -> Result<serde_json::Value> {
+        crate::vendors::runtime_authority_document(self)
+    }
     /// Compare only native known-state evidence. Current balance, lifetime and validity checks stay separate.
     pub fn same_known_state(&self, other: &Self) -> Result<bool> {
         crate::vendors::runtime_same_snapshot(self, other)
@@ -237,6 +299,9 @@ pub struct ReceiptInfo {
     pub observed_height: u64,
 }
 impl Receipt {
+    pub fn verify_operation(&self, signed: &Signed) -> Result<()> {
+        crate::vendors::runtime_verify_receipt(&self.0, &signed.0)
+    }
     pub fn info(&self) -> Result<ReceiptInfo> {
         crate::vendors::runtime_receipt_info(&self.0)
     }
@@ -253,10 +318,23 @@ pub struct ObservedAuthorization {
 }
 #[derive(Clone, Debug)]
 pub enum OwnerAction {
-    Upload { wasm: Vec<u8> },
-    Create { wasm: Vec<u8> },
-    Fund { units: i128 },
+    Upload {
+        wasm: Vec<u8>,
+    },
+    Create {
+        wasm: Vec<u8>,
+    },
+    Fund {
+        units: i128,
+    },
     Extend,
+    SetPause {
+        paused: bool,
+    },
+    Recover {
+        units: Option<i128>,
+        recipient: Option<String>,
+    },
 }
 #[derive(Clone, Copy, Debug)]
 pub struct Poll {
@@ -272,10 +350,32 @@ impl Default for Poll {
     }
 }
 
+/// Caller-owned bounded RPC transport. Native methods and packet interpretation stay in the vendor.
+pub trait Transport: Send + Sync {
+    fn call(&self, method: &str, params: serde_json::Value) -> Result<serde_json::Value>;
+}
+
 pub struct Runtime {
     pub(crate) provider: Box<dyn crate::vendors::RuntimeProvider>,
 }
 impl Runtime {
+    pub fn discover_snapshot(
+        &self,
+        configuration: &owner::Configuration,
+        accounting: Option<&Accounting>,
+    ) -> Result<Snapshot> {
+        self.provider.discover_snapshot(configuration, accounting)
+    }
+    pub fn current_height(&self) -> Result<u64> {
+        self.provider.current_height()
+    }
+    pub fn observe_hash(&self, hash: &[u8; 32]) -> Result<Option<Receipt>> {
+        self.provider.observe_hash(hash)
+    }
+
+    pub fn with_transport(network: &str, transport: std::sync::Arc<dyn Transport>) -> Result<Self> {
+        crate::vendors::runtime_with_transport(network, transport).map(|provider| Self { provider })
+    }
     pub fn new(network: &str, endpoint: &str) -> Result<Self> {
         crate::vendors::runtime(network, endpoint).map(|provider| Self { provider })
     }
@@ -315,6 +415,18 @@ impl Runtime {
         validity: Validity,
     ) -> Result<Prepared> {
         self.provider.prepare(i, r, terms, accounting, validity)
+    }
+    /// Obtain service authorization without exposing it to RPC. Caller must retain it before finish_authorization.
+    pub fn authorize_preparation(
+        &self,
+        i: &Installation,
+        p: &Prepared,
+        signer: &dyn Signer,
+        evaluator: Option<Evaluator<'_>>,
+        now: u64,
+    ) -> Result<Prepared> {
+        self.provider
+            .authorize_preparation(i, p, signer, evaluator, now)
     }
     pub fn finalize_authorization(
         &self,
@@ -431,4 +543,20 @@ impl Runtime {
     pub fn observe_owner(&self, p: &OwnerSigned) -> Result<Option<Receipt>> {
         self.provider.observe_owner(p)
     }
+}
+
+/// Verify a transport identity proof. Authorization for the requested policy remains with the caller.
+pub fn verify_request_proof(
+    network: &str,
+    proof: &str,
+    now: u64,
+    path: &str,
+    canonical_body: &[u8],
+) -> Result<String> {
+    crate::vendors::runtime_verify_request_proof(network, proof, now, path, canonical_body)
+}
+
+/// Encode the public part of a caller-owned signing key for the selected vendor.
+pub fn signer_identity(network: &str, public_key: &[u8; 32]) -> Result<String> {
+    crate::vendors::runtime_signer_identity(network, public_key)
 }

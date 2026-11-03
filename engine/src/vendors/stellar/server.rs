@@ -171,7 +171,7 @@ pub(in crate::vendors) fn restore(k: Kind, document: Box<RawValue>) -> Result<Pa
         }
         Kind::Signed => {
             let p: SignedOperation = decode(&document)?;
-            checked(native::validate_retained_signed(&p))?;
+            retained_signed_shape(&p)?;
             p.prepared.config.network
         }
         Kind::Owner => {
@@ -253,6 +253,25 @@ impl Provider {
             runtime: super::runtime::Runtime::from_rpc(rpc),
         }
     }
+    pub(in crate::vendors) fn with_transport(
+        network: &str,
+        transport: std::sync::Arc<dyn Transport>,
+    ) -> Result<Self> {
+        struct Bridge(std::sync::Arc<dyn Transport>);
+        impl rpc::Rpc for Bridge {
+            fn call(
+                &self,
+                method: &str,
+                params: serde_json::Value,
+            ) -> native::Result<serde_json::Value> {
+                self.0.call(method, params).map_err(|e| e.to_string())
+            }
+        }
+        Ok(Self {
+            network: crate::routing::normalize(network)?.into(),
+            runtime: super::runtime::Runtime::from_rpc(std::sync::Arc::new(Bridge(transport))),
+        })
+    }
     fn rpc(&self) -> &dyn rpc::Rpc {
         self.runtime.rpc()
     }
@@ -322,6 +341,40 @@ impl Provider {
     }
 }
 impl super::super::RuntimeProvider for Provider {
+    fn discover_snapshot(
+        &self,
+        configuration: &crate::runtime::owner::Configuration,
+        counters: Option<&Accounting>,
+    ) -> Result<Snapshot> {
+        let c: WalletConfig = serde_json::from_slice(configuration.bytes())
+            .map_err(|_| Error::config("Invalid native configuration"))?;
+        self.network(&c.network)?;
+        checked(native::validate_config(&c))?;
+        let live = checked(rpc::trusted_state_for_discovery(
+            self.rpc(),
+            &c,
+            accounting(counters),
+        ))?;
+        snapshot_from(&c.network, live)
+    }
+    fn current_height(&self) -> Result<u64> {
+        if checked(self.rpc().call("getNetwork", serde_json::json!({})))?["passphrase"].as_str()
+            != Some(checked(native::passphrase(&self.network))?)
+        {
+            return Err(Error::config("Runtime transport network differs"));
+        }
+        checked(self.rpc().call("getLatestLedger", serde_json::json!({})))?["sequence"]
+            .as_u64()
+            .filter(|v| *v > 0)
+            .ok_or_else(|| Error::config("Missing current height"))
+    }
+    fn observe_hash(&self, hash: &[u8; 32]) -> Result<Option<Receipt>> {
+        self.current_height()?;
+        checked(rpc::receipt_by_hash(self.rpc(), &self.network, hash))?
+            .map(|r| Packet::new(&self.network, &r).map(Receipt))
+            .transpose()
+    }
+
     fn import(&self, a: &ServerAuthority, bytes: &[u8]) -> Result<Installation> {
         self.network(a.network())?;
         let b = crate::vendors::stellar::runtime::client::decode_public_bundle(bytes)?;
@@ -542,6 +595,34 @@ impl super::super::RuntimeProvider for Provider {
             v.expires_at,
         ))?)
     }
+    fn authorize_preparation(
+        &self,
+        i: &Installation,
+        p: &Prepared,
+        s: &dyn Signer,
+        e: Option<Evaluator<'_>>,
+        now: u64,
+    ) -> Result<Prepared> {
+        let c = self.fresh(i)?;
+        let p = prepared(p)?;
+        if c != p.config {
+            return Err(Error::config(
+                "Authorization differs from selected installation",
+            ));
+        }
+        self.packet(&checked(native::authorize_server_using(
+            &p,
+            s.identity(),
+            now,
+            e,
+            |digest| {
+                s.sign_hash(digest)
+                    .map_err(|e| e.message)?
+                    .try_into()
+                    .map_err(|_| "Native signer returned another signature length".into())
+            },
+        ))?)
+    }
     fn finalize<'a>(
         &self,
         i: &Installation,
@@ -715,6 +796,38 @@ impl super::super::RuntimeProvider for Provider {
                     expires_at: p.expires_at,
                 }
             }
+            OwnerAction::SetPause { paused } => {
+                use allowit_sdk::admin::{DeploymentVersion, SetPause};
+                let mut admin = native::admin::OwnerAdmin {
+                    rpc: self.rpc(),
+                    config: &c,
+                    now,
+                };
+                let version = checked(admin.deployment_version())?
+                    .0
+                    .checked_add(1)
+                    .ok_or_else(|| Error::config("Deployment version overflow"))?;
+                checked(
+                    checked(admin.set_pause(paused, DeploymentVersion(version)))?
+                        .owner_transaction(),
+                )?
+            }
+            OwnerAction::Recover { units, recipient } => {
+                use allowit_sdk::admin::RecoverFunds;
+                let mut admin = native::admin::OwnerAdmin {
+                    rpc: self.rpc(),
+                    config: &c,
+                    now,
+                };
+                let prepared = match (units, recipient) {
+                    (None, None) => checked(admin.recover_funds(&c.asset))?,
+                    (Some(units), recipient) => {
+                        checked(admin.recover_to(recipient.as_deref().unwrap_or(&c.owner), units))?
+                    }
+                    _ => return Err(Error::usage("Recovery recipient requires an amount")),
+                };
+                checked(prepared.owner_transaction())?
+            }
             OwnerAction::Fund { units } => {
                 checked(rpc::trusted_state_for_discovery(self.rpc(), &c, None))?;
                 checked(d.fund(&c, units))?
@@ -799,4 +912,189 @@ impl super::super::RuntimeProvider for Provider {
         .map(|r| Ok(Receipt(Packet::new(p.network(), &r)?)))
         .transpose()
     }
+}
+
+pub(in crate::vendors) fn prepared_metadata(p: &Packet) -> Result<PreparedMetadata> {
+    let value: PreparedOperation = decode(&p.document)?;
+    checked(native::validate_retained_prepared(&value))?;
+    let effect = value
+        .request
+        .effect_bounds
+        .first()
+        .ok_or_else(|| Error::config("Missing original effect bound"))?;
+    let mut amount = [0u8; 16];
+    amount.copy_from_slice(&effect.max_debit.0[16..]);
+    let operation = native::operation_from_request(&value.config, &value.request)
+        .or_else(|_| {
+            native::transfer_from_request(&value.config, &value.request)
+                .map(native::StellarOperation::Transfer)
+        })
+        .map_err(Error::config)?;
+    let (recipient, units) = operation.debit();
+    let token = operation.debit_token(&value.config.asset);
+    let redeem = operation.kind() == native::OperationKind::Redeem;
+    let kind = serde_json::to_value(operation.kind())
+        .map_err(|_| Error::config("Invalid operation kind"))?
+        .as_str()
+        .ok_or_else(|| Error::config("Invalid operation kind"))?
+        .to_owned();
+    let debit = Debit {
+        units,
+        token: token.into(),
+        recipient: recipient.into(),
+        kind,
+        display_amount: if redeem {
+            units.to_string()
+        } else {
+            format!("{}.{:07}", units / 10_000_000, units % 10_000_000)
+        },
+        display_token: if redeem {
+            format!("{token} base units")
+        } else {
+            value.config.asset_symbol.clone()
+        },
+    };
+    Ok(PreparedMetadata {
+        configuration: crate::runtime::owner::configuration(
+            &value.config.network,
+            Packet::new(&value.config.network, &value.config)?
+                .document
+                .get()
+                .as_bytes(),
+        )?,
+        request: RequestPacket(Packet::new(&value.config.network, &value.request)?),
+        operation_id: value.request.operation.nonce,
+        created_at: value.created_at,
+        expires_at: value.expires_at,
+        transaction_hash: value.transaction_hash,
+        debit_units: i128::from_be_bytes(amount),
+        request_hash: value.request_hash,
+        debit,
+    })
+}
+pub(in crate::vendors) fn signed_preparation(p: &Packet) -> Result<Prepared> {
+    let value: SignedOperation = decode(&p.document)?;
+    retained_signed_shape(&value)?;
+    Ok(Prepared(Packet::new(
+        &value.prepared.config.network,
+        &value.prepared,
+    )?))
+}
+
+fn snapshot_from(network: &str, live: rpc::DiscoveredState) -> Result<Snapshot> {
+    let s = &live.state;
+    let convert = |v: &native::PolicyParams| {
+        v.0.iter()
+            .map(|(k, v)| checked(v.to_core()).map(|v| (k.clone(), v)))
+            .collect::<Result<BTreeMap<_, _>>>()
+    };
+    Ok(Snapshot {
+        accounting: Accounting {
+            nonce: s.nonce,
+            deployment_version: s.deployment_version,
+            spent_daily: s.spent_daily,
+            spent_total: s.spent_total,
+            spent_day: s.spent_day,
+            calls: s.calls,
+        },
+        observed_height: u64::from(s.ledger),
+        paused: live.paused,
+        params: s
+            .policy_state
+            .as_ref()
+            .map(|p| convert(&p.params))
+            .transpose()?
+            .unwrap_or_default(),
+        state: s
+            .policy_state
+            .as_ref()
+            .map(|p| convert(&p.state))
+            .transpose()?
+            .unwrap_or_default(),
+        evidence: Packet::new(network, &live)?,
+    })
+}
+pub(in crate::vendors) fn verify_consent(
+    s: &Snapshot,
+    message: &str,
+    signatures: &[Signature],
+) -> Result<()> {
+    let live: rpc::DiscoveredState = decode(&s.evidence.document)?;
+    let signatures = signatures
+        .iter()
+        .map(|s| native::DetachedSignature {
+            signer: s.identity.clone(),
+            signature: s.bytes.clone(),
+        })
+        .collect::<Vec<_>>();
+    checked(live.state.source.validate_authority_signatures(
+        &native::signing::signed_message_digest(message),
+        &signatures,
+    ))
+}
+pub(in crate::vendors) fn signer_weight(s: &Snapshot, identity: &str) -> Result<u32> {
+    let live: rpc::DiscoveredState = decode(&s.evidence.document)?;
+    checked(live.state.source.signer_weight(identity))
+}
+pub(in crate::vendors) fn authority_document(s: &Snapshot) -> Result<serde_json::Value> {
+    let live: rpc::DiscoveredState = decode(&s.evidence.document)?;
+    serde_json::to_value(live.state.source)
+        .map_err(|_| Error::config("Cannot describe authority observation"))
+}
+
+/// Parse retained signed identity without granting new submission authority. Chain-only recovery
+/// can retain an included envelope whose signature roles rotated; broadcast validates signatures again.
+fn retained_signed_shape(s: &SignedOperation) -> Result<()> {
+    checked(native::validate_retained_prepared(&s.prepared))?;
+    if s.prepared.config.route != WalletRoute::PolicyWallet {
+        return checked(native::validate_retained_signed(s));
+    }
+    checked(native::validate_server_authorization(&s.prepared))?;
+    let hash = checked(rpc::signed_transaction_hash(
+        &s.prepared.config.network,
+        &s.transaction_xdr,
+    ))?;
+    if hash != s.transaction_hash || hash != s.prepared.transaction_hash {
+        return Err(Error::config("Retained signed identity differs"));
+    }
+    Ok(())
+}
+pub(in crate::vendors) fn validate_signed(p: &Packet) -> Result<()> {
+    checked(native::validate_retained_signed(
+        &decode::<SignedOperation>(&p.document)?,
+    ))
+}
+pub(in crate::vendors) fn verify_receipt(r: &Packet, p: &Packet) -> Result<()> {
+    let signed: SignedOperation = decode(&p.document)?;
+    let receipt: rpc::VerifiedReceipt = decode(&r.document)?;
+    if signed.prepared.config.route == WalletRoute::PolicyWallet {
+        checked(rpc::validate_settled_policy_packet(&signed, &receipt))
+    } else {
+        checked(native::validate_retained_signed(&signed))?;
+        checked(rpc::validate_receipt(
+            &receipt,
+            &signed.prepared.config.network,
+            &signed.transaction_hash,
+        ))
+    }
+}
+
+pub(in crate::vendors) fn verify_request_proof(
+    proof: &str,
+    now: u64,
+    path: &str,
+    body: &[u8],
+) -> Result<String> {
+    checked(native::signing::verify_request_proof(
+        proof, now, path, body,
+    ))
+}
+
+pub(in crate::vendors) fn signer_identity(key: &[u8; 32]) -> Result<String> {
+    Ok(native::account_for_public_key(key))
+}
+
+pub(in crate::vendors) fn request_id(p: &Packet) -> Result<[u8; 32]> {
+    let request: native::workflow::ExecutionRequest = decode(&p.document)?;
+    Ok(request.operation.nonce)
 }

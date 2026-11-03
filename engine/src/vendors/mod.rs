@@ -272,6 +272,13 @@ pub(crate) fn recover(
 }
 
 pub(crate) trait RuntimeProvider {
+    fn discover_snapshot(
+        &self,
+        configuration: &crate::runtime::owner::Configuration,
+        accounting: Option<&crate::runtime::Accounting>,
+    ) -> Result<crate::runtime::Snapshot>;
+    fn current_height(&self) -> Result<u64>;
+    fn observe_hash(&self, hash: &[u8; 32]) -> Result<Option<crate::runtime::Receipt>>;
     fn import(
         &self,
         a: &crate::config::ServerAuthority,
@@ -314,6 +321,14 @@ pub(crate) trait RuntimeProvider {
         t: &crate::runtime::Terms,
         a: Option<&crate::runtime::Accounting>,
         v: crate::runtime::Validity,
+    ) -> Result<crate::runtime::Prepared>;
+    fn authorize_preparation(
+        &self,
+        i: &crate::runtime::Installation,
+        p: &crate::runtime::Prepared,
+        signer: &dyn crate::runtime::Signer,
+        evaluator: Option<crate::runtime::Evaluator<'_>>,
+        now: u64,
     ) -> Result<crate::runtime::Prepared>;
     fn finalize<'a>(
         &self,
@@ -385,6 +400,18 @@ pub(crate) fn runtime(network: &str, _endpoint: &str) -> Result<Box<dyn RuntimeP
         _ => Err(unavailable()),
     }
 }
+pub(crate) fn runtime_with_transport(
+    network: &str,
+    _transport: std::sync::Arc<dyn crate::runtime::Transport>,
+) -> Result<Box<dyn RuntimeProvider>> {
+    match routing::family(network)? {
+        #[cfg(feature = "stellar")]
+        stellar::FAMILY => Ok(Box::new(stellar::server::Provider::with_transport(
+            network, _transport,
+        )?)),
+        _ => Err(unavailable()),
+    }
+}
 pub(crate) fn runtime_policy(
     i: crate::runtime::PolicyInstallation,
 ) -> Result<crate::runtime::Installation> {
@@ -446,6 +473,212 @@ pub(crate) fn runtime_owner_info(p: &crate::runtime::Packet) -> Result<crate::ru
     match routing::family(&p.network)? {
         #[cfg(feature = "stellar")]
         stellar::FAMILY => stellar::server::owner_info(p),
+        _ => Err(unavailable()),
+    }
+}
+
+pub(crate) fn owner_configuration(
+    network: &str,
+    _document: &[u8],
+) -> Result<crate::runtime::owner::Configuration> {
+    match routing::family(network)? {
+        #[cfg(feature = "stellar")]
+        stellar::FAMILY => stellar::server_owner::configuration(network, _document),
+        _ => Err(unavailable()),
+    }
+}
+pub(crate) fn owner_envelope_hash(
+    network: &str,
+    _payload: &[u8],
+    _require_signature: bool,
+) -> Result<[u8; 32]> {
+    match routing::family(network)? {
+        #[cfg(feature = "stellar")]
+        stellar::FAMILY => {
+            stellar::server_owner::envelope_hash(network, _payload, _require_signature)
+        }
+        _ => Err(unavailable()),
+    }
+}
+pub(crate) fn owner_validate_signed(
+    network: &str,
+    _original: &[u8],
+    _signed: &[u8],
+) -> Result<[u8; 32]> {
+    match routing::family(network)? {
+        #[cfg(feature = "stellar")]
+        stellar::FAMILY => stellar::server_owner::validate_signed(network, _original, _signed),
+        _ => Err(unavailable()),
+    }
+}
+pub(crate) fn owner_with_policy(
+    c: &crate::runtime::owner::Configuration,
+    _i: crate::runtime::owner::PolicyIdentity,
+) -> Result<crate::runtime::owner::Configuration> {
+    match routing::family(&c.network)? {
+        #[cfg(feature = "stellar")]
+        stellar::FAMILY => stellar::server_owner::with_policy(c, _i),
+        _ => Err(unavailable()),
+    }
+}
+
+pub(crate) fn runtime_prepared_metadata(
+    p: &crate::runtime::Packet,
+) -> Result<crate::runtime::PreparedMetadata> {
+    match routing::family(&p.network)? {
+        #[cfg(feature = "stellar")]
+        stellar::FAMILY => stellar::server::prepared_metadata(p),
+        _ => Err(unavailable()),
+    }
+}
+pub(crate) fn runtime_signed_preparation(
+    p: &crate::runtime::Packet,
+) -> Result<crate::runtime::Prepared> {
+    match routing::family(&p.network)? {
+        #[cfg(feature = "stellar")]
+        stellar::FAMILY => stellar::server::signed_preparation(p),
+        _ => Err(unavailable()),
+    }
+}
+
+pub(crate) fn runtime_verify_consent(
+    s: &crate::runtime::Snapshot,
+    message: &str,
+    signatures: &[crate::runtime::Signature],
+) -> Result<()> {
+    match routing::family(&s.evidence.network)? {
+        #[cfg(feature = "stellar")]
+        stellar::FAMILY => stellar::server::verify_consent(s, message, signatures),
+        _ => Err(unavailable()),
+    }
+}
+pub(crate) fn runtime_signer_weight(s: &crate::runtime::Snapshot, identity: &str) -> Result<u32> {
+    match routing::family(&s.evidence.network)? {
+        #[cfg(feature = "stellar")]
+        stellar::FAMILY => stellar::server::signer_weight(s, identity),
+        _ => Err(unavailable()),
+    }
+}
+pub(crate) fn runtime_authority_document(
+    s: &crate::runtime::Snapshot,
+) -> Result<serde_json::Value> {
+    match routing::family(&s.evidence.network)? {
+        #[cfg(feature = "stellar")]
+        stellar::FAMILY => stellar::server::authority_document(s),
+        _ => Err(unavailable()),
+    }
+}
+pub(crate) fn owner_code_hash(network: &str, _wasm: &[u8]) -> Result<[u8; 32]> {
+    match routing::family(network)? {
+        #[cfg(feature = "stellar")]
+        stellar::FAMILY => stellar::server_owner::code_hash(_wasm),
+        _ => Err(unavailable()),
+    }
+}
+pub(crate) fn owner_connect(
+    network: &str,
+    _endpoint: &str,
+) -> Result<std::sync::Arc<dyn crate::runtime::Transport>> {
+    match routing::family(network)? {
+        #[cfg(feature = "stellar")]
+        stellar::FAMILY => stellar::server_owner::connect(_endpoint),
+        _ => Err(unavailable()),
+    }
+}
+
+pub(crate) fn runtime_validate_signed(p: &crate::runtime::Packet) -> Result<()> {
+    match routing::family(&p.network)? {
+        #[cfg(feature = "stellar")]
+        stellar::FAMILY => stellar::server::validate_signed(p),
+        _ => Err(unavailable()),
+    }
+}
+pub(crate) fn runtime_verify_receipt(
+    r: &crate::runtime::Packet,
+    p: &crate::runtime::Packet,
+) -> Result<()> {
+    if r.network != p.network {
+        return Err(Error::config("Receipt network differs from operation"));
+    }
+    match routing::family(&p.network)? {
+        #[cfg(feature = "stellar")]
+        stellar::FAMILY => stellar::server::verify_receipt(r, p),
+        _ => Err(unavailable()),
+    }
+}
+pub(crate) fn owner_fee_bounds(network: &str) -> Result<crate::runtime::owner::FeeBounds> {
+    match routing::family(network)? {
+        #[cfg(feature = "stellar")]
+        stellar::FAMILY => Ok(stellar::server_owner::fee_bounds()),
+        _ => Err(unavailable()),
+    }
+}
+pub(crate) fn owner_explorer(network: &str, _kind: &str, _id: &str) -> Option<String> {
+    match routing::family(network).ok()? {
+        #[cfg(feature = "stellar")]
+        stellar::FAMILY => stellar::server_owner::explorer_link(network, _kind, _id),
+        _ => None,
+    }
+}
+pub(crate) fn owner_wallet_address(
+    network: &str,
+    _owner: &str,
+    _instance: &[u8; 32],
+) -> Result<String> {
+    match routing::family(network)? {
+        #[cfg(feature = "stellar")]
+        stellar::FAMILY => stellar::server_owner::wallet_address(network, _owner, _instance),
+        _ => Err(unavailable()),
+    }
+}
+
+pub(crate) fn owner_custody_encoding(
+    network: &str,
+    _c: crate::runtime::owner::Custody,
+) -> Result<serde_json::Value> {
+    match routing::family(network)? {
+        #[cfg(feature = "stellar")]
+        stellar::FAMILY => stellar::server_owner::custody_encoding(_c),
+        _ => Err(unavailable()),
+    }
+}
+pub(crate) fn owner_tier_encoding(
+    network: &str,
+    _t: Option<crate::runtime::Tier>,
+) -> Result<serde_json::Value> {
+    match routing::family(network)? {
+        #[cfg(feature = "stellar")]
+        stellar::FAMILY => stellar::server_owner::tier_encoding(_t),
+        _ => Err(unavailable()),
+    }
+}
+
+pub(crate) fn runtime_verify_request_proof(
+    network: &str,
+    proof: &str,
+    now: u64,
+    path: &str,
+    body: &[u8],
+) -> Result<String> {
+    match routing::family(network)? {
+        #[cfg(feature = "stellar")]
+        stellar::FAMILY => stellar::server::verify_request_proof(proof, now, path, body),
+        _ => Err(unavailable()),
+    }
+}
+
+pub(crate) fn runtime_signer_identity(network: &str, key: &[u8; 32]) -> Result<String> {
+    match routing::family(network)? {
+        #[cfg(feature = "stellar")]
+        stellar::FAMILY => stellar::server::signer_identity(key),
+        _ => Err(unavailable()),
+    }
+}
+
+pub(crate) fn runtime_request_id(p: &crate::runtime::Packet) -> Result<[u8; 32]> {
+    match routing::family(&p.network)? {
+        #[cfg(feature = "stellar")]
+        stellar::FAMILY => stellar::server::request_id(p),
         _ => Err(unavailable()),
     }
 }

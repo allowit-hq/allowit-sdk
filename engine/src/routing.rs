@@ -18,6 +18,8 @@ impl Family {
 pub struct RailInfo {
     /// Canonical CAIP-2 identifier. Output always uses it.
     pub id: &'static str,
+    /// User-facing name supplied by the native registration.
+    pub label: &'static str,
     /// Friendly input aliases. The first one is the display name.
     pub aliases: &'static [&'static str],
     pub family: Family,
