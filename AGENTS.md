@@ -2,7 +2,7 @@
 
 ## Artifact storage
 
-Keep code, required build/test inputs and concise API/usage documentation in this repository. Plans, design reports, reviews, run evidence, demo recordings and screenshots belong in the canonical `allowit-hq/allowit-project` knowledge repository under `.agents/artifacts/`. Never commit those artifacts in this subproject or its feature branches. Link to the canonical wiki artifact instead.
+Keep code, required build/test inputs and concise API/usage documentation in this repository. Keep plans in the canonical `allowit-hq/allowit-project` knowledge repository under `.agents/4-plans/`. Keep design reports, reviews, run evidence, demo recordings and screenshots in its `.agents/artifacts/`. Never commit those artifacts in this subproject or its feature branches. Link to the retained artifact in that project.
 
 ## Before pushing
 

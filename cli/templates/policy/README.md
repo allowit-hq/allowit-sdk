@@ -1,7 +1,9 @@
 # Portable policy template
 
 Replace [`src/policy.rs`](src/policy.rs) with your policy. [`src/lib.rs`](src/lib.rs) includes that file unchanged.
-The crate uses the portable `allowit` package's host `std` feature. Soroban contracts compile the same authored source with its Soroban backend.
+The crate uses the portable `allowit` package's host `std` feature. Vendor bindings compile the same authored source for native contracts.
+
+[Architecture](../../../README.md#architecture).
 
 ```sh
 cargo test --locked -p allowit-policy-template

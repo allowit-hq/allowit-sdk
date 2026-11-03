@@ -10,14 +10,26 @@ Both CLI and server callers use SDK engine. Each actor retains its own keys, aut
 SDK engine composes those capabilities into preparation, execution, status and recovery workflows.
 The server adds trusted policy context, admission, server authority, reservations and accounting.
 
+## Architecture
+
+This repository owns the CLI and SDK engine. The CLI owns developer workflows and client validation.
+SDK engine owns other shared logic for CLI and server callers. The CLI also calls the server through REST.
+
 ```mermaid
-flowchart LR
-    CLI[CLI: commands and local key custody] --> SDK[SDK engine: shared execution workflows]
-    Server[Server: trusted enforcement and application state] --> SDK
-    SDK --> Star[Stellar rail: native protocol and settlement]
-    SDK --> Core[Core: portable policy and host primitives]
-    Star --> Core
+flowchart TB
+    CLI["[allowit-sdk]<br/>crate @allowit/cli<br/>DX: policy and agent keypair generation<br/>Policy validation · x402 marketplace"]
+    Server["[allowit-engine]<br/>crate @allowit/server<br/>Shared REST API · server enforcement"]
+    Engine["[allowit-sdk]<br/>crate @allowit/sdk/engine<br/>All other shared logic"]
+    Vendor["crate + npm @allowit/vendor/*<br/>Native contracts · signing · chain semantics<br/>SVG graphics · web components"]
+    Core["[allowit-core]<br/>crate + npm @allowit/sdk/core<br/>Common types · policy rules · primitives<br/>TypeScript interfaces"]
+
+    CLI -->|crate| Engine
+    Server -->|crate| Engine
+    Engine -->|crate| Vendor
+    Engine -->|crate| Core
 ```
+
+[Full architecture][responsibility-model].
 
 ## Run the CLI
 
@@ -121,3 +133,5 @@ The affected [workflows](.github/workflows/) define the required checks.
 ## License
 
 SDK-authored code is under the [MIT License](LICENSE). Dependencies keep their own terms, including the portable `allowit` package.
+
+[responsibility-model]: https://github.com/allowit-hq/allowit-project/blob/main/wiki/allowit/architecture.md#dependency-direction

@@ -1,6 +1,6 @@
 # Allowit CLI
 
-The `allowit` command selects a Stellar network, keeps local keys, generates portable drafts, inspects public wallet profiles and sends agent requests.
+The `allowit` command owns developer workflows, local key custody, portable drafts, wallet profiles and agent requests.
 [`allowit-sdk-engine`](../engine/) supplies reusable workflows for CLI and server callers.
 Rail core owns native encoding, signing, simulation and settlement semantics.
 [Allowit core](https://github.com/allowit-hq/allowit-core) supplies deterministic policy logic and host transport and journal primitives.
@@ -10,6 +10,23 @@ The server supplies trusted policy enforcement and its own signing authority.
 cargo run --locked --bin allowit -- --help
 cargo build --locked --release --bin allowit
 ```
+
+## Architecture
+
+The CLI owns developer workflows for policies, agent keypairs, validation and the x402 marketplace.
+It uses SDK engine for shared logic and the server REST API for server operations.
+
+```mermaid
+flowchart TB
+    CLI["[allowit-sdk]<br/>crate @allowit/cli<br/>DX: policy and agent keypair generation<br/>Policy validation · x402 marketplace"]
+    Server["[allowit-engine]<br/>crate @allowit/server<br/>Shared REST API · server enforcement"]
+    Engine["[allowit-sdk]<br/>crate @allowit/sdk/engine<br/>All other shared logic"]
+
+    CLI -. REST .-> Server
+    CLI -->|crate| Engine
+```
+
+[Architecture](../README.md#architecture).
 
 ## Commands
 
