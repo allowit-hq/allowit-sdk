@@ -8,6 +8,7 @@ pub(crate) struct Formats {
     pub wallet: Check,
     pub recipient: Check,
     pub token: Check,
+    pub signing_digest: fn(&str) -> [u8; 32],
     pub account_key: fn(&str) -> Option<[u8; 32]>,
     pub address_candidate: fn(&str) -> bool,
     pub resolve_asset:

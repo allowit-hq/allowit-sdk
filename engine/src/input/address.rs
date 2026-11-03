@@ -67,3 +67,14 @@ pub fn account_key(address: &str) -> Option<[u8; 32]> {
             .and_then(|format| (format.account_key)(address))
     })
 }
+
+/// Digest for a wallet message, with the selected account adapter's signing domain.
+pub fn signing_digest(identity: &str, message: &str) -> Result<[u8; 32]> {
+    crate::routing::all()
+        .iter()
+        .find_map(|rail| {
+            let formats = formats(rail.family).ok()?;
+            (formats.account.0)(identity).then(|| (formats.signing_digest)(message))
+        })
+        .ok_or_else(|| Error::usage("No compiled account adapter accepts this signing identity"))
+}

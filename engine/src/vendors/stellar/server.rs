@@ -519,42 +519,15 @@ impl super::super::RuntimeProvider for Provider {
     }
     fn snapshot(&self, i: &Installation, a: Option<&Accounting>) -> Result<Snapshot> {
         let c = self.fresh(i)?;
-        let live = checked(rpc::trusted_state_for_discovery(
-            self.rpc(),
-            &c,
-            accounting(a),
-        ))?;
-        let s = &live.state;
-        let convert = |v: &native::PolicyParams| {
-            v.0.iter()
-                .map(|(k, v)| checked(v.to_core()).map(|v| (k.clone(), v)))
-                .collect::<Result<BTreeMap<_, _>>>()
-        };
-        Ok(Snapshot {
-            accounting: Accounting {
-                nonce: s.nonce,
-                deployment_version: s.deployment_version,
-                spent_daily: s.spent_daily,
-                spent_total: s.spent_total,
-                spent_day: s.spent_day,
-                calls: s.calls,
+        let state = checked(rpc::trusted_state(self.rpc(), &c, accounting(a)))?;
+        // Fresh admission rejects paused automation. Read-only discovery has a separate API.
+        snapshot_from(
+            &c.network,
+            rpc::DiscoveredState {
+                state,
+                paused: false,
             },
-            observed_height: u64::from(s.ledger),
-            paused: live.paused,
-            params: s
-                .policy_state
-                .as_ref()
-                .map(|p| convert(&p.params))
-                .transpose()?
-                .unwrap_or_default(),
-            state: s
-                .policy_state
-                .as_ref()
-                .map(|p| convert(&p.state))
-                .transpose()?
-                .unwrap_or_default(),
-            evidence: Packet::new(&c.network, &live)?,
-        })
+        )
     }
     fn action(&self, i: &Installation, r: &RequestPacket) -> Result<Action> {
         let c = self.config(i)?;
@@ -924,11 +897,25 @@ impl super::super::RuntimeProvider for Provider {
                 checked(prepared.owner_transaction())?
             }
             OwnerAction::Fund { units } => {
-                checked(rpc::trusted_state_for_discovery(self.rpc(), &c, None))?;
+                checked(
+                    native::admin::OwnerAdmin {
+                        rpc: self.rpc(),
+                        config: &c,
+                        now,
+                    }
+                    .custody(),
+                )?;
                 checked(d.fund(&c, units))?
             }
             OwnerAction::Extend => {
-                checked(rpc::trusted_state_for_discovery(self.rpc(), &c, None))?;
+                checked(
+                    native::admin::OwnerAdmin {
+                        rpc: self.rpc(),
+                        config: &c,
+                        now,
+                    }
+                    .custody(),
+                )?;
                 let l = checked(rpc::wallet_lifetime(
                     self.rpc(),
                     &c.network,

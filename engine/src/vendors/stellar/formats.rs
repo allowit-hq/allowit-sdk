@@ -59,6 +59,7 @@ pub(crate) const FORMATS: Formats = Formats {
     wallet: (account_or_contract, "a G… account or C… contract strkey"),
     recipient: (account_or_contract, "a G… or C… strkey"),
     token: (account_or_contract, "a G… issuer or C… contract"),
+    signing_digest: allowit_stellar_wallet::signing::signed_message_digest,
     account_key: |address| allowit_stellar_wallet::account_key(address).ok(),
     address_candidate,
     resolve_asset,
