@@ -272,6 +272,15 @@ pub(crate) fn recover(
 }
 
 pub(crate) trait RuntimeProvider {
+    fn problem(&self, error: &Error) -> crate::runtime::Problem {
+        crate::runtime::Problem {
+            status: 409,
+            code: String::new(),
+            message: error.to_string(),
+            details: None,
+        }
+    }
+
     fn discover_snapshot(
         &self,
         configuration: &crate::runtime::owner::Configuration,

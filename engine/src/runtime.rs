@@ -560,3 +560,17 @@ pub fn verify_request_proof(
 pub fn signer_identity(network: &str, public_key: &[u8; 32]) -> Result<String> {
     crate::vendors::runtime_signer_identity(network, public_key)
 }
+
+/// Public failure information. It grants no execution or settlement authority.
+#[derive(Clone, Debug)]
+pub struct Problem {
+    pub status: u16,
+    pub code: String,
+    pub message: String,
+    pub details: Option<serde_json::Value>,
+}
+impl Runtime {
+    pub fn problem(&self, error: &crate::error::Error) -> Problem {
+        self.provider.problem(error)
+    }
+}

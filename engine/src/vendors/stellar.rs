@@ -218,3 +218,5 @@ pub(super) fn fund_key(network: &str, address: &str, endpoint: Option<&str>) -> 
         Error::uncertain(format!("{message}; check the balance before retrying"))
     })
 }
+
+pub mod diagnostics;

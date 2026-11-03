@@ -238,20 +238,65 @@ pub(in crate::vendors) fn receipt_info(p: &Packet) -> Result<ReceiptInfo> {
 pub(in crate::vendors) struct Provider {
     network: String,
     runtime: crate::vendors::stellar::runtime::Runtime,
+    problem: std::sync::Arc<std::sync::Mutex<Option<Problem>>>,
 }
 impl Provider {
     pub(in crate::vendors) fn new(network: &str, endpoint: &str) -> Result<Self> {
-        Ok(Self {
-            network: crate::routing::normalize(network)?.into(),
-            runtime: checked(crate::vendors::stellar::runtime::Runtime::new(endpoint))?,
-        })
+        Ok(Self::from_rpc_inner(
+            network,
+            std::sync::Arc::new(checked(rpc::HttpRpc::new(endpoint))?),
+        ))
+    }
+    fn from_rpc_inner(network: &str, inner: std::sync::Arc<dyn rpc::Rpc>) -> Self {
+        struct Probe {
+            inner: std::sync::Arc<dyn rpc::Rpc>,
+            problem: std::sync::Arc<std::sync::Mutex<Option<Problem>>>,
+        }
+        impl rpc::Rpc for Probe {
+            fn call(
+                &self,
+                method: &str,
+                params: serde_json::Value,
+            ) -> native::Result<serde_json::Value> {
+                if let Ok(mut slot) = self.problem.lock() {
+                    *slot = None;
+                }
+                let value = self.inner.call(method, params)?;
+                if method == "simulateTransaction"
+                    && let Some(error) = value["error"].as_str()
+                {
+                    let events = value["events"]
+                        .as_array()
+                        .map(|items| {
+                            items
+                                .iter()
+                                .filter_map(|item| item.as_str().map(str::to_owned))
+                                .collect::<Vec<_>>()
+                        })
+                        .unwrap_or_default();
+                    let evidence = rpc::simulation_fault(error, &events);
+                    let problem = super::diagnostics::denial(error, evidence.as_ref(), "");
+                    if let Ok(mut slot) = self.problem.lock() {
+                        *slot = Some(problem);
+                    }
+                }
+                Ok(value)
+            }
+        }
+        let problem = std::sync::Arc::new(std::sync::Mutex::new(None));
+        let probe = std::sync::Arc::new(Probe {
+            inner,
+            problem: problem.clone(),
+        });
+        Self {
+            network: network.into(),
+            runtime: super::runtime::Runtime::from_rpc(probe),
+            problem,
+        }
     }
     #[cfg(test)]
     pub(crate) fn from_rpc(network: &str, rpc: std::sync::Arc<dyn rpc::Rpc>) -> Self {
-        Self {
-            network: network.into(),
-            runtime: super::runtime::Runtime::from_rpc(rpc),
-        }
+        Self::from_rpc_inner(network, rpc)
     }
     pub(in crate::vendors) fn with_transport(
         network: &str,
@@ -264,13 +309,16 @@ impl Provider {
                 method: &str,
                 params: serde_json::Value,
             ) -> native::Result<serde_json::Value> {
-                self.0.call(method, params).map_err(|e| e.to_string())
+                self.0
+                    .call(method, params)
+                    .map_err(|error| error.to_string())
             }
         }
-        Ok(Self {
-            network: crate::routing::normalize(network)?.into(),
-            runtime: super::runtime::Runtime::from_rpc(std::sync::Arc::new(Bridge(transport))),
-        })
+        let network = crate::routing::normalize(network)?;
+        Ok(Self::from_rpc_inner(
+            network,
+            std::sync::Arc::new(Bridge(transport)),
+        ))
     }
     fn rpc(&self) -> &dyn rpc::Rpc {
         self.runtime.rpc()
@@ -341,6 +389,14 @@ impl Provider {
     }
 }
 impl super::super::RuntimeProvider for Provider {
+    fn problem(&self, error: &Error) -> Problem {
+        self.problem
+            .lock()
+            .ok()
+            .and_then(|mut value| value.take())
+            .unwrap_or_else(|| super::diagnostics::denial(&error.to_string(), None, ""))
+    }
+
     fn discover_snapshot(
         &self,
         configuration: &crate::runtime::owner::Configuration,
