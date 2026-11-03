@@ -554,19 +554,19 @@ pub(crate) fn runtime_signed_preparation(
 
 pub(crate) fn runtime_verify_consent(
     s: &crate::runtime::Snapshot,
-    message: &str,
-    signatures: &[crate::runtime::Signature],
+    _message: &str,
+    _signatures: &[crate::runtime::Signature],
 ) -> Result<()> {
     match routing::family(&s.evidence.network)? {
         #[cfg(feature = "stellar")]
-        stellar::FAMILY => stellar::server::verify_consent(s, message, signatures),
+        stellar::FAMILY => stellar::server::verify_consent(s, _message, _signatures),
         _ => Err(unavailable()),
     }
 }
-pub(crate) fn runtime_signer_weight(s: &crate::runtime::Snapshot, identity: &str) -> Result<u32> {
+pub(crate) fn runtime_signer_weight(s: &crate::runtime::Snapshot, _identity: &str) -> Result<u32> {
     match routing::family(&s.evidence.network)? {
         #[cfg(feature = "stellar")]
-        stellar::FAMILY => stellar::server::signer_weight(s, identity),
+        stellar::FAMILY => stellar::server::signer_weight(s, _identity),
         _ => Err(unavailable()),
     }
 }
@@ -666,22 +666,22 @@ pub(crate) fn owner_tier_encoding(
 
 pub(crate) fn runtime_verify_request_proof(
     network: &str,
-    proof: &str,
-    now: u64,
-    path: &str,
-    body: &[u8],
+    _proof: &str,
+    _now: u64,
+    _path: &str,
+    _body: &[u8],
 ) -> Result<String> {
     match routing::family(network)? {
         #[cfg(feature = "stellar")]
-        stellar::FAMILY => stellar::server::verify_request_proof(proof, now, path, body),
+        stellar::FAMILY => stellar::server::verify_request_proof(_proof, _now, _path, _body),
         _ => Err(unavailable()),
     }
 }
 
-pub(crate) fn runtime_signer_identity(network: &str, key: &[u8; 32]) -> Result<String> {
+pub(crate) fn runtime_signer_identity(network: &str, _key: &[u8; 32]) -> Result<String> {
     match routing::family(network)? {
         #[cfg(feature = "stellar")]
-        stellar::FAMILY => stellar::server::signer_identity(key),
+        stellar::FAMILY => stellar::server::signer_identity(_key),
         _ => Err(unavailable()),
     }
 }

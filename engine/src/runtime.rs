@@ -127,6 +127,7 @@ pub(crate) enum Kind {
 pub(crate) struct Packet {
     pub network: String,
     pub document: Box<RawValue>,
+    #[cfg_attr(not(feature = "stellar"), allow(dead_code))]
     pub capability: Option<crate::vendors::PreparationCapability>,
 }
 impl Packet {
