@@ -39,7 +39,7 @@ pub(crate) fn configuration(network: &str, document: &[u8]) -> Result<Configurat
         source_hash: c.source_hash,
         binding_hash: c.source_digest,
         rules: c.rules,
-        is_retired: c.language != native::PolicyLanguage::Portable,
+        is_retired: c.route == WalletRoute::Odc || c.language != native::PolicyLanguage::Portable,
         module_digest: c.module_digest,
         policy_instance: c.policy_instance,
         asset: c.asset,
