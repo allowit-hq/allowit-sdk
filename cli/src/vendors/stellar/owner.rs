@@ -4,8 +4,8 @@ use crate::{
     routing,
 };
 use allowit_sdk::client::store::Store;
-pub use allowit_sdk_engine::stellar::owner::signing_url;
-use allowit_sdk_engine::stellar::owner::{SetupRequest, prepare};
+pub use allowit_sdk_engine::vendors::stellar::runtime::owner::signing_url;
+use allowit_sdk_engine::vendors::stellar::runtime::owner::{SetupRequest, prepare};
 use std::{
     collections::BTreeMap,
     path::Path,

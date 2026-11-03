@@ -3,7 +3,8 @@ use crate::{
     error::{Error, Result},
     owner::{self, Context},
     profiles::{Cache, Profile},
-    stellar::{
+    vendors::OwnerProvider,
+    vendors::stellar::runtime::{
         Runtime,
         owner::SetupRequest,
         owner_client::{
@@ -11,7 +12,6 @@ use crate::{
             workflow::{self, Outcome, OwnerCapabilities, OwnerPolicy},
         },
     },
-    vendors::OwnerProvider,
 };
 use allowit_sdk::client::store::Store;
 use std::path::Path;

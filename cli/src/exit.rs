@@ -83,7 +83,7 @@ pub(crate) fn not_available(verb: &str, rail: &str) -> Error {
 
 /// The error for a command that needs a rail when none is selected.
 pub(crate) fn no_rail() -> Error {
-    Error::config("no rail selected; run allowit rail use RAIL (for example stellar:testnet)")
+    Error::config("no rail selected; run allowit rail ls, then allowit rail use RAIL")
 }
 
 #[cfg(test)]

@@ -121,14 +121,6 @@ fn status(v: native::OperationStatus) -> Status {
         native::OperationStatus::Failed => Status::Failed,
     }
 }
-fn native_status(v: Status) -> native::OperationStatus {
-    match v {
-        Status::Prepared => native::OperationStatus::Prepared,
-        Status::Submitted => native::OperationStatus::Submitted,
-        Status::SubmissionUnknown => native::OperationStatus::SubmissionUnknown,
-        Status::Confirmed | Status::Failed => native::OperationStatus::SubmissionUnknown,
-    }
-}
 fn prepared(p: &Prepared) -> Result<PreparedOperation> {
     let v = decode(&p.0.document)?;
     checked(native::validate_retained_prepared(&v))?;
@@ -214,6 +206,18 @@ pub(in crate::vendors) fn restore(k: Kind, document: Box<RawValue>) -> Result<Pa
         document,
     })
 }
+pub(in crate::vendors) fn owner_info(p: &Packet) -> Result<OwnerInfo> {
+    let original: native::owner_intent::OwnerTransaction = decode(&p.document)?;
+    if crate::routing::normalize(&original.network)? != p.network {
+        return Err(Error::config("Owner packet and network differ"));
+    }
+    Ok(OwnerInfo {
+        action: original.action,
+        signing_payload: original.transaction_xdr.into_bytes(),
+        transaction_hash: original.transaction_hash,
+        expires_at: original.expires_at,
+    })
+}
 pub(in crate::vendors) fn same_snapshot(a: &Snapshot, b: &Snapshot) -> Result<bool> {
     let mut a: rpc::DiscoveredState = decode(&a.evidence.document)?;
     let mut b: rpc::DiscoveredState = decode(&b.evidence.document)?;
@@ -233,14 +237,21 @@ pub(in crate::vendors) fn receipt_info(p: &Packet) -> Result<ReceiptInfo> {
 }
 pub(in crate::vendors) struct Provider {
     network: String,
-    runtime: crate::stellar::Runtime,
+    runtime: crate::vendors::stellar::runtime::Runtime,
 }
 impl Provider {
     pub(in crate::vendors) fn new(network: &str, endpoint: &str) -> Result<Self> {
         Ok(Self {
             network: crate::routing::normalize(network)?.into(),
-            runtime: checked(crate::stellar::Runtime::new(endpoint))?,
+            runtime: checked(crate::vendors::stellar::runtime::Runtime::new(endpoint))?,
         })
+    }
+    #[cfg(test)]
+    pub(crate) fn from_rpc(network: &str, rpc: std::sync::Arc<dyn rpc::Rpc>) -> Self {
+        Self {
+            network: network.into(),
+            runtime: super::runtime::Runtime::from_rpc(rpc),
+        }
     }
     fn rpc(&self) -> &dyn rpc::Rpc {
         self.runtime.rpc()
@@ -270,7 +281,9 @@ impl Provider {
             let raw = i.export.as_ref().ok_or_else(|| {
                 Error::config("Fresh Native operations require actual administrator source consent")
             })?;
-            let b = crate::stellar::client::decode_public_bundle(raw.get().as_bytes())?;
+            let b = crate::vendors::stellar::runtime::client::decode_public_bundle(
+                raw.get().as_bytes(),
+            )?;
             b.verify_server_role(a.public_key())?;
             b.verify_import_with(self.rpc())?;
             if b.config != c {
@@ -308,36 +321,10 @@ impl Provider {
         Ok(Prepared(Packet::new(&p.config.network, p)?))
     }
 }
-struct Store<'a>(&'a mut dyn OperationStore);
-impl crate::stellar::OperationStore for Store<'_> {
-    fn load(
-        &self,
-        id: [u8; 32],
-    ) -> native::Result<Option<(SignedOperation, native::OperationStatus)>> {
-        self.0
-            .load(id)
-            .map_err(|e| e.message)?
-            .map(|(p, s)| {
-                signed(&p)
-                    .map(|p| (p, native_status(s)))
-                    .map_err(|e| e.message)
-            })
-            .transpose()
-    }
-    fn record(
-        &mut self,
-        id: [u8; 32],
-        p: &SignedOperation,
-        s: native::OperationStatus,
-    ) -> native::Result<()> {
-        let p = Signed(Packet::new(&p.prepared.config.network, p).map_err(|e| e.message)?);
-        self.0.record(id, &p, status(s)).map_err(|e| e.message)
-    }
-}
 impl super::super::RuntimeProvider for Provider {
     fn import(&self, a: &ServerAuthority, bytes: &[u8]) -> Result<Installation> {
         self.network(a.network())?;
-        let b = crate::stellar::client::decode_public_bundle(bytes)?;
+        let b = crate::vendors::stellar::runtime::client::decode_public_bundle(bytes)?;
         b.verify_server_role(a.public_key())?;
         b.verify_import_with(self.rpc())?;
         self.network(&b.network)?;
@@ -386,7 +373,16 @@ impl super::super::RuntimeProvider for Provider {
         let r: native::workflow::ExecutionRequest = serde_json::from_slice(bytes)
             .map_err(|_| Error::usage("Invalid native execution request"))?;
         checked(native::operation_from_request(&c, &r))?;
-        Ok(RequestPacket(Packet::new(&c.network, &r)?))
+        let document = RawValue::from_string(
+            std::str::from_utf8(bytes)
+                .map_err(|_| Error::usage("Invalid native request encoding"))?
+                .into(),
+        )
+        .map_err(|_| Error::usage("Invalid native execution request"))?;
+        Ok(RequestPacket(Packet {
+            network: crate::routing::normalize(&c.network)?.into(),
+            document,
+        }))
     }
     fn snapshot(&self, i: &Installation, a: Option<&Accounting>) -> Result<Snapshot> {
         let c = self.fresh(i)?;
@@ -609,16 +605,40 @@ impl super::super::RuntimeProvider for Provider {
         let signed = checked(native::authorize(&p, &s, now))?;
         Ok(Signed(Packet::new(&p.config.network, &signed)?))
     }
-    fn submit(&self, store: &mut dyn OperationStore, p: &Signed, now: u64) -> Result<Status> {
+    fn validate_signed(&self, p: &Signed, now: u64) -> Result<()> {
         self.network(p.network())?;
-        checked(self.runtime.submit(&mut Store(store), &signed(p)?, now)).map(status)
+        checked(native::validate_signed(&signed(p)?, now))
     }
-    fn recover(&self, store: &mut dyn OperationStore, id: [u8; 32]) -> Result<Status> {
-        let original = store
-            .load(id)?
-            .ok_or_else(|| Error::config("No original retained operation"))?;
-        self.network(original.0.network())?;
-        checked(self.runtime.recover(&mut Store(store), id)).map(status)
+    fn broadcast(&self, p: &Signed, now: u64) -> Result<Status> {
+        self.network(p.network())?;
+        let s = signed(p)?;
+        let observed = match checked(rpc::broadcast(self.rpc(), &s, now))? {
+            rpc::Broadcast::Submitted => native::OperationStatus::Submitted,
+            rpc::Broadcast::Rejected { .. } => {
+                rpc::status_by_hash(self.rpc(), &s.prepared.config.network, &s.transaction_hash)
+                    .unwrap_or(native::OperationStatus::SubmissionUnknown)
+            }
+            rpc::Broadcast::RetryLater | rpc::Broadcast::Unknown => {
+                native::OperationStatus::SubmissionUnknown
+            }
+        };
+        Ok(status(super::runtime::projected_status(
+            &s.prepared.config.route,
+            observed,
+        )))
+    }
+    fn status(&self, p: &Signed) -> Result<Status> {
+        self.network(p.network())?;
+        let s = signed(p)?;
+        let observed = checked(rpc::status_by_hash(
+            self.rpc(),
+            &s.prepared.config.network,
+            &s.transaction_hash,
+        ))?;
+        Ok(status(super::runtime::projected_status(
+            &s.prepared.config.route,
+            observed,
+        )))
     }
     fn observe(&self, p: &Signed) -> Result<Option<Receipt>> {
         self.network(p.network())?;
@@ -752,7 +772,7 @@ impl super::super::RuntimeProvider for Provider {
         let receipt = checked(self.runtime.send_and_poll(
             &data.original.network,
             owner_payload(&data)?,
-            crate::stellar::Poll {
+            crate::vendors::stellar::runtime::Poll {
                 attempts: poll.attempts,
                 interval: poll.interval,
             },

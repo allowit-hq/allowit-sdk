@@ -1,8 +1,10 @@
-//! Stellar command adapters over `allowit-stellar-wallet`.
+//! Command adapters over registered SDK capabilities.
 //! Commands reach native behavior through the Rail trait; unsupported capabilities exit 3.
 pub(crate) mod address;
 pub(crate) mod asset;
 pub(crate) mod registered;
+#[cfg(feature = "stellar")]
+pub mod stellar;
 
 use crate::{
     ctx::Ctx,

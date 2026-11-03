@@ -1,7 +1,7 @@
 //! Synthetic native fixture and loopback RPC. It performs no actual chain or Wasm execution.
 #![allow(dead_code)]
 use super::wire;
-use allowit_sdk_engine::stellar::owner_client::{
+use allowit_sdk_engine::vendors::stellar::runtime::owner_client::{
     OwnerSigner,
     workflow::{self, OwnerPolicy},
 };

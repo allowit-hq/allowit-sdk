@@ -1,6 +1,6 @@
 //! Mechanical compiled registrations. Native semantics remain in vendor libraries.
 #[cfg(feature = "stellar")]
-mod stellar;
+pub mod stellar;
 use crate::{
     error::{Error, Result},
     routing,
@@ -109,7 +109,7 @@ pub(crate) fn formats(family: routing::Family) -> Result<&'static crate::input::
 }
 pub(crate) enum ProfileBinding {
     #[cfg(feature = "stellar")]
-    Stellar(crate::stellar::client::Bundle),
+    Stellar(crate::vendors::stellar::runtime::client::Bundle),
 }
 pub(crate) fn decode_profile(
     network: &str,
@@ -221,7 +221,7 @@ pub(crate) fn verify_server_role(_binding: &ProfileBinding, _server: &str) -> Re
 
 pub(crate) enum RecoveryBinding {
     #[cfg(feature = "stellar")]
-    Stellar(crate::stellar::client::Retained),
+    Stellar(crate::vendors::stellar::runtime::client::Retained),
 }
 pub(crate) fn recovery_binding(binding: &RecoveryBinding) -> crate::execution::Binding {
     match *binding {
@@ -344,17 +344,9 @@ pub(crate) trait RuntimeProvider {
         s: &[crate::runtime::Signature],
         now: u64,
     ) -> Result<crate::runtime::Signed>;
-    fn submit(
-        &self,
-        s: &mut dyn crate::runtime::OperationStore,
-        p: &crate::runtime::Signed,
-        now: u64,
-    ) -> Result<crate::runtime::Status>;
-    fn recover(
-        &self,
-        s: &mut dyn crate::runtime::OperationStore,
-        id: [u8; 32],
-    ) -> Result<crate::runtime::Status>;
+    fn validate_signed(&self, p: &crate::runtime::Signed, now: u64) -> Result<()>;
+    fn broadcast(&self, p: &crate::runtime::Signed, now: u64) -> Result<crate::runtime::Status>;
+    fn status(&self, p: &crate::runtime::Signed) -> Result<crate::runtime::Status>;
     fn observe(&self, p: &crate::runtime::Signed) -> Result<Option<crate::runtime::Receipt>>;
     fn observe_authorizations(
         &self,
@@ -446,6 +438,14 @@ pub(crate) fn runtime_receipt_info(
     match routing::family(&p.network)? {
         #[cfg(feature = "stellar")]
         stellar::FAMILY => stellar::server::receipt_info(p),
+        _ => Err(unavailable()),
+    }
+}
+
+pub(crate) fn runtime_owner_info(p: &crate::runtime::Packet) -> Result<crate::runtime::OwnerInfo> {
+    match routing::family(&p.network)? {
+        #[cfg(feature = "stellar")]
+        stellar::FAMILY => stellar::server::owner_info(p),
         _ => Err(unavailable()),
     }
 }

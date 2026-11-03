@@ -51,9 +51,10 @@ Rail packages can use common core primitives directly. Core has no dependency on
 | `owner` | Common owner deployment, funding, activation, export and receipt workflows |
 | `profiles` | Verified public exports, portable imports, immutable versions and explicit selection |
 | `execution`, `input` | Shared request orchestration, amount parsing and selected native format checks |
-| `stellar` | Native execution, caller-owned OperationStore, ordered authorization retention and exact-hash recovery |
-| `stellar::owner_client` | Owner sign-in and server-backed portable generation with explicit template or installation selection |
-| `stellar::client` | Authenticated server requests, signer capabilities and exact-intent client resumption |
+| `runtime` | Common local execution, caller-owned OperationStore and original-packet recovery |
+| `vendors::stellar` | Native request, owner-signing, simulation and receipt bindings |
+| `vendors::stellar::runtime::owner_client` | Owner sign-in and server-backed portable generation with explicit template or installation selection |
+| `vendors::stellar::runtime::client` | Authenticated server requests, signer capabilities and exact-intent client resumption |
 | `request`, `typed_request` | Bounded request identifiers, input documents and operation identities |
 | `config`, `routing`, `wallet` | Configuration, registered network selection and caller-owned opaque signers |
 | `output` | Shared printable values |
@@ -76,13 +77,13 @@ Native key formats, cryptography and message domains live in the vendor library.
 SDK engine retains secure files, configuration, sessions and workflow sequencing.
 `generation::generate` requires a matching signer network before selecting its registered backend capability.
 
-`stellar::owner_client` takes a distinct caller-owned owner signer. Native helpers check the exact
+`vendors::stellar::runtime::owner_client` takes a distinct caller-owned owner signer. Native helpers check the exact
 sign-in message, account, Origin and nonce. SDK engine checks freshness and requires a rotated owner session.
 It checks advertised generation profiles, networks and terms before sending one creation request.
 The SDK checks returned source, params and native bindings as a draft. This draft grants no publication or spending authority.
 An uncertain generation is not repeated automatically.
 
-`stellar::client` takes a caller-owned signer capability and private core `Store`.
+`vendors::stellar::runtime::client` takes a caller-owned signer capability and private core `Store`.
 It saves the original intent before preparation and the exact signed proof before transmission.
 It preserves packet bytes, hashes and request IDs through status and recovery.
 CLI exit codes and terminal rendering stay in the CLI.

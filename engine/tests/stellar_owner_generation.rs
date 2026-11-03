@@ -3,7 +3,7 @@
 mod chain;
 #[path = "support/owner_server.rs"]
 mod wire;
-use allowit_sdk_engine::stellar::owner_client::{
+use allowit_sdk_engine::vendors::stellar::runtime::owner_client::{
     GenerateRequest, OwnerClient, OwnerSigner, Target,
 };
 use allowit_stellar_wallet as native;

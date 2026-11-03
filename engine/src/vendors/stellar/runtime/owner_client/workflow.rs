@@ -758,7 +758,7 @@ impl OwnerClient {
             ));
         }
         if c.route == WalletRoute::Native {
-            return crate::stellar::client::verify_native_members(
+            return crate::vendors::stellar::runtime::client::verify_native_members(
                 &checked(rpc::get_account(rpc, &c.wallet))?,
                 c,
             );
@@ -883,7 +883,10 @@ impl OwnerClient {
         }
         if selection.config.route == WalletRoute::Native && record.signature.is_none() {
             let account = checked(rpc::get_account(rpc, &selection.config.wallet))?;
-            crate::stellar::client::verify_native_members(&account, &selection.config)?;
+            crate::vendors::stellar::runtime::client::verify_native_members(
+                &account,
+                &selection.config,
+            )?;
             checked(account.validate_signer_quorum(&[&self.owner], account.high_threshold))?;
             let digest = native::signing::signed_message_digest(&message);
             let signature = signer
@@ -992,7 +995,8 @@ impl OwnerClient {
             now,
             false,
         )?;
-        let bundle = crate::stellar::client::decode_public_bundle(value.get().as_bytes())?;
+        let bundle =
+            crate::vendors::stellar::runtime::client::decode_public_bundle(value.get().as_bytes())?;
         let mut selected_config = selection.config.clone();
         if selected_config.route == WalletRoute::Native {
             selected_config.rules = bundle.config.rules.clone();
@@ -1013,8 +1017,10 @@ impl OwnerClient {
                         .map_err(|_| Error::config("Cannot encode public source consent"))?,
                 )
                 .map_err(|_| Error::config("Cannot encode public source consent"))?;
-                crate::stellar::client::decode_public_bundle(value.get().as_bytes())?
-                    .verify_import_with(rpc)?;
+                crate::vendors::stellar::runtime::client::decode_public_bundle(
+                    value.get().as_bytes(),
+                )?
+                .verify_import_with(rpc)?;
             }
         }
         Ok(value)
@@ -1036,9 +1042,9 @@ struct NativeSetupRecord {
 /// Configure a fresh Native account through SDK Runtime. No server registration is invented.
 /// Original unsigned intent and signed bytes are retained before direct native transmission.
 pub(crate) fn configure_native(
-    runtime: &crate::stellar::Runtime,
+    runtime: &crate::vendors::stellar::runtime::Runtime,
     store: &Store,
-    request: &crate::stellar::owner::SetupRequest,
+    request: &crate::vendors::stellar::runtime::owner::SetupRequest,
     signer: &dyn OwnerSigner,
     clock: &dyn Fn() -> Result<u64>,
 ) -> Result<Value> {
@@ -1176,7 +1182,7 @@ pub(crate) fn configure_native(
             .send_and_poll(
                 &request.network,
                 record.signed_xdr.as_ref().unwrap(),
-                crate::stellar::Poll::default(),
+                crate::vendors::stellar::runtime::Poll::default(),
             )
             .map_err(|_| {
                 Error::uncertain(
@@ -1224,7 +1230,7 @@ pub(crate) fn configure_native(
 /// It never signs, prepares a replacement or transmits a transaction.
 pub(crate) fn status(
     store: &Store,
-    runtime: &crate::stellar::Runtime,
+    runtime: &crate::vendors::stellar::runtime::Runtime,
     id: &str,
     selected_network: &str,
 ) -> Result<Value> {

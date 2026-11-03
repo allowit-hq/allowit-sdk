@@ -161,7 +161,7 @@ fn profile(c: &WalletConfig) -> Value {
         value["irHash"] = json!("");
     }
     if c.route == WalletRoute::Native && c.language == sdk::PolicyLanguage::Portable {
-        let b = allowit_sdk_engine::stellar::client::decode_public_bundle(
+        let b = allowit_sdk_engine::vendors::stellar::runtime::client::decode_public_bundle(
             &serde_json::to_vec(&value).unwrap(),
         )
         .unwrap();

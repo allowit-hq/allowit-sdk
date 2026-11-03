@@ -25,6 +25,7 @@ pub(crate) const FORMATS: Formats = Formats {
     wallet: (account_or_contract, "a G… account or C… contract strkey"),
     recipient: (account_or_contract, "a G… or C… strkey"),
     token: (account_or_contract, "a G… issuer or C… contract"),
+    same_wallet: |a, b| a == b,
     asset_code,
     asset_contract,
     // Classic Stellar assets have seven decimals.

@@ -9,7 +9,7 @@ pub(in crate::vendors) fn decode(
     network: &str,
     bytes: &[u8],
 ) -> Result<(Description, ProfileBinding)> {
-    let bundle = crate::stellar::client::decode_public_bundle(bytes)?;
+    let bundle = crate::vendors::stellar::runtime::client::decode_public_bundle(bytes)?;
     if crate::routing::normalize(&bundle.network)? != network {
         return Err(Error::config(
             "Public profile belongs to another selected rail",

@@ -1,8 +1,8 @@
 //! Persistence and recovery contracts of the shared Stellar workflow.
-use crate::stellar::{OperationStore, Runtime};
-use allowit_stellar_wallet::{
-    self as native, OperationStatus, PreparedOperation, SignedOperation, rpc,
-};
+use super::Runtime as NativeRuntime;
+use crate::error::{Error, Result};
+use crate::runtime::{OperationStore, Runtime, Signed, Status};
+use allowit_stellar_wallet::{self as native, PreparedOperation, SignedOperation, rpc};
 use serde_json::{Value, json};
 use std::{
     collections::VecDeque,
@@ -28,35 +28,42 @@ impl rpc::Rpc for ScriptedRpc {
     }
 }
 fn runtime(events: &Events, responses: Vec<native::Result<Value>>) -> Runtime {
-    Runtime::from_rpc(Arc::new(ScriptedRpc {
-        events: events.clone(),
-        responses: Mutex::new(responses.into()),
-    }))
+    Runtime {
+        provider: Box::new(super::super::server::Provider::from_rpc(
+            "stellar:testnet",
+            Arc::new(ScriptedRpc {
+                events: events.clone(),
+                responses: Mutex::new(responses.into()),
+            }),
+        )),
+    }
+}
+fn packet(s: &SignedOperation) -> Signed {
+    serde_json::from_value(serde_json::to_value(s).unwrap()).unwrap()
 }
 struct Store {
     events: Events,
-    value: Option<(SignedOperation, OperationStatus)>,
+    value: Option<(Signed, Status)>,
     fail: bool,
 }
 impl OperationStore for Store {
-    fn load(&self, _: [u8; 32]) -> native::Result<Option<(SignedOperation, OperationStatus)>> {
+    fn load(&self, _: [u8; 32]) -> Result<Option<(Signed, Status)>> {
         Ok(self.value.clone())
     }
-    fn record(
-        &mut self,
-        _: [u8; 32],
-        signed: &SignedOperation,
-        status: OperationStatus,
-    ) -> native::Result<()> {
+    fn record(&mut self, _: [u8; 32], signed: &Signed, status: Status) -> Result<()> {
         self.events
             .lock()
             .unwrap()
             .push(format!("retain:{status:?}"));
         if self.fail {
-            return Err("durable retention failed".into());
+            return Err(Error::config("durable retention failed"));
         }
-        if self.value.as_ref().is_some_and(|(old, _)| old != signed) {
-            return Err("rebound original packet".into());
+        if self
+            .value
+            .as_ref()
+            .is_some_and(|(old, _)| old.bytes() != signed.bytes())
+        {
+            return Err(Error::config("rebound original packet"));
         }
         self.value = Some((signed.clone(), status));
         Ok(())
@@ -64,7 +71,7 @@ impl OperationStore for Store {
 }
 fn native_signed() -> SignedOperation {
     let old: SignedOperation = serde_json::from_str(include_str!(
-        "../../../cli/tests/fixtures/canonical-main-9682-native-signed.json"
+        "../../../../../cli/tests/fixtures/canonical-main-9682-native-signed.json"
     ))
     .unwrap();
     let mut config = old.prepared.config;
@@ -86,7 +93,7 @@ fn native_signed() -> SignedOperation {
 }
 fn policy_signed() -> SignedOperation {
     let fixture: Value = serde_json::from_str(include_str!(
-        "../../../cli/tests/fixtures/stellar-policy-wallet-revalidation-rpc.json"
+        "../../../../../cli/tests/fixtures/stellar-policy-wallet-revalidation-rpc.json"
     ))
     .unwrap();
     serde_json::from_value(fixture["signed"].clone()).unwrap()
@@ -106,14 +113,15 @@ fn tx_status(signed: &SignedOperation, success: bool) -> Value {
 
 #[test]
 fn retention_failure_prevents_broadcast_and_ambiguous_retry_keeps_exact_bytes() {
-    let signed = native_signed();
+    let native = native_signed();
+    let signed = packet(&native);
     let events = Events::default();
     let runtime = runtime(
         &events,
         vec![
             Err("lost response".into()),
             Ok(json!({"status":"NOT_FOUND"})),
-            Ok(json!({"hash":native::hex(&signed.transaction_hash),"status":"PENDING"})),
+            Ok(json!({"hash":native::hex(&native.transaction_hash),"status":"PENDING"})),
             Ok(json!({"status":"NOT_FOUND"})),
         ],
     );
@@ -128,7 +136,7 @@ fn retention_failure_prevents_broadcast_and_ambiguous_retry_keeps_exact_bytes() 
     events.lock().unwrap().clear();
     assert_eq!(
         runtime.submit(&mut store, &signed, 86401).unwrap(),
-        OperationStatus::SubmissionUnknown
+        Status::SubmissionUnknown
     );
     assert_eq!(
         *events.lock().unwrap(),
@@ -136,13 +144,13 @@ fn retention_failure_prevents_broadcast_and_ambiguous_retry_keeps_exact_bytes() 
     );
     assert_eq!(
         runtime.submit(&mut store, &signed, 86500).unwrap(),
-        OperationStatus::Submitted
+        Status::Submitted
     );
     assert_eq!(
         runtime.submit(&mut store, &signed, 86700).unwrap(),
-        OperationStatus::SubmissionUnknown
+        Status::SubmissionUnknown
     );
-    assert_eq!(store.value.as_ref().unwrap().0, signed);
+    assert_eq!(store.value.as_ref().unwrap().0.bytes(), signed.bytes());
     let calls = events.lock().unwrap();
     assert_eq!(
         calls.iter().filter(|v| *v == "rpc:sendTransaction").count(),
@@ -158,78 +166,86 @@ fn retention_failure_prevents_broadcast_and_ambiguous_retry_keeps_exact_bytes() 
 
 #[test]
 fn original_identity_and_terminal_state_survive_retries_and_expiry() {
-    let signed = native_signed();
+    let native = native_signed();
+    let signed = packet(&native);
     let events = Events::default();
-    let runtime = runtime(&events, vec![Ok(tx_status(&signed, true))]);
+    let runtime = runtime(&events, vec![Ok(tx_status(&native, true)); 3]);
     let mut store = Store {
         events: events.clone(),
-        value: Some((signed.clone(), OperationStatus::SubmissionUnknown)),
+        value: Some((signed.clone(), Status::SubmissionUnknown)),
         fail: false,
     };
     assert_eq!(
         runtime
-            .recover(&mut store, signed.prepared.request.operation.nonce)
+            .recover(&mut store, native.prepared.request.operation.nonce)
             .unwrap(),
-        OperationStatus::Confirmed
+        Status::Confirmed
     );
-    let mut changed = signed.clone();
-    changed.transaction_hash[0] ^= 1;
+    let mut changed_native = native.clone();
+    changed_native.transaction_hash[0] ^= 1;
+    let changed = Signed(crate::runtime::Packet::new("stellar:testnet", &changed_native).unwrap());
     assert!(runtime.submit(&mut store, &changed, 90000).is_err());
     assert_eq!(
         runtime.submit(&mut store, &signed, 90000).unwrap(),
-        OperationStatus::Confirmed
+        Status::Confirmed
     );
     assert_eq!(
         runtime
-            .recover(&mut store, signed.prepared.request.operation.nonce)
+            .recover(&mut store, native.prepared.request.operation.nonce)
             .unwrap(),
-        OperationStatus::Confirmed
+        Status::Confirmed
     );
     assert_eq!(
         *events.lock().unwrap(),
-        vec!["rpc:getTransaction", "retain:Confirmed"]
+        vec![
+            "rpc:getTransaction",
+            "retain:Confirmed",
+            "rpc:getTransaction",
+            "retain:Confirmed",
+            "rpc:getTransaction",
+            "retain:Confirmed"
+        ]
     );
-    assert_eq!(store.value.as_ref().unwrap().0, signed);
+    assert_eq!(store.value.as_ref().unwrap().0.bytes(), signed.bytes());
 }
 
 #[test]
 fn failed_policy_envelope_never_proves_the_address_authorization_cannot_execute() {
-    let signed = policy_signed();
+    let native = policy_signed();
+    let signed = packet(&native);
     let events = Events::default();
     let runtime = runtime(
         &events,
-        vec![Ok(tx_status(&signed, false)), Ok(tx_status(&signed, false))],
+        vec![Ok(tx_status(&native, false)), Ok(tx_status(&native, false))],
     );
     let mut store = Store {
         events: events.clone(),
-        value: Some((signed.clone(), OperationStatus::Submitted)),
+        value: Some((signed.clone(), Status::Submitted)),
         fail: false,
     };
     assert_eq!(
         runtime
-            .recover(&mut store, signed.prepared.request.operation.nonce)
+            .recover(&mut store, native.prepared.request.operation.nonce)
             .unwrap(),
-        OperationStatus::SubmissionUnknown
+        Status::SubmissionUnknown
     );
-    assert_eq!(
-        store.value.as_ref().unwrap().1,
-        OperationStatus::SubmissionUnknown
-    );
-    let observed = runtime.observe_authorizations([&signed.prepared]);
+    assert_eq!(store.value.as_ref().unwrap().1, Status::SubmissionUnknown);
+    let prepared = serde_json::from_value(serde_json::to_value(&native.prepared).unwrap()).unwrap();
+    let observed = runtime.observe_authorizations(&[prepared]).unwrap();
     assert_eq!(observed.len(), 1);
-    assert_eq!(observed[0].receipt.status, OperationStatus::Failed);
-    assert_eq!(observed[0].status(), OperationStatus::SubmissionUnknown);
-    assert_eq!(store.value.as_ref().unwrap().0, signed);
+    assert_eq!(observed[0].receipt.info().unwrap().status, Status::Failed);
+    assert_eq!(observed[0].status, Status::SubmissionUnknown);
+    assert_eq!(store.value.as_ref().unwrap().0.bytes(), signed.bytes());
 }
 
 #[test]
 fn authorization_retention_precedes_second_rpc_and_simulation_failure_keeps_it() {
     let prepared = policy_signed().prepared;
     let events = Events::default();
-    let runtime = runtime(
-        &events,
-        vec![Err("post-sign simulation unavailable".into())],
-    );
+    let runtime = NativeRuntime::from_rpc(Arc::new(ScriptedRpc {
+        events: events.clone(),
+        responses: Mutex::new(vec![Err("post-sign simulation unavailable".into())].into()),
+    }));
     let retained = Mutex::new(None::<PreparedOperation>);
     let result = runtime.finalize_authorization(
         &prepared,

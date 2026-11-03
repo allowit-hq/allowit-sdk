@@ -1,9 +1,12 @@
-//! Registration shims for Stellar-owned key and signature semantics.
+//! Stellar adapter registration and native workflow bindings.
 pub(super) mod execution;
 pub(super) mod formats;
+#[cfg(test)]
+mod input_tests;
 pub(super) mod owner;
 pub(super) mod profiles;
 pub(super) mod request;
+pub mod runtime;
 pub(super) mod server;
 mod typed;
 use super::{KeyProvider, PrivateSigner};
@@ -66,7 +69,7 @@ fn signature(signer: &LocalSigner, digest: &[u8; 32]) -> native::Result<[u8; 64]
         .map_err(|_| "Invalid native signature size".into())
 }
 
-impl crate::stellar::owner_client::OwnerSigner for LocalSigner {
+impl crate::vendors::stellar::runtime::owner_client::OwnerSigner for LocalSigner {
     fn account(&self) -> &str {
         self.address()
     }
@@ -74,7 +77,7 @@ impl crate::stellar::owner_client::OwnerSigner for LocalSigner {
         signature(self, digest)
     }
 }
-impl crate::stellar::client::AgentSigner for LocalSigner {
+impl crate::vendors::stellar::runtime::client::AgentSigner for LocalSigner {
     fn account(&self) -> &str {
         self.address()
     }
@@ -90,8 +93,11 @@ pub(super) fn generate(
     request: &crate::generation::GenerateRequest,
     clock: &mut dyn FnMut() -> Result<u64>,
 ) -> Result<crate::generation::GeneratedDraft> {
-    let mut client =
-        crate::stellar::owner_client::OwnerClient::new(backend, origin, signer.address())?;
+    let mut client = crate::vendors::stellar::runtime::owner_client::OwnerClient::new(
+        backend,
+        origin,
+        signer.address(),
+    )?;
     client.authenticate(signer, clock()?)?;
     let policy = client.generate(request, clock()?)?;
     let unresolved = policy.runtime.instance_binding.portable.unresolved.clone();

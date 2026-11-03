@@ -171,6 +171,19 @@ carrier!(Receipt, Receipt);
 carrier!(OwnerPacket, Owner);
 carrier!(OwnerSigned, OwnerSigned);
 carrier!(RequestPacket, Request);
+/// Native owner-signing input and common immutable transaction identity.
+#[derive(Clone, Debug)]
+pub struct OwnerInfo {
+    pub action: String,
+    pub signing_payload: Vec<u8>,
+    pub transaction_hash: [u8; 32],
+    pub expires_at: u64,
+}
+impl OwnerPacket {
+    pub fn info(&self) -> Result<OwnerInfo> {
+        crate::vendors::runtime_owner_info(&self.0)
+    }
+}
 #[derive(Clone, Debug)]
 pub struct PacketInfo {
     pub operation_id: [u8; 32],
@@ -344,11 +357,46 @@ impl Runtime {
     ) -> Result<Signed> {
         self.provider.authorize(i, p, s, now)
     }
+    /// Retain the original packet before broadcast. Retries observe that identity first.
     pub fn submit(&self, store: &mut dyn OperationStore, p: &Signed, now: u64) -> Result<Status> {
-        self.provider.submit(store, p, now)
+        let id = p.info()?.operation_id;
+        if let Some((original, previous)) = store.load(id)? {
+            if original.bytes() != p.bytes() || original.network() != p.network() {
+                return Err(crate::error::Error::config(
+                    "Operation ID already binds different signed bytes",
+                ));
+            }
+            if previous != Status::Prepared {
+                let observed = self.provider.status(&original)?;
+                if observed != Status::SubmissionUnknown
+                    || self.provider.validate_signed(p, now).is_err()
+                {
+                    store.record(id, &original, observed.clone())?;
+                    return Ok(observed);
+                }
+            }
+        }
+        self.provider.validate_signed(p, now)?;
+        store.record(id, p, Status::SubmissionUnknown)?;
+        let status = self.provider.broadcast(p, now)?;
+        if status != Status::SubmissionUnknown {
+            store.record(id, p, status.clone())?;
+        }
+        Ok(status)
     }
+    /// Observe only the retained original packet. Cached status grants no settlement authority.
     pub fn recover(&self, store: &mut dyn OperationStore, id: [u8; 32]) -> Result<Status> {
-        self.provider.recover(store, id)
+        let (original, _) = store
+            .load(id)?
+            .ok_or_else(|| crate::error::Error::config("No retained operation"))?;
+        if original.info()?.operation_id != id {
+            return Err(crate::error::Error::config(
+                "Retained operation identity differs",
+            ));
+        }
+        let status = self.provider.status(&original)?;
+        store.record(id, &original, status.clone())?;
+        Ok(status)
     }
     pub fn observe(&self, p: &Signed) -> Result<Option<Receipt>> {
         self.provider.observe(p)

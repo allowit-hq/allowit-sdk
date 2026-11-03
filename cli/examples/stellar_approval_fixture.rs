@@ -1,5 +1,5 @@
 //! Public deterministic approval fixture. No test seed is exported.
-use allowit_cli::{stellar, stellar_approval::approval_for_policy};
+use allowit_cli::vendors::stellar::{approval::approval_for_policy, native as stellar};
 use sha2::{Digest, Sha256};
 fn main() {
     let source =

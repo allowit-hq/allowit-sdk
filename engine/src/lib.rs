@@ -14,9 +14,7 @@ pub mod profiles;
 pub mod request;
 pub mod routing;
 pub mod runtime;
-#[cfg(feature = "stellar")]
-pub mod stellar;
 pub mod typed_request;
-mod vendors;
+pub mod vendors;
 pub mod wallet;
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");

@@ -4,20 +4,16 @@
 pub use allowit_sdk::admin;
 pub use allowit_sdk_engine::{VERSION, error, wallet};
 pub(crate) use allowit_sdk_engine::{config, output, request, routing};
-#[cfg(feature = "stellar")]
-pub use allowit_stellar_wallet as stellar;
 mod commands;
 mod ctx;
 mod exit;
 mod owner;
 mod settings;
 mod term;
-mod vendors;
+pub mod vendors;
 use crate::{config::env_value, error::Error, exit::Exit, term::Out};
 use serde_json::{Value, json};
 use std::io::Write;
-#[cfg(feature = "stellar")]
-pub use vendors::registered::{approval as stellar_approval, owner as stellar_owner};
 
 /// Every command path, hidden aliases included, for the help snapshot tests.
 #[doc(hidden)]

@@ -3,8 +3,8 @@ use crate::{
     error::{Error, Result},
     execution::{Outcome, Request},
     profiles::Profile,
-    stellar::client::{self, ExecutionOutcome},
     vendors::ProfileBinding,
+    vendors::stellar::runtime::client::{self, ExecutionOutcome},
     wallet::LocalSigner,
 };
 use allowit_sdk::client::store::Store;

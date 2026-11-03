@@ -341,13 +341,13 @@ mod tests {
     use super::*;
     fn fixture() -> serde_json::Value {
         serde_json::from_str(include_str!(
-            "../../../cli/tests/fixtures/stellar-approval.json"
+            "../../../../../cli/tests/fixtures/stellar-approval.json"
         ))
         .unwrap()
     }
     fn portable_fixture() -> serde_json::Value {
         serde_json::from_str(include_str!(
-            "../../tests/fixtures/stellar-portable-approval.json"
+            "../../../../tests/fixtures/stellar-portable-approval.json"
         ))
         .unwrap()
     }

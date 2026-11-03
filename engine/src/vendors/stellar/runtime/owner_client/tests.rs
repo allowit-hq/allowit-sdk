@@ -1,10 +1,10 @@
 //! Synthetic protocol/native fixtures verify orchestration; no model, Wasm execution or chain run is claimed.
-#[path = "../../../tests/support/owner_chain.rs"]
+#[path = "../../../../../tests/support/owner_chain.rs"]
 mod chain;
-#[path = "../../../tests/support/owner_server.rs"]
+#[path = "../../../../../tests/support/owner_server.rs"]
 mod wire;
 use allowit_sdk::client::store::Store;
-use allowit_sdk_engine::stellar::{
+use allowit_sdk_engine::vendors::stellar::runtime::{
     Runtime,
     owner::SetupRequest,
     owner_client::{
