@@ -733,7 +733,22 @@ impl super::super::RuntimeProvider for Provider {
         self.packet(&finalized)
     }
     fn revalidate(&self, i: &Installation, p: &Prepared, now: u64) -> Result<Prepared> {
-        self.packet(&self.current(i, p, now)?)
+        let c = self.fresh(i)?;
+        self.network(p.network())?;
+        let retained = prepared(p)?;
+        if c != retained.config {
+            return Err(Error::config(
+                "Prepared packet differs from the admitted installation",
+            ));
+        }
+        // Explicit native RPC revalidation establishes a new in-memory preflight only
+        // after checking the retained packet, service authorization and current state.
+        // Signing still uses `current`, which requires an existing genuine preflight.
+        if c.route == WalletRoute::PolicyWallet {
+            self.packet(&checked(self.runtime.revalidate_unsigned(&retained, now))?)
+        } else {
+            self.packet(&self.current(i, p, now)?)
+        }
     }
     fn sign(&self, i: &Installation, p: &Prepared, s: &dyn Signer, now: u64) -> Result<Signature> {
         let p = self.current(i, p, now)?;
@@ -810,7 +825,7 @@ impl super::super::RuntimeProvider for Provider {
             &s.transaction_hash,
         ))?;
         r.map(|r| {
-            checked(rpc::validate_settled_policy_packet(&s, &r))?;
+            verify_native_receipt(&s, &r)?;
             Ok(Receipt(Packet::new(&s.prepared.config.network, &r)?))
         })
         .transpose()
@@ -1143,12 +1158,20 @@ pub(in crate::vendors) fn validate_signed(p: &Packet) -> Result<()> {
 pub(in crate::vendors) fn verify_receipt(r: &Packet, p: &Packet) -> Result<()> {
     let signed: SignedOperation = decode(&p.document)?;
     let receipt: rpc::VerifiedReceipt = decode(&r.document)?;
+    verify_native_receipt(&signed, &receipt)
+}
+fn verify_native_receipt(signed: &SignedOperation, receipt: &rpc::VerifiedReceipt) -> Result<()> {
     if signed.prepared.config.route == WalletRoute::PolicyWallet {
-        checked(rpc::validate_settled_policy_packet(&signed, &receipt))
+        checked(rpc::validate_settled_policy_packet(signed, receipt))
     } else {
-        checked(native::validate_retained_signed(&signed))?;
+        checked(native::validate_retained_signed(signed))?;
+        if signed.transaction_xdr != receipt.envelope_xdr {
+            return Err(Error::config(
+                "The settlement envelope differs from the original packet",
+            ));
+        }
         checked(rpc::validate_receipt(
-            &receipt,
+            receipt,
             &signed.prepared.config.network,
             &signed.transaction_hash,
         ))
@@ -1241,7 +1264,9 @@ mod capability_tests {
         assert!(prepared(&decoded).unwrap().native_preflight.is_none());
         assert!(native::sign(&prepared(&decoded).unwrap(), &[2; 32], 86402).is_err());
         let mut changed = fresh.clone();
-        changed.0.document = RawValue::from_string(format!("{} ", fresh.0.document.get())).unwrap();
+        changed.0.document =
+            RawValue::from_string(fresh.0.document.get().replacen('{', "{ ", 1)).unwrap();
+        assert_ne!(changed.bytes(), fresh.bytes());
         assert!(prepared(&changed).is_err());
         let mut changed = fresh;
         changed.0.network = "stellar:mainnet".into();

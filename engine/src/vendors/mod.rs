@@ -271,6 +271,8 @@ pub(crate) fn recover(
     }
 }
 
+type Retain<'a, T> = Box<dyn FnOnce(&T) -> Result<()> + 'a>;
+
 pub(crate) trait RuntimeProvider {
     fn problem(&self, error: &Error) -> crate::runtime::Problem {
         crate::runtime::Problem {
@@ -321,7 +323,7 @@ pub(crate) trait RuntimeProvider {
         &self,
         i: &crate::runtime::Installation,
         p: &crate::runtime::Prepared,
-        retain: Box<dyn FnOnce(&crate::runtime::Prepared) -> Result<()> + 'a>,
+        retain: Retain<'a, crate::runtime::Prepared>,
     ) -> Result<crate::runtime::Prepared>;
     fn prepare(
         &self,
@@ -346,7 +348,7 @@ pub(crate) trait RuntimeProvider {
         s: &dyn crate::runtime::Signer,
         e: Option<crate::runtime::Evaluator<'_>>,
         now: u64,
-        retain: Box<dyn FnOnce(&crate::runtime::Prepared) -> Result<()> + 'a>,
+        retain: Retain<'a, crate::runtime::Prepared>,
     ) -> Result<crate::runtime::Prepared>;
     fn revalidate(
         &self,
@@ -391,7 +393,7 @@ pub(crate) trait RuntimeProvider {
     fn submit_owner<'a>(
         &self,
         p: &crate::runtime::OwnerSigned,
-        retain: Box<dyn FnOnce(&crate::runtime::OwnerSigned) -> Result<()> + 'a>,
+        retain: Retain<'a, crate::runtime::OwnerSigned>,
         poll: crate::runtime::Poll,
         now: u64,
     ) -> Result<crate::runtime::Receipt>;
