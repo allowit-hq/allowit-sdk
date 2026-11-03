@@ -8,6 +8,7 @@ pub(crate) struct Formats {
     pub wallet: Check,
     pub recipient: Check,
     pub token: Check,
+    pub asset_code: fn(&str) -> bool,
     pub asset_contract: fn(&str) -> Option<u8>,
     pub issuer_decimals: Option<u8>,
 }

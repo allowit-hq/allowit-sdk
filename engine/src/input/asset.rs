@@ -123,10 +123,6 @@ pub fn decimal_units(text: &str, decimals: u8) -> Result<u128> {
         .ok_or_else(|| Error::usage(format!("{} is too large", quoted(text))))
 }
 
-fn code_valid(code: &str) -> bool {
-    !code.is_empty() && code.len() <= 12 && code.bytes().all(|b| b.is_ascii_alphanumeric())
-}
-
 /// Parses an amount for a rail with the given family and token table.
 pub fn parse(family: Family, tokens: &[Token], text: &str, usage: Use) -> Result<Amount> {
     let integer = !text.is_empty() && text.bytes().all(|b| b.is_ascii_digit());
@@ -209,7 +205,7 @@ fn named_asset(
             token.decimals,
         ));
     }
-    if !code_valid(code) {
+    if !(formats.asset_code)(code) {
         return Err(Error::usage(format!(
             "{} is not an asset code; {FORMS}",
             quoted(code)
