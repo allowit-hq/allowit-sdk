@@ -20,17 +20,13 @@ flowchart TB
     Vendor["crate + npm @allowit/vendor/*<br/>Native contracts · signing · chain semantics<br/>SVG graphics · web components"]
     Core["[allowit-core]<br/>crate + npm @allowit/sdk/core<br/>Common types · policy rules · primitives<br/>TypeScript interfaces"]
 
-    CLI -. REST .-> Server
     CLI -->|crate| Engine
     Server -->|crate| Engine
     Engine -->|crate| Vendor
     Engine -->|crate| Core
-    Vendor -->|crate + npm| Core
 ```
 
-Solid arrows are dependencies. Dashed arrows are runtime calls / connections.
-This view follows the [canonical responsibility diagram][responsibility-model].
-Use the [Cargo manifest](Cargo.toml) for Rust build package names.
+[Architecture](../README.md#architecture).
 
 ## Responsibilities
 
@@ -98,5 +94,3 @@ Run these commands from the repository root:
 cargo test --locked -p allowit-sdk-engine
 cargo clippy --locked -p allowit-sdk-engine --all-targets -- -D warnings
 ```
-
-[responsibility-model]: https://github.com/allowit-hq/allowit-project/blob/main/wiki/allowit/architecture.md#dependency-direction

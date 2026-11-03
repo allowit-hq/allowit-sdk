@@ -23,17 +23,12 @@ flowchart TB
     CLI["[allowit-sdk]<br/>crate @allowit/cli<br/>DX: policy and agent keypair generation<br/>Policy validation · x402 marketplace"]
     Server["[allowit-engine]<br/>crate @allowit/server<br/>Shared REST API · server enforcement"]
     Engine["[allowit-sdk]<br/>crate @allowit/sdk/engine<br/>All other shared logic"]
-    Core["[allowit-core]<br/>crate + npm @allowit/sdk/core<br/>Common types · policy rules · primitives<br/>TypeScript interfaces"]
 
     CLI -. REST .-> Server
     CLI -->|crate| Engine
-    Server -->|crate| Engine
-    Engine -->|crate| Core
 ```
 
-Solid arrows are dependencies. Dashed arrows are runtime calls / connections.
-This view follows the [canonical responsibility diagram][responsibility-model].
-Use the [Cargo manifest](Cargo.toml) for Rust build package names.
+[Architecture](../README.md#architecture).
 
 ## Commands
 
@@ -163,5 +158,3 @@ SDK engine controls submission and original-hash recovery; keys remain with the 
 Portable policy source uses `pub fn execute(ctx: &AllowitContext) -> allowit::Result`.
 Owner params supply configuration; authenticated request facts and committed state come from the host and rail.
 See the [portable policy reference](../docs/policy-reference.md) and the selected [adapter reference](src/vendors/).
-
-[responsibility-model]: https://github.com/allowit-hq/allowit-project/blob/main/wiki/allowit/architecture.md#dependency-direction
