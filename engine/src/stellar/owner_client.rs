@@ -724,3 +724,6 @@ fn validate_generated(
     }
     Ok(())
 }
+
+#[cfg(test)]
+mod tests;

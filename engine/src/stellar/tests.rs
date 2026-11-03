@@ -1,5 +1,5 @@
 //! Persistence and recovery contracts of the shared Stellar workflow.
-use allowit_sdk_engine::stellar::{OperationStore, Runtime};
+use crate::stellar::{OperationStore, Runtime};
 use allowit_stellar_wallet::{
     self as native, OperationStatus, PreparedOperation, SignedOperation, rpc,
 };
@@ -64,7 +64,7 @@ impl OperationStore for Store {
 }
 fn native_signed() -> SignedOperation {
     let old: SignedOperation = serde_json::from_str(include_str!(
-        "../../cli/tests/fixtures/canonical-main-9682-native-signed.json"
+        "../../../cli/tests/fixtures/canonical-main-9682-native-signed.json"
     ))
     .unwrap();
     let mut config = old.prepared.config;
@@ -86,7 +86,7 @@ fn native_signed() -> SignedOperation {
 }
 fn policy_signed() -> SignedOperation {
     let fixture: Value = serde_json::from_str(include_str!(
-        "../../cli/tests/fixtures/stellar-policy-wallet-revalidation-rpc.json"
+        "../../../cli/tests/fixtures/stellar-policy-wallet-revalidation-rpc.json"
     ))
     .unwrap();
     serde_json::from_value(fixture["signed"].clone()).unwrap()

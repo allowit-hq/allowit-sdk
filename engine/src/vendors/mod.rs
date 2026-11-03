@@ -270,3 +270,182 @@ pub(crate) fn recover(
         }
     }
 }
+
+pub(crate) trait RuntimeProvider {
+    fn import(
+        &self,
+        a: &crate::config::ServerAuthority,
+        b: &[u8],
+    ) -> Result<crate::runtime::Installation>;
+    fn request(
+        &self,
+        i: &crate::runtime::Installation,
+        id: [u8; 32],
+        a: crate::runtime::Action,
+        accounting: Option<&crate::runtime::Accounting>,
+    ) -> Result<crate::runtime::RequestPacket>;
+    fn read_request(
+        &self,
+        i: &crate::runtime::Installation,
+        b: &[u8],
+    ) -> Result<crate::runtime::RequestPacket>;
+    fn snapshot(
+        &self,
+        i: &crate::runtime::Installation,
+        a: Option<&crate::runtime::Accounting>,
+    ) -> Result<crate::runtime::Snapshot>;
+    fn action(
+        &self,
+        i: &crate::runtime::Installation,
+        r: &crate::runtime::RequestPacket,
+    ) -> Result<crate::runtime::Action>;
+    fn resources(&self, i: &crate::runtime::Installation) -> Result<crate::runtime::Resources>;
+    fn redeemable(&self, i: &crate::runtime::Installation, v: &str, shares: i128) -> Result<i128>;
+    fn finish<'a>(
+        &self,
+        i: &crate::runtime::Installation,
+        p: &crate::runtime::Prepared,
+        retain: Box<dyn FnOnce(&crate::runtime::Prepared) -> Result<()> + 'a>,
+    ) -> Result<crate::runtime::Prepared>;
+    fn prepare(
+        &self,
+        i: &crate::runtime::Installation,
+        r: &crate::runtime::RequestPacket,
+        t: &crate::runtime::Terms,
+        a: Option<&crate::runtime::Accounting>,
+        v: crate::runtime::Validity,
+    ) -> Result<crate::runtime::Prepared>;
+    fn finalize<'a>(
+        &self,
+        i: &crate::runtime::Installation,
+        p: &crate::runtime::Prepared,
+        s: &dyn crate::runtime::Signer,
+        e: Option<crate::runtime::Evaluator<'_>>,
+        now: u64,
+        retain: Box<dyn FnOnce(&crate::runtime::Prepared) -> Result<()> + 'a>,
+    ) -> Result<crate::runtime::Prepared>;
+    fn revalidate(
+        &self,
+        i: &crate::runtime::Installation,
+        p: &crate::runtime::Prepared,
+        now: u64,
+    ) -> Result<crate::runtime::Prepared>;
+    fn sign(
+        &self,
+        i: &crate::runtime::Installation,
+        p: &crate::runtime::Prepared,
+        s: &dyn crate::runtime::Signer,
+        now: u64,
+    ) -> Result<crate::runtime::Signature>;
+    fn authorize(
+        &self,
+        i: &crate::runtime::Installation,
+        p: &crate::runtime::Prepared,
+        s: &[crate::runtime::Signature],
+        now: u64,
+    ) -> Result<crate::runtime::Signed>;
+    fn submit(
+        &self,
+        s: &mut dyn crate::runtime::OperationStore,
+        p: &crate::runtime::Signed,
+        now: u64,
+    ) -> Result<crate::runtime::Status>;
+    fn recover(
+        &self,
+        s: &mut dyn crate::runtime::OperationStore,
+        id: [u8; 32],
+    ) -> Result<crate::runtime::Status>;
+    fn observe(&self, p: &crate::runtime::Signed) -> Result<Option<crate::runtime::Receipt>>;
+    fn observe_authorizations(
+        &self,
+        p: &[crate::runtime::Prepared],
+    ) -> Result<Vec<crate::runtime::ObservedAuthorization>>;
+    fn prepare_owner(
+        &self,
+        i: &crate::runtime::Installation,
+        a: crate::runtime::OwnerAction,
+        fee: u64,
+        now: u64,
+    ) -> Result<crate::runtime::OwnerPacket>;
+    fn read_owner_signed(
+        &self,
+        p: &crate::runtime::OwnerPacket,
+        signed_payload: &[u8],
+    ) -> Result<crate::runtime::OwnerSigned>;
+    fn submit_owner<'a>(
+        &self,
+        p: &crate::runtime::OwnerSigned,
+        retain: Box<dyn FnOnce(&crate::runtime::OwnerSigned) -> Result<()> + 'a>,
+        poll: crate::runtime::Poll,
+        now: u64,
+    ) -> Result<crate::runtime::Receipt>;
+    fn observe_owner(
+        &self,
+        p: &crate::runtime::OwnerSigned,
+    ) -> Result<Option<crate::runtime::Receipt>>;
+}
+pub(crate) fn runtime(network: &str, _endpoint: &str) -> Result<Box<dyn RuntimeProvider>> {
+    match routing::family(network)? {
+        #[cfg(feature = "stellar")]
+        stellar::FAMILY => Ok(Box::new(stellar::server::Provider::new(
+            network, _endpoint,
+        )?)),
+        _ => Err(unavailable()),
+    }
+}
+pub(crate) fn runtime_policy(
+    i: crate::runtime::PolicyInstallation,
+) -> Result<crate::runtime::Installation> {
+    match routing::family(&i.description.network)? {
+        #[cfg(feature = "stellar")]
+        stellar::FAMILY => stellar::server::policy(i),
+        _ => Err(unavailable()),
+    }
+}
+pub(crate) fn runtime_restore(
+    k: crate::runtime::Kind,
+    v: Box<serde_json::value::RawValue>,
+) -> Result<crate::runtime::Packet> {
+    #[cfg(feature = "stellar")]
+    {
+        stellar::server::restore(k, v)
+    }
+    #[cfg(not(feature = "stellar"))]
+    {
+        let _ = (k, v);
+        Err(unavailable())
+    }
+}
+pub(crate) fn runtime_info(
+    p: &crate::runtime::Packet,
+    _k: crate::runtime::Kind,
+) -> Result<crate::runtime::PacketInfo> {
+    match routing::family(&p.network)? {
+        #[cfg(feature = "stellar")]
+        stellar::FAMILY => stellar::server::info(p, _k),
+        _ => Err(unavailable()),
+    }
+}
+
+pub(crate) fn runtime_same_snapshot(
+    a: &crate::runtime::Snapshot,
+    b: &crate::runtime::Snapshot,
+) -> Result<bool> {
+    if a.evidence.network != b.evidence.network {
+        return Ok(false);
+    }
+    match routing::family(&a.evidence.network)? {
+        #[cfg(feature = "stellar")]
+        stellar::FAMILY => stellar::server::same_snapshot(a, b),
+        _ => Err(unavailable()),
+    }
+}
+pub(crate) fn runtime_receipt_info(
+    p: &crate::runtime::Packet,
+) -> Result<crate::runtime::ReceiptInfo> {
+    match routing::family(&p.network)? {
+        #[cfg(feature = "stellar")]
+        stellar::FAMILY => stellar::server::receipt_info(p),
+        _ => Err(unavailable()),
+    }
+}

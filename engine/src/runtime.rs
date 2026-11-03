@@ -1,0 +1,386 @@
+//! Local rail communication for server callers. Private admission and key authority remain with the caller.
+use crate::{config::ServerAuthority, error::Result, profiles::Description};
+use allowit_sdk::policy::PolicyValue;
+use serde::{Deserialize, Serialize};
+use serde_json::value::RawValue;
+use std::{collections::BTreeMap, time::Duration};
+
+#[derive(Clone, Copy, Debug)]
+pub enum Tier {
+    Simple,
+    Standard,
+    Custom,
+}
+pub struct PolicyInstallation {
+    pub description: Description,
+    pub policy_instance: [u8; 32],
+    pub tier: Tier,
+    pub asset: crate::input::asset::Asset,
+    pub max_fee_units: u64,
+}
+/// Immutable common identity with private native encoding. Construction grants no signing authority.
+pub struct Installation {
+    pub(crate) description: Description,
+    pub(crate) config: Box<RawValue>,
+    #[cfg_attr(not(feature = "stellar"), allow(dead_code))]
+    pub(crate) export: Option<Box<RawValue>>,
+    #[cfg_attr(not(feature = "stellar"), allow(dead_code))]
+    pub(crate) authority: Option<ServerAuthority>,
+}
+impl Installation {
+    pub fn policy_wallet(input: PolicyInstallation) -> Result<Self> {
+        crate::vendors::runtime_policy(input)
+    }
+    pub fn description(&self) -> &Description {
+        &self.description
+    }
+    /// Preserve the existing native installation record when the caller persists its own state.
+    pub fn native_document(&self) -> &[u8] {
+        self.config.get().as_bytes()
+    }
+}
+#[derive(Clone, Debug)]
+pub enum Action {
+    Transfer {
+        recipient: String,
+        units: i128,
+    },
+    Deposit {
+        vault: String,
+        assets: i128,
+        min_shares: i128,
+    },
+    Redeem {
+        vault: String,
+        shares: i128,
+        min_assets: i128,
+    },
+}
+#[derive(Clone, Debug, Default)]
+pub struct Terms {
+    pub args: BTreeMap<String, PolicyValue>,
+    pub expense: Option<Expense>,
+}
+#[derive(Clone, Debug)]
+pub struct Expense {
+    pub gas_units: i128,
+    pub conversion_units: i128,
+    pub spent_units: i128,
+    pub max_fee_units: u64,
+    pub observed_height: u64,
+    pub day: u64,
+}
+#[derive(Clone, Debug)]
+pub struct Accounting {
+    pub nonce: u64,
+    pub deployment_version: u64,
+    pub spent_daily: i128,
+    pub spent_total: i128,
+    pub spent_day: u64,
+    pub calls: u64,
+}
+#[derive(Clone, Copy, Debug)]
+pub struct Validity {
+    pub now: u64,
+    pub expires_at: u64,
+}
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum Status {
+    Prepared,
+    Submitted,
+    SubmissionUnknown,
+    Confirmed,
+    Failed,
+}
+#[derive(Clone, Debug)]
+pub struct Signature {
+    pub identity: String,
+    pub bytes: Vec<u8>,
+}
+/// The caller owns the private key and decides when this capability is available.
+pub trait Signer {
+    fn identity(&self) -> &str;
+    fn sign_hash(&self, digest: &[u8; 32]) -> Result<Vec<u8>>;
+}
+/// Existing portable Core evaluator. The server supplies only its admitted compiled policy.
+pub type Evaluator<'a> = &'a dyn Fn(&allowit::AllowitContext) -> allowit::Result;
+
+#[derive(Clone, Copy)]
+pub(crate) enum Kind {
+    Prepared,
+    Signed,
+    Receipt,
+    Owner,
+    OwnerSigned,
+    Request,
+}
+#[derive(Clone, Debug)]
+pub(crate) struct Packet {
+    pub network: String,
+    pub document: Box<RawValue>,
+}
+impl Packet {
+    #[cfg_attr(not(feature = "stellar"), allow(dead_code))]
+    pub(crate) fn new(network: &str, value: &impl Serialize) -> Result<Self> {
+        let document = RawValue::from_string(
+            serde_json::to_string(value)
+                .map_err(|_| crate::error::Error::config("Cannot encode native packet"))?,
+        )
+        .map_err(|_| crate::error::Error::config("Cannot retain native packet"))?;
+        Ok(Self {
+            network: crate::routing::normalize(network)?.into(),
+            document,
+        })
+    }
+}
+macro_rules! carrier {
+    ($name:ident,$kind:ident) => {
+        #[derive(Clone, Debug)]
+        pub struct $name(pub(crate) Packet);
+        impl $name {
+            pub fn bytes(&self) -> &[u8] {
+                self.0.document.get().as_bytes()
+            }
+            pub fn network(&self) -> &str {
+                &self.0.network
+            }
+        }
+        impl Serialize for $name {
+            fn serialize<S: serde::Serializer>(
+                &self,
+                s: S,
+            ) -> std::result::Result<S::Ok, S::Error> {
+                self.0.document.serialize(s)
+            }
+        }
+        impl<'de> Deserialize<'de> for $name {
+            fn deserialize<D: serde::Deserializer<'de>>(
+                d: D,
+            ) -> std::result::Result<Self, D::Error> {
+                let raw = Box::<RawValue>::deserialize(d)?;
+                crate::vendors::runtime_restore(Kind::$kind, raw)
+                    .map(Self)
+                    .map_err(serde::de::Error::custom)
+            }
+        }
+    };
+}
+carrier!(Prepared, Prepared);
+carrier!(Signed, Signed);
+carrier!(Receipt, Receipt);
+carrier!(OwnerPacket, Owner);
+carrier!(OwnerSigned, OwnerSigned);
+carrier!(RequestPacket, Request);
+#[derive(Clone, Debug)]
+pub struct PacketInfo {
+    pub operation_id: [u8; 32],
+    pub transaction_hash: [u8; 32],
+    pub wallet: String,
+    pub expires_at: u64,
+}
+impl Prepared {
+    pub fn info(&self) -> Result<PacketInfo> {
+        crate::vendors::runtime_info(&self.0, Kind::Prepared)
+    }
+}
+impl Signed {
+    pub fn info(&self) -> Result<PacketInfo> {
+        crate::vendors::runtime_info(&self.0, Kind::Signed)
+    }
+}
+/// Values observed by the selected native implementation. This is not a complete economic-state commitment.
+pub struct Snapshot {
+    pub accounting: Accounting,
+    pub observed_height: u64,
+    pub paused: bool,
+    pub params: BTreeMap<String, PolicyValue>,
+    pub state: BTreeMap<String, PolicyValue>,
+    pub(crate) evidence: Packet,
+}
+impl Snapshot {
+    /// Compare only native known-state evidence. Current balance, lifetime and validity checks stay separate.
+    pub fn same_known_state(&self, other: &Self) -> Result<bool> {
+        crate::vendors::runtime_same_snapshot(self, other)
+    }
+}
+#[derive(Clone, Debug)]
+pub struct Lifetime {
+    pub observed_height: u64,
+    pub instance_until: u64,
+    pub code_until: u64,
+    pub extension_target: u64,
+    pub needs_renewal: bool,
+}
+#[derive(Clone, Debug)]
+pub struct Resources {
+    pub code_present: bool,
+    pub wallet_present: bool,
+    pub lifetime: Option<Lifetime>,
+}
+#[derive(Clone, Debug)]
+pub struct ReceiptInfo {
+    pub transaction_hash: [u8; 32],
+    pub status: Status,
+    pub observed_height: u64,
+}
+impl Receipt {
+    pub fn info(&self) -> Result<ReceiptInfo> {
+        crate::vendors::runtime_receipt_info(&self.0)
+    }
+}
+/// Atomically reject a different signed packet under an existing operation ID.
+pub trait OperationStore {
+    fn load(&self, id: [u8; 32]) -> Result<Option<(Signed, Status)>>;
+    fn record(&mut self, id: [u8; 32], signed: &Signed, status: Status) -> Result<()>;
+}
+pub struct ObservedAuthorization {
+    pub signed: Signed,
+    pub receipt: Receipt,
+    pub status: Status,
+}
+#[derive(Clone, Debug)]
+pub enum OwnerAction {
+    Upload { wasm: Vec<u8> },
+    Create { wasm: Vec<u8> },
+    Fund { units: i128 },
+    Extend,
+}
+#[derive(Clone, Copy, Debug)]
+pub struct Poll {
+    pub attempts: u32,
+    pub interval: Duration,
+}
+impl Default for Poll {
+    fn default() -> Self {
+        Self {
+            attempts: 30,
+            interval: Duration::from_secs(2),
+        }
+    }
+}
+
+pub struct Runtime {
+    pub(crate) provider: Box<dyn crate::vendors::RuntimeProvider>,
+}
+impl Runtime {
+    pub fn new(network: &str, endpoint: &str) -> Result<Self> {
+        crate::vendors::runtime(network, endpoint).map(|provider| Self { provider })
+    }
+    pub fn import(&self, authority: &ServerAuthority, bytes: &[u8]) -> Result<Installation> {
+        self.provider.import(authority, bytes)
+    }
+    pub fn request(
+        &self,
+        i: &Installation,
+        id: [u8; 32],
+        action: Action,
+        accounting: Option<&Accounting>,
+    ) -> Result<RequestPacket> {
+        self.provider.request(i, id, action, accounting)
+    }
+    pub fn read_request(&self, i: &Installation, bytes: &[u8]) -> Result<RequestPacket> {
+        self.provider.read_request(i, bytes)
+    }
+    pub fn snapshot(&self, i: &Installation, a: Option<&Accounting>) -> Result<Snapshot> {
+        self.provider.snapshot(i, a)
+    }
+    pub fn action(&self, i: &Installation, r: &RequestPacket) -> Result<Action> {
+        self.provider.action(i, r)
+    }
+    pub fn resources(&self, i: &Installation) -> Result<Resources> {
+        self.provider.resources(i)
+    }
+    pub fn redeemable(&self, i: &Installation, vault: &str, shares: i128) -> Result<i128> {
+        self.provider.redeemable(i, vault, shares)
+    }
+    pub fn prepare(
+        &self,
+        i: &Installation,
+        r: &RequestPacket,
+        terms: &Terms,
+        accounting: Option<&Accounting>,
+        validity: Validity,
+    ) -> Result<Prepared> {
+        self.provider.prepare(i, r, terms, accounting, validity)
+    }
+    pub fn finalize_authorization(
+        &self,
+        i: &Installation,
+        p: &Prepared,
+        signer: &dyn Signer,
+        evaluator: Option<Evaluator<'_>>,
+        now: u64,
+        retain: impl FnOnce(&Prepared) -> Result<()>,
+    ) -> Result<Prepared> {
+        self.provider
+            .finalize(i, p, signer, evaluator, now, Box::new(retain))
+    }
+    pub fn finish_authorization(
+        &self,
+        i: &Installation,
+        p: &Prepared,
+        retain: impl FnOnce(&Prepared) -> Result<()>,
+    ) -> Result<Prepared> {
+        self.provider.finish(i, p, Box::new(retain))
+    }
+    pub fn revalidate(&self, i: &Installation, p: &Prepared, now: u64) -> Result<Prepared> {
+        self.provider.revalidate(i, p, now)
+    }
+    pub fn sign(
+        &self,
+        i: &Installation,
+        p: &Prepared,
+        s: &dyn Signer,
+        now: u64,
+    ) -> Result<Signature> {
+        self.provider.sign(i, p, s, now)
+    }
+    pub fn authorize(
+        &self,
+        i: &Installation,
+        p: &Prepared,
+        s: &[Signature],
+        now: u64,
+    ) -> Result<Signed> {
+        self.provider.authorize(i, p, s, now)
+    }
+    pub fn submit(&self, store: &mut dyn OperationStore, p: &Signed, now: u64) -> Result<Status> {
+        self.provider.submit(store, p, now)
+    }
+    pub fn recover(&self, store: &mut dyn OperationStore, id: [u8; 32]) -> Result<Status> {
+        self.provider.recover(store, id)
+    }
+    pub fn observe(&self, p: &Signed) -> Result<Option<Receipt>> {
+        self.provider.observe(p)
+    }
+    pub fn observe_authorizations(
+        &self,
+        packets: &[Prepared],
+    ) -> Result<Vec<ObservedAuthorization>> {
+        self.provider.observe_authorizations(packets)
+    }
+    pub fn prepare_owner(
+        &self,
+        i: &Installation,
+        action: OwnerAction,
+        fee_limit: u64,
+        now: u64,
+    ) -> Result<OwnerPacket> {
+        self.provider.prepare_owner(i, action, fee_limit, now)
+    }
+    pub fn read_owner_signed(&self, p: &OwnerPacket, signed_payload: &[u8]) -> Result<OwnerSigned> {
+        self.provider.read_owner_signed(p, signed_payload)
+    }
+    pub fn submit_owner(
+        &self,
+        p: &OwnerSigned,
+        retain: impl FnOnce(&OwnerSigned) -> Result<()>,
+        poll: Poll,
+        now: u64,
+    ) -> Result<Receipt> {
+        self.provider.submit_owner(p, Box::new(retain), poll, now)
+    }
+    pub fn observe_owner(&self, p: &OwnerSigned) -> Result<Option<Receipt>> {
+        self.provider.observe_owner(p)
+    }
+}

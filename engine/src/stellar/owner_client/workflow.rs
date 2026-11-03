@@ -84,10 +84,9 @@ fn intent_hash(value: &impl Serialize) -> Result<String> {
         .map_err(|_| Error::config("Cannot encode owner workflow identity"))
 }
 pub fn wallet_salt(instance: &[u8; 32]) -> [u8; 32] {
-    let mut bytes = b"allowit-stellar-wallet-salt-v1\0".to_vec();
-    bytes.extend(instance);
-    native::hash(bytes)
+    native::admin::wallet_salt(instance)
 }
+
 impl OwnerPolicy {
     pub fn validate(&self) -> Result<()> {
         let c = &self.config;
@@ -1036,7 +1035,7 @@ struct NativeSetupRecord {
 }
 /// Configure a fresh Native account through SDK Runtime. No server registration is invented.
 /// Original unsigned intent and signed bytes are retained before direct native transmission.
-pub fn configure_native(
+pub(crate) fn configure_native(
     runtime: &crate::stellar::Runtime,
     store: &Store,
     request: &crate::stellar::owner::SetupRequest,
@@ -1223,7 +1222,7 @@ pub fn configure_native(
 
 /// Read only original transaction receipts. This path requires neither an owner key nor current source admission.
 /// It never signs, prepares a replacement or transmits a transaction.
-pub fn status(
+pub(crate) fn status(
     store: &Store,
     runtime: &crate::stellar::Runtime,
     id: &str,

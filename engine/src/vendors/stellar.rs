@@ -4,6 +4,7 @@ pub(super) mod formats;
 pub(super) mod owner;
 pub(super) mod profiles;
 pub(super) mod request;
+pub(super) mod server;
 mod typed;
 use super::{KeyProvider, PrivateSigner};
 use crate::{

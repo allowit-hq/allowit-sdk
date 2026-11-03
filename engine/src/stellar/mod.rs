@@ -13,7 +13,7 @@ use std::{sync::Arc, time::Duration};
 
 /// Caller-owned storage for the original signed operation and its projected status.
 /// Implementations must reject a different packet under an existing operation ID.
-pub trait OperationStore {
+pub(crate) trait OperationStore {
     fn record(
         &mut self,
         operation_id: [u8; 32],
@@ -28,7 +28,7 @@ pub trait OperationStore {
 
 /// A verified observation of one known policy-wallet authorization envelope.
 /// A failed envelope leaves the reusable address authorization unresolved.
-pub struct ObservedAuthorization {
+pub(crate) struct ObservedAuthorization {
     pub signed: SignedOperation,
     pub receipt: rpc::VerifiedReceipt,
 }
@@ -41,7 +41,7 @@ impl ObservedAuthorization {
     }
 }
 
-pub struct Runtime {
+pub(crate) struct Runtime {
     rpc: Arc<dyn rpc::Rpc>,
 }
 impl Runtime {
@@ -272,7 +272,7 @@ impl Runtime {
     }
 }
 #[derive(Clone, Copy, Debug)]
-pub struct Poll {
+pub(crate) struct Poll {
     pub attempts: u32,
     pub interval: Duration,
 }
@@ -294,3 +294,6 @@ fn projected_status(route: &WalletRoute, status: OperationStatus) -> OperationSt
         status
     }
 }
+
+#[cfg(test)]
+mod tests;
