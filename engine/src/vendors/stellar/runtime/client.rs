@@ -414,18 +414,14 @@ impl Client {
         let issued_at = clock()?;
         let canonical = serde_json_canonicalizer::to_vec(&body)
             .map_err(|_| Error::config("Cannot encode Stellar request"))?;
-        let digest = sdk::signing::request_digest(issued_at, path, &canonical);
-        let signature = checked(self.signer.sign_hash(&digest))?;
-        checked(sdk::signing::verify_digest(
-            &self.account,
-            &digest,
-            &signature,
-        ))?;
-        let proof = checked(sdk::signing::request_proof(
+        let proof = crate::request_proof::authorize(
+            crate::vendors::stellar::server::request_proof_protocol(),
             &self.account,
             issued_at,
-            &signature,
-        ))?;
+            path,
+            &canonical,
+            |digest| checked(self.signer.sign_hash(digest)).map(|signature| signature.to_vec()),
+        )?;
         let bytes = serde_json::to_vec(&body)
             .map_err(|_| Error::config("Cannot encode Stellar request"))?;
         let headers = [

@@ -1165,15 +1165,18 @@ fn verify_native_receipt(signed: &SignedOperation, receipt: &rpc::VerifiedReceip
     }
 }
 
-pub(in crate::vendors) fn verify_request_proof(
-    proof: &str,
-    now: u64,
-    path: &str,
-    body: &[u8],
-) -> Result<String> {
-    checked(native::signing::verify_request_proof(
-        proof, now, path, body,
-    ))
+pub(in crate::vendors) fn request_proof_protocol() -> crate::request_proof::Protocol {
+    crate::request_proof::Protocol {
+        domain: native::signing::REQUEST_PROOF_DOMAIN,
+        scheme: native::signing::REQUEST_PROOF_SCHEME,
+        signature_bytes: native::signing::REQUEST_PROOF_SIGNATURE_BYTES,
+        validate_account: |account| {
+            checked(native::signing::canonical_account_key(account)).map(|_| ())
+        },
+        verify: |account, digest, signature| {
+            checked(native::signing::verify_digest(account, digest, signature))
+        },
+    }
 }
 
 pub(in crate::vendors) fn signer_identity(key: &[u8; 32]) -> Result<String> {

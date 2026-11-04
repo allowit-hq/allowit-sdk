@@ -664,16 +664,12 @@ pub(crate) fn owner_tier_encoding(
     }
 }
 
-pub(crate) fn runtime_verify_request_proof(
+pub(crate) fn runtime_request_proof_protocol(
     network: &str,
-    _proof: &str,
-    _now: u64,
-    _path: &str,
-    _body: &[u8],
-) -> Result<String> {
+) -> Result<crate::request_proof::Protocol> {
     match routing::family(network)? {
         #[cfg(feature = "stellar")]
-        stellar::FAMILY => stellar::server::verify_request_proof(_proof, _now, _path, _body),
+        stellar::FAMILY => Ok(stellar::server::request_proof_protocol()),
         _ => Err(unavailable()),
     }
 }

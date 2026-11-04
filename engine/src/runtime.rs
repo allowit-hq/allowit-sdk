@@ -556,7 +556,13 @@ pub fn verify_request_proof(
     path: &str,
     canonical_body: &[u8],
 ) -> Result<String> {
-    crate::vendors::runtime_verify_request_proof(network, proof, now, path, canonical_body)
+    crate::request_proof::verify(
+        crate::vendors::runtime_request_proof_protocol(network)?,
+        proof,
+        now,
+        path,
+        canonical_body,
+    )
 }
 
 /// Encode the public part of a caller-owned signing key for the selected vendor.
