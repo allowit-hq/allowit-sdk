@@ -407,8 +407,8 @@ impl OwnerClient {
         if !crate::request::request_id_valid(id)
             || max_fee < 100
             || selection.config.route != WalletRoute::PolicyWallet
-            || signer.account() != self.owner
-            || selection.config.owner != self.owner
+            || signer.account() != self.session.owner
+            || selection.config.owner != self.session.owner
         {
             return Err(Error::usage(
                 "Select a valid owner request, fee and policy wallet binding",
@@ -421,8 +421,8 @@ impl OwnerClient {
             Some(saved)
                 if saved.version == 1
                     && saved.request_id == id
-                    && saved.backend == self.backend
-                    && saved.origin == self.origin
+                    && saved.backend == self.session.backend
+                    && saved.origin == self.session.origin
                     && saved.intent_hash == identity
                     && intent_hash(
                         &json!({"selection":saved.selection,"work":saved.work,"maxFeeStroops":saved.max_fee_stroops}),
@@ -438,8 +438,8 @@ impl OwnerClient {
             None => Record {
                 version: 1,
                 request_id: id.into(),
-                backend: self.backend.clone(),
-                origin: self.origin.clone(),
+                backend: self.session.backend.clone(),
+                origin: self.session.origin.clone(),
                 intent_hash: identity,
                 selection: selection.clone(),
                 work,
@@ -500,6 +500,7 @@ impl OwnerClient {
                     ),
                 };
                 let response: Prepared = self
+                    .session
                     .owner_request(Method::Post, path, Some(&body), clock()?, true)
                     .map_err(|_| {
                         Error::uncertain(
@@ -529,7 +530,7 @@ impl OwnerClient {
                         "Deployment preparation repeated an already retained action",
                     ));
                 }
-                let source = checked(rpc::get_account(rpc, &self.owner))?;
+                let source = checked(rpc::get_account(rpc, &self.session.owner))?;
                 checked(source.validate_owner_only())?;
                 let extend_to = if step.action == "extend" {
                     let live = checked(rpc::wallet_lifetime(
@@ -568,7 +569,7 @@ impl OwnerClient {
             let index = record.steps.len() - 1;
             if record.steps[index].signed_xdr.is_none() {
                 let step = &record.steps[index];
-                let current = checked(rpc::get_account(rpc, &self.owner))?;
+                let current = checked(rpc::get_account(rpc, &self.session.owner))?;
                 if current != step.source {
                     return Err(Error::config(
                         "Owner account changed before signing; retain the original intent",
@@ -635,7 +636,7 @@ impl OwnerClient {
                     ));
                 }
             } else if record.steps[index].submitted {
-                let current = checked(rpc::get_account(rpc, &self.owner))?;
+                let current = checked(rpc::get_account(rpc, &self.session.owner))?;
                 if clock()? >= record.steps[index].packet.expires_at
                     || current.sequence != record.steps[index].source.sequence
                 {
@@ -658,6 +659,7 @@ impl OwnerClient {
                 .as_ref()
                 .expect("retained signed owner packet");
             let response: Value = self
+                .session
                 .owner_request(
                     Method::Post,
                     "/api/native/owner/submit",
@@ -742,7 +744,7 @@ impl OwnerClient {
         let authority = self.authority.as_ref().ok_or_else(|| {
             Error::config("Owner action requires independently configured server authority")
         })?;
-        if authority.origin() != self.backend
+        if authority.origin() != self.session.backend
             || authority.network() != crate::routing::normalize(&c.network)?
             || authority.public_key() != c.server
         {
@@ -752,7 +754,7 @@ impl OwnerClient {
         }
         checked(native::validate_config(c))?;
         network(rpc, &c.network)?;
-        if c.owner != self.owner {
+        if c.owner != self.session.owner {
             return Err(Error::config(
                 "Policy owner differs from this owner session",
             ));
@@ -813,8 +815,8 @@ impl OwnerClient {
             clock,
         } = caps;
         if !crate::request::request_id_valid(id)
-            || signer.account() != self.owner
-            || selection.config.owner != self.owner
+            || signer.account() != self.session.owner
+            || selection.config.owner != self.session.owner
             || !selection
                 .policy
                 .runtime
@@ -837,8 +839,8 @@ impl OwnerClient {
         let identity = intent_hash(&json!({"selection":selection,"message":message}))?;
         let mut record = match store.load::<Activation>(id)? {
             Some(saved)
-                if saved.backend == self.backend
-                    && saved.origin == self.origin
+                if saved.backend == self.session.backend
+                    && saved.origin == self.session.origin
                     && saved.identity == identity =>
             {
                 saved
@@ -849,8 +851,8 @@ impl OwnerClient {
                 ));
             }
             None => Activation {
-                backend: self.backend.clone(),
-                origin: self.origin.clone(),
+                backend: self.session.backend.clone(),
+                origin: self.session.origin.clone(),
                 identity,
                 signature: None,
                 completed: false,
@@ -865,7 +867,7 @@ impl OwnerClient {
             message: String,
             method: String,
         }
-        let consent: Consent = self.owner_request(
+        let consent: Consent = self.session.owner_request(
             Method::Post,
             "/api/native/approval",
             Some(&json!({"policyId":selection.policy.id})),
@@ -887,34 +889,36 @@ impl OwnerClient {
                 &account,
                 &selection.config,
             )?;
-            checked(account.validate_signer_quorum(&[&self.owner], account.high_threshold))?;
+            checked(
+                account.validate_signer_quorum(&[&self.session.owner], account.high_threshold),
+            )?;
             let digest = native::signing::signed_message_digest(&message);
             let signature = signer
                 .sign_hash(&digest)
                 .map_err(|_| Error::config("Owner source signer failed"))?;
             checked(native::signing::verify_digest(
-                &self.owner,
+                &self.session.owner,
                 &digest,
                 &signature,
             ))?;
             record.signature = Some(native::DetachedSignature {
-                signer: self.owner.clone(),
+                signer: self.session.owner.clone(),
                 signature: signature.to_vec(),
             });
             store.save(id, &record)?;
         }
         if let Some(signature) = &record.signature {
             let digest = native::signing::signed_message_digest(&message);
-            if signature.signer != self.owner {
+            if signature.signer != self.session.owner {
                 return Err(Error::config("Retained source-consent signer differs"));
             }
             checked(native::signing::verify_digest(
-                &self.owner,
+                &self.session.owner,
                 &digest,
                 &signature.signature,
             ))?;
         }
-        let response:Value=self.owner_request(Method::Post,"/api/micro/allocation/confirm",Some(&json!({"id":selection.policy.id,"revision":selection.policy.revision,"requestId":id,"stellarSourceApproval":record.signature.iter().collect::<Vec<_>>()})),clock()?,true).map_err(|_|Error::uncertain("Owner activation is uncertain; retain this activation ID and source consent"))?;
+        let response:Value=self.session.owner_request(Method::Post,"/api/micro/allocation/confirm",Some(&json!({"id":selection.policy.id,"revision":selection.policy.revision,"requestId":id,"stellarSourceApproval":record.signature.iter().collect::<Vec<_>>()})),clock()?,true).map_err(|_|Error::uncertain("Owner activation is uncertain; retain this activation ID and source consent"))?;
         if response["active"] != true {
             return Err(Error::uncertain(
                 "Activation has not returned a verified active result",
@@ -960,8 +964,8 @@ impl OwnerClient {
                 .map_err(|_| Error::config("Cannot encode source consent"))?
         );
         if !activation.completed
-            || activation.backend != self.backend
-            || activation.origin != self.origin
+            || activation.backend != self.session.backend
+            || activation.origin != self.session.origin
             || activation.identity
                 != intent_hash(&json!({"selection":selection,"message":message}))?
         {
@@ -972,7 +976,7 @@ impl OwnerClient {
         self.verify_binding(selection, rpc)?;
         if selection.config.route == WalletRoute::Native {
             let signature=activation.signature.as_ref().ok_or_else(||Error::config("Native export requires proven owner source consent. Complete source activation on this device."))?;
-            if signature.signer != self.owner {
+            if signature.signer != self.session.owner {
                 return Err(Error::config(
                     "Retained source consent belongs to another owner",
                 ));
@@ -988,7 +992,7 @@ impl OwnerClient {
                 std::slice::from_ref(signature),
             ))?;
         }
-        let mut value: Box<serde_json::value::RawValue> = self.owner_request(
+        let mut value: Box<serde_json::value::RawValue> = self.session.owner_request(
             Method::Post,
             "/api/native/export",
             Some(&json!({"policyId":selection.policy.id})),
