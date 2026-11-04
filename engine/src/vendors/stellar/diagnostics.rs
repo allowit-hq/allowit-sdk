@@ -28,32 +28,34 @@ impl Details for Problem {
     }
 }
 /// `AllowitError` names, their codes and the canonical rule each one reports.
-const RULE_ERRORS: &[(&str, u32, Option<&str>)] = &[
-    ("MissingParam", 101, None),
-    ("PaymentLimitExceeded", 102, Some("payment_limit")),
+use allowit::{AllowitError as E, AllowitRule as R};
+const RULE_ERRORS: &[(E, Option<R>)] = &[
+    (E::MissingParam, None),
+    (E::PaymentLimitExceeded, Some(R::payment_limit)),
     (
-        "LifetimeSpendingLimitExceeded",
-        103,
-        Some("lifetime_spending_limit"),
+        E::LifetimeSpendingLimitExceeded,
+        Some(R::lifetime_spending_limit),
     ),
-    (
-        "DailySpendingLimitExceeded",
-        104,
-        Some("daily_spending_limit"),
-    ),
-    ("DailyVolumeLimitExceeded", 105, Some("daily_volume_limit")),
-    ("CallLimitExceeded", 106, Some("call_limit")),
-    ("DestinationNotAllowed", 107, Some("destinations")),
-    ("TokenNotAllowed", 108, Some("tokens")),
-    ("Expired", 109, Some("expires_at")),
-    ("Unpriced", 110, None),
-    ("InvalidParam", 111, None),
-    ("InvalidState", 112, None),
-    ("Overflow", 113, None),
-    ("Unsupported", 114, None),
-    ("OperationNotAllowed", 115, Some("operations")),
-    ("Panicked", 116, None),
+    (E::DailySpendingLimitExceeded, Some(R::daily_spending_limit)),
+    (E::DailyVolumeLimitExceeded, Some(R::daily_volume_limit)),
+    (E::CallLimitExceeded, Some(R::call_limit)),
+    (E::DestinationNotAllowed, Some(R::destinations)),
+    (E::TokenNotAllowed, Some(R::tokens)),
+    (E::Expired, Some(R::expires_at)),
+    (E::Unpriced, None),
+    (E::InvalidParam, None),
+    (E::InvalidState, None),
+    (E::Overflow, None),
+    (E::Unsupported, None),
+    (E::OperationNotAllowed, Some(R::operations)),
+    (E::Panicked, None),
 ];
+fn rule_error(code: u32) -> Option<(String, Option<&'static str>)> {
+    RULE_ERRORS
+        .iter()
+        .find(|(error, _)| *error as u32 == code)
+        .map(|(error, rule)| (format!("{error:?}"), rule.map(R::key)))
+}
 /// `AllowitWalletError` codes below 100. Rule denials collapse to `PolicyDenied` onchain.
 const WALLET_ERRORS: &[(u32, &str)] = &[
     (1, "InvalidState"),
@@ -101,8 +103,8 @@ fn policy_denied(name: &str, rule: Option<&str>, contract: Option<u32>) -> Probl
 }
 /// A host evaluator's `AllowitError`, by its code, as `policy_denied`.
 pub fn rule_denial(code: u32) -> Problem {
-    match RULE_ERRORS.iter().find(|(_, c, _)| *c == code) {
-        Some((name, _, rule)) => policy_denied(name, *rule, None),
+    match rule_error(code) {
+        Some((name, rule)) => policy_denied(&name, rule, None),
         None => fail(format!("The policy evaluator failed with error {code}.")),
     }
 }
@@ -119,10 +121,16 @@ pub fn denial(message: &str, contract: Option<&ContractFault>, wallet: &str) -> 
             .chars()
             .take_while(char::is_ascii_alphanumeric)
             .collect();
-        RULE_ERRORS.iter().find(|(n, _, _)| *n == name)
+        RULE_ERRORS
+            .iter()
+            .find(|(error, _)| format!("{error:?}") == name)
     });
-    if let Some((name, _, rule)) = named {
-        return policy_denied(name, *rule, contract.map(|c| c.code));
+    if let Some((error, rule)) = named {
+        return policy_denied(
+            &format!("{error:?}"),
+            rule.map(R::key),
+            contract.map(|c| c.code),
+        );
     }
     let Some(fault) = contract else {
         return fail(message.to_string());
@@ -140,8 +148,8 @@ pub fn denial(message: &str, contract: Option<&ContractFault>, wallet: &str) -> 
         )
         .with_details(json!({"contractError":code,"contract":fault.contract}));
     }
-    if let Some((name, _, rule)) = RULE_ERRORS.iter().find(|(_, c, _)| *c == code) {
-        return policy_denied(name, *rule, Some(code));
+    if let Some((name, rule)) = rule_error(code) {
+        return policy_denied(&name, rule, Some(code));
     }
     match WALLET_ERRORS.iter().find(|(c, _)| *c == code) {
         Some((_, "PolicyDenied")) => policy_denied("PolicyDenied", None, Some(code)),

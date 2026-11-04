@@ -122,6 +122,7 @@ pub(crate) fn decode_profile(
     }
 }
 pub(crate) fn execution_tokens(network: &str) -> Result<&'static [crate::input::asset::Token]> {
+    let network = routing::normalize(network)?;
     match routing::family(network)? {
         #[cfg(feature = "stellar")]
         stellar::FAMILY => Ok(stellar::tokens_for(network)),

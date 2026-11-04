@@ -99,12 +99,10 @@ fn validate_portable(v: &ApprovalIntent) -> Result<()> {
     let typed: PolicyParams = serde_json::from_value(params.clone())
         .map_err(|_| Error::config("Invalid typed portable params"))?;
     typed.check(policy_tier).map_err(Error::config)?;
-    let canonical = serde_json_canonicalizer::to_vec(params)
-        .map_err(|_| Error::config("Cannot encode portable params"))?;
-    let identity = serde_json::json!({"language":language,"tier":tier,"rules":rules,"sourceHash":v.source_hash,"paramsHash":params_hash});
-    let canonical_identity = serde_json_canonicalizer::to_vec(&identity)
-        .map_err(|_| Error::config("Cannot encode portable source identity"))?;
-    if hash(canonical) != *params_hash || hash(canonical_identity) != b.module_digest {
+    let canonical = crate::authoring::canonical_digest(params)?;
+    let canonical_identity =
+        crate::authoring::portable_identity(language, tier, rules, &v.source_hash, params_hash)?;
+    if canonical != *params_hash || canonical_identity != b.module_digest {
         return Err(Error::config(
             "Portable source, params or module identity changed",
         ));
@@ -133,8 +131,9 @@ pub fn validate(v: &ApprovalIntent) -> Result<()> {
         || b.asset_symbol.is_empty()
         || b.asset_symbol.len() > 12
         || !b.asset_symbol.bytes().all(|b| b.is_ascii_alphanumeric())
-        || b.max_fee_stroops < 100
-        || b.max_fee_stroops > 1_000_000
+        || u64::from(b.max_fee_stroops) < super::super::server_owner::fee_bounds().minimum
+        || b.max_fee_stroops
+            > allowit_stellar_wallet::max_fee_ceiling(&allowit_stellar_wallet::WalletRoute::Native)
     {
         return Err(Error::config("Invalid Native Stellar policy approval"));
     }

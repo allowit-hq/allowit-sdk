@@ -1,6 +1,7 @@
 //! Shared Stellar execution workflows. Callers retain keys, authority and durable application state.
 pub mod approval;
 pub mod client;
+mod consent;
 pub mod owner;
 pub mod owner_client;
 

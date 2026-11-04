@@ -797,7 +797,21 @@ fn approval_payload(selection: &OwnerPolicy) -> Value {
     let c = &selection.config;
     let p = &selection.policy;
     let d = &p.runtime.instance_binding.portable;
-    json!({"version":1,"policyId":p.id,"revision":p.revision,"network":c.network,"wallet":c.wallet,"route":c.route,"policyInstance":native::hex(&c.policy_instance),"source":p.code,"sourceHash":p.source_hash,"irHash":"","moduleDigest":native::hex(&c.module_digest),"asset":c.asset,"assetSymbol":c.asset_symbol,"assetIssuer":c.asset_issuer,"maxFeeStroops":c.max_fee_stroops,"language":d.language,"tier":d.tier,"rules":d.rules,"params":d.params,"paramsHash":d.params_hash})
+    super::super::consent::payload(
+        &p.id,
+        p.revision,
+        c,
+        &p.source_hash,
+        "",
+        &native::hex(&c.module_digest),
+        super::super::consent::Portable {
+            language: &d.language,
+            tier: &d.tier,
+            rules: &d.rules,
+            params: &d.params,
+            params_hash: &d.params_hash,
+        },
+    )
 }
 impl OwnerClient {
     /// Check the exact source consent and current native authority before requesting a source signature.
@@ -831,11 +845,7 @@ impl OwnerClient {
         }
         self.verify_binding(selection, rpc)?;
         let payload = approval_payload(selection);
-        let message = format!(
-            "AllowIt Native policy approval v1\n{}",
-            serde_json_canonicalizer::to_string(&payload)
-                .map_err(|_| Error::config("Cannot encode exact source consent"))?
-        );
+        let message = super::super::consent::message(&payload)?;
         let identity = intent_hash(&json!({"selection":selection,"message":message}))?;
         let mut record = match store.load::<Activation>(id)? {
             Some(saved)
@@ -958,11 +968,7 @@ impl OwnerClient {
         let activation: Activation = store
             .load(activation_id)?
             .ok_or_else(|| Error::config("Complete the retained owner activation before export"))?;
-        let message = format!(
-            "AllowIt Native policy approval v1\n{}",
-            serde_json_canonicalizer::to_string(&approval_payload(selection))
-                .map_err(|_| Error::config("Cannot encode source consent"))?
-        );
+        let message = super::super::consent::message(&approval_payload(selection))?;
         if !activation.completed
             || activation.backend != self.session.backend
             || activation.origin != self.session.origin

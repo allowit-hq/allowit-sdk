@@ -128,7 +128,7 @@ Provider delivery is separate from native chain settlement.
 | [`docs/policy-reference.md`](docs/policy-reference.md) | Portable source and execution contract |
 
 All packages share one Cargo workspace, lockfile and version. Packages in this repository depend on each other by path.
-Dependencies from other repositories use release tags. Core and rail dependencies must resolve the same core release.
+Cross-repository dependencies identify immutable release tags or exact source commits. A commit pin does not identify a published release. Core and rail dependencies must resolve the same core release.
 Published tags are immutable.
 
 ## Develop

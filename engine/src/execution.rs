@@ -20,7 +20,7 @@ pub struct Request {
 }
 pub struct Outcome {
     pub document: serde_json::Value,
-    pub exit_code: i32,
+    pub status: crate::runtime::Status,
 }
 pub fn tokens(network: &str) -> Result<&'static [Token]> {
     vendors::execution_tokens(network)

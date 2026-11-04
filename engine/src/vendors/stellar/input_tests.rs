@@ -198,3 +198,22 @@ mod asset {
         }
     }
 }
+
+#[test]
+fn every_registered_alias_uses_the_canonical_network_asset_defaults() {
+    for network in crate::routing::all() {
+        let expected = crate::execution::tokens(network.id).unwrap();
+        for input in std::iter::once(network.id).chain(network.aliases.iter().copied()) {
+            assert_eq!(
+                crate::execution::tokens(input).unwrap(),
+                expected,
+                "{input}"
+            );
+            assert_eq!(
+                crate::input::asset::resolve(input, "USDC", None, true).unwrap(),
+                crate::input::asset::resolve(network.id, "USDC", None, true).unwrap(),
+                "{input}"
+            );
+        }
+    }
+}

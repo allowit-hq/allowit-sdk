@@ -23,14 +23,23 @@ pub struct Parameters {
 
 /// Longest value that one edit may carry, in bytes.
 pub const MAX_VALUE: usize = 4096;
-/// The canonical limits, which block every payment at 0.
-const LIMITS: [&str; 5] = [
-    "payment_limit",
-    "daily_volume_limit",
-    "daily_spending_limit",
-    "lifetime_spending_limit",
-    "call_limit",
-];
+fn canonical(key: &str) -> Option<&'static allowit_sdk::policy::CanonicalFunctionDescriptor> {
+    static FUNCTIONS: std::sync::LazyLock<allowit_sdk::policy::CanonicalFunctionRegistry> =
+        std::sync::LazyLock::new(|| {
+            allowit_sdk::policy::canonical_function_registry()
+                .expect("compiled Core function metadata")
+        });
+    FUNCTIONS
+        .functions
+        .iter()
+        .find(|function| function.name == key)
+}
+fn blocks_all_at_zero(key: &str) -> bool {
+    canonical(key).is_some_and(|function| {
+        function.parameter.requires_amount_context || function.parameter.semantic_type == "count"
+    })
+}
+
 /// Display value of a recipients list that the owner has not supplied yet.
 const NOT_SET: &str = "Not set yet";
 
@@ -63,23 +72,18 @@ fn kind(draft: &Parameters, key: &str) -> String {
     if let Some(kind) = draft.kinds.get(key) {
         return kind.clone();
     }
-    match key {
-        "payment_limit"
-        | "lifetime_spending_limit"
-        | "daily_spending_limit"
-        | "daily_volume_limit" => "amount",
-        "call_limit" => "count",
-        "destinations" => "addresses",
-        "tokens" => "assets",
-        "expires_at" => "time",
-        "operations" => "operations",
-        _ => match draft.params.get(key).and_then(Value::as_object) {
-            Some(o) if o.contains_key("Int") => "int",
-            Some(o) if o.contains_key("Bool") => "bool",
-            Some(o) if o.contains_key("Str") => "text",
-            Some(o) if o.contains_key("List") => "addresses",
-            _ => "",
-        },
+    if let Some(function) = canonical(key) {
+        return match function.parameter.semantic_type.as_str() {
+            "timestamp" => "time".into(),
+            other => other.into(),
+        };
+    }
+    match draft.params.get(key).and_then(Value::as_object) {
+        Some(o) if o.contains_key("Int") => "int",
+        Some(o) if o.contains_key("Bool") => "bool",
+        Some(o) if o.contains_key("Str") => "text",
+        Some(o) if o.contains_key("List") => "addresses",
+        _ => "",
     }
     .into()
 }
@@ -294,6 +298,17 @@ fn read_range(reads: Option<&Vec<ParamRead>>) -> Option<(i128, i128)> {
         })
 }
 
+fn bounded_range(key: &str, reads: Option<&Vec<ParamRead>>) -> Option<(i128, i128)> {
+    let (low, high) = read_range(reads)?;
+    match canonical(key).and_then(|function| function.parameter.integer_range.as_ref()) {
+        Some(range) => Some((
+            low.max(range.min.parse().ok()?),
+            high.min(range.max.parse().ok()?),
+        )),
+        None => Some((low, high)),
+    }
+}
+
 /// Whether `kind` stores an integer, which a typed read bounds. A time stores Unix seconds.
 fn integer(kind: &str) -> bool {
     matches!(kind, "amount" | "count" | "int" | "time" | "duration")
@@ -310,7 +325,8 @@ pub fn fields(draft: &Parameters, code: &str) -> Vec<Field> {
             let value = &draft.params[key];
             let kind = kind(draft, key);
             let (input, shown) = render(&kind, value, &draft.asset);
-            let input = input.filter(|_| !integer(&kind) || read_range(reads.get(key)).is_some());
+            let input =
+                input.filter(|_| !integer(&kind) || bounded_range(key, reads.get(key)).is_some());
             Field {
                 key: key.clone(),
                 label: label(key, value),
@@ -561,7 +577,7 @@ fn edited(
     let value = parse(kind, &field.label, input, &draft.asset, now)?;
     // A canonical limit of 0 blocks every payment. A custom amount or count, such as a minimum,
     // may be 0.
-    if LIMITS.contains(&field.key.as_str()) && int(&value) == Some(0) {
+    if blocks_all_at_zero(&field.key) && int(&value) == Some(0) {
         return Err(if kind == "count" {
             format!(
                 "{}: enter 1 or more. A count of 0 would block every payment.",
@@ -578,7 +594,7 @@ fn edited(
         return Ok(None);
     }
     // The policy reads the value with the types that its source names, so it must fit them.
-    if let (Some(n), Some((low, high))) = (int(&value), read_range(reads))
+    if let (Some(n), Some((low, high))) = (int(&value), bounded_range(&field.key, reads))
         && (n < low || n > high)
     {
         return Err(if kind == "amount" {
@@ -700,4 +716,49 @@ pub fn base_units(amount: &str, decimals: u32) -> std::result::Result<i128, Stri
         .checked_mul(scale)
         .and_then(|units| units.checked_add(fraction))
         .ok_or_else(|| format!("\"{amount}\" is too large"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn canonical_types_and_ranges_are_the_core_registry_contract() {
+        let mut p = Parameters {
+            params: serde_json::Map::new(),
+            kinds: BTreeMap::new(),
+            asset: Asset {
+                symbol: "TEST".into(),
+                address: "opaque".into(),
+                decimals: 3,
+            },
+            unresolved: vec![],
+        };
+        for f in allowit_sdk::policy::canonical_function_registry()
+            .unwrap()
+            .functions
+        {
+            let expected = if f.parameter.semantic_type == "timestamp" {
+                "time"
+            } else {
+                &f.parameter.semantic_type
+            };
+            assert_eq!(kind(&p, &f.name), expected);
+            if let Some(range) = f.parameter.integer_range {
+                assert_eq!(
+                    bounded_range(&f.name, None),
+                    Some((range.min.parse().unwrap(), range.max.parse().unwrap()))
+                );
+            }
+        }
+        p.params.insert("custom_minimum".into(), json!({"Int":"1"}));
+        assert_eq!(kind(&p, "custom_minimum"), "int");
+        assert!(!blocks_all_at_zero("custom_minimum"));
+        let reads = vec![ParamRead::Typed("u32".into())];
+        assert_eq!(
+            bounded_range("custom_minimum", Some(&reads)),
+            Some((0, u32::MAX.into()))
+        );
+        assert!(blocks_all_at_zero(allowit::CALL_LIMIT));
+        assert!(!blocks_all_at_zero(allowit::EXPIRES_AT));
+    }
 }

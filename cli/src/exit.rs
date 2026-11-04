@@ -76,6 +76,17 @@ impl Exit {
     }
 }
 
+/// Convert shared execution state to the process contract owned by this CLI.
+pub(crate) fn execution_status(status: allowit_sdk_engine::runtime::Status) -> Exit {
+    use allowit_sdk_engine::runtime::Status;
+    match status {
+        Status::Confirmed => Exit::Ok,
+        Status::Failed => Exit::Denied,
+        Status::SubmissionUnknown => Exit::Uncertain,
+        Status::Prepared | Status::Submitted => Exit::Pending,
+    }
+}
+
 /// The error for a verb whose backend is not ready on this rail.
 pub(crate) fn not_available(verb: &str, rail: &str) -> Error {
     Error::unsupported(format!("{verb} is not available on {rail} yet"))
@@ -89,6 +100,19 @@ pub(crate) fn no_rail() -> Error {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn execution_states_keep_the_existing_cli_codes() {
+        use allowit_sdk_engine::runtime::Status;
+        for (state, code) in [
+            (Status::Confirmed, 0),
+            (Status::Failed, 20),
+            (Status::SubmissionUnknown, 5),
+            (Status::Prepared, 12),
+            (Status::Submitted, 12),
+        ] {
+            assert_eq!(execution_status(state).code(), code);
+        }
+    }
     #[test]
     fn table_codes_are_unique_and_round_trip() {
         for (i, (exit, _)) in TABLE.iter().enumerate() {

@@ -98,13 +98,12 @@ fn validate_portable_profile(bundle: &Bundle) -> Result<()> {
         ));
     };
     let shape = crate::authoring::check(&bundle.config.policy_source)?;
-    let params = serde_json_canonicalizer::to_vec(&portable.params)
-        .map_err(|_| Error::config("Cannot encode portable Stellar params"))?;
+    let params_hash = crate::authoring::canonical_digest(&portable.params)?;
     if bundle.language.as_deref() != Some("allowit-portable-v1")
         || portable.language != "allowit-portable-v1"
         || portable.source_hash != bundle.source_hash
         || portable.params != bundle.config.params
-        || portable.params_hash != allowit_sdk::digest(&params)
+        || portable.params_hash != params_hash
         || portable.asset.address != bundle.config.asset
         || portable.asset.symbol != bundle.config.asset_symbol
         || portable.asset.decimals != 7
@@ -139,10 +138,14 @@ fn validate_portable_profile(bundle: &Bundle) -> Result<()> {
                 "Native configuration contradicts its signed portable binding",
             ));
         }
-        let identity = json!({"language":portable.language,"tier":portable.tier,"rules":portable.rules,"sourceHash":portable.source_hash,"paramsHash":portable.params_hash});
-        let identity = serde_json_canonicalizer::to_vec(&identity)
-            .map_err(|_| Error::config("Cannot encode portable Stellar identity"))?;
-        if allowit_sdk::digest(&identity) != bundle.module_digest {
+        let identity = crate::authoring::portable_identity(
+            &portable.language,
+            &portable.tier,
+            &portable.rules,
+            &portable.source_hash,
+            &portable.params_hash,
+        )?;
+        if identity != bundle.module_digest {
             return Err(Error::config(
                 "The Native Stellar module identity differs from its portable source",
             ));
@@ -179,6 +182,9 @@ struct Operation {
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 struct Record {
+    /// Original service identity for new records. Old records rely on caller-retained bindings.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    backend_origin: Option<String>,
     policy_id: String,
     request_id: String,
     config: WalletConfig,
@@ -553,6 +559,9 @@ pub fn status(c: &Client, journal: &Store, id: &str, wait: Duration) -> Result<E
     let old: Option<Record> = journal.load(&name).map_err(journal_error)?;
     if old.as_ref().is_some_and(|v| {
         v.policy_id != policy
+            || v.backend_origin
+                .as_ref()
+                .is_some_and(|origin| origin != &c.origin)
             || v.request_id != *id
             || !same_retained_policy_config(&c.bundle.config, &v.config)
     }) {
@@ -593,6 +602,10 @@ pub fn exec(
     }
     let (mut record, resumed) = if let Some(old) = old {
         if old.policy_id != policy
+            || old
+                .backend_origin
+                .as_ref()
+                .is_some_and(|origin| origin != &c.origin)
             || old.request_id != id
             || !same_retained_policy_config(&c.bundle.config, &old.config)
             || old.request != request
@@ -627,6 +640,7 @@ pub fn exec(
     } else {
         (
             Record {
+                backend_origin: Some(c.origin.clone()),
                 policy_id: policy.clone(),
                 request_id: id.clone(),
                 config: c.bundle.config.clone(),
@@ -713,6 +727,7 @@ fn poll(
         let mut old = match record {
             Some(old) => old,
             None => Record {
+                backend_origin: Some(c.origin.clone()),
                 policy_id: c.bundle.policy_id.clone(),
                 request_id: id.into(),
                 config: c.bundle.config.clone(),
@@ -938,6 +953,11 @@ pub fn retained(
         if record.request.operation.nonce != operation_nonce(&record.policy_id, id) {
             return Err(Error::config("Original operation nonce changed"));
         }
+        if let Some(origin) = &record.backend_origin
+            && parse_origin(origin)? != *origin
+        {
+            return Err(Error::config("Original backend identity changed"));
+        }
         checked(sdk::validate_config(&record.config))?;
         if let Some(p) = &record.prepared {
             if p.request != record.request
@@ -978,6 +998,9 @@ pub fn recover(
     id: &str,
     wait: Duration,
 ) -> Result<ExecutionOutcome> {
+    // New records carry the original service. The supplied origin is only an explicit
+    // compatibility binding for old journals; it is never used to replace a stored origin.
+    let backend = original.0.backend_origin.as_deref().unwrap_or(backend);
     let client = Client::from_context(
         ExecutionProfile {
             policy_id: original.0.policy_id.clone(),
@@ -1006,12 +1029,22 @@ impl Bundle {
             .portable
             .as_ref()
             .ok_or_else(|| Error::config("Native source binding is missing"))?;
-        let payload = json!({"version":1,"policyId":self.policy_id,"revision":revision,"network":c.network,"wallet":c.wallet,"route":c.route,"policyInstance":sdk::hex(&c.policy_instance),"source":c.policy_source,"sourceHash":self.source_hash,"irHash":self.ir_hash,"moduleDigest":self.module_digest,"asset":c.asset,"assetSymbol":c.asset_symbol,"assetIssuer":c.asset_issuer,"maxFeeStroops":c.max_fee_stroops,"language":portable.language,"tier":portable.tier,"rules":portable.rules,"params":portable.params,"paramsHash":portable.params_hash});
-        Ok(format!(
-            "AllowIt Native policy approval v1\n{}",
-            serde_json_canonicalizer::to_string(&payload)
-                .map_err(|_| Error::config("Cannot encode exact imported source consent"))?
-        ))
+        let payload = super::consent::payload(
+            &self.policy_id,
+            revision,
+            c,
+            &self.source_hash,
+            &self.ir_hash,
+            &self.module_digest,
+            super::consent::Portable {
+                language: &portable.language,
+                tier: &portable.tier,
+                rules: &portable.rules,
+                params: &portable.params,
+                params_hash: &portable.params_hash,
+            },
+        );
+        super::consent::message(&payload)
     }
     pub(crate) fn verify_server_role(&self, server: &str) -> Result<()> {
         if self.config.server != server
@@ -1086,6 +1119,122 @@ mod native_revalidation_tests {
             "../../../../../cli/tests/fixtures/stellar-policy-wallet-revalidation-rpc.json"
         ))
         .unwrap()
+    }
+    #[test]
+    fn recovery_uses_the_original_service_even_if_the_caller_changes_its_default() {
+        struct ProofSigner(String);
+        impl AgentSigner for ProofSigner {
+            fn account(&self) -> &str {
+                &self.0
+            }
+            fn sign_hash(&self, hash: &[u8; 32]) -> sdk::Result<[u8; 64]> {
+                use ed25519_dalek::Signer;
+                Ok(ed25519_dalek::SigningKey::from_bytes(&[44; 32])
+                    .sign(hash)
+                    .to_bytes())
+            }
+        }
+        for legacy in [false, true] {
+            let original = TcpListener::bind("127.0.0.1:0").unwrap();
+            let changed = TcpListener::bind("127.0.0.1:0").unwrap();
+            let origin = format!("http://{}", original.local_addr().unwrap());
+            let other = format!("http://{}", changed.local_addr().unwrap());
+            original.set_nonblocking(true).unwrap();
+            changed.set_nonblocking(true).unwrap();
+            let server = std::thread::spawn(move || {
+                let deadline = std::time::Instant::now() + Duration::from_secs(5);
+                loop {
+                    for (label, listener) in [("original", &original), ("changed", &changed)] {
+                        if let Ok((mut stream, _)) = listener.accept() {
+                            stream.set_nonblocking(false).unwrap();
+                            stream
+                                .set_read_timeout(Some(Duration::from_secs(2)))
+                                .unwrap();
+                            let mut header = Vec::new();
+                            while !header.ends_with(b"\r\n\r\n") {
+                                let mut byte = [0];
+                                stream.read_exact(&mut byte).unwrap();
+                                header.push(byte[0]);
+                            }
+                            let header = String::from_utf8(header).unwrap();
+                            assert!(header.starts_with("POST /api/native/execute/status "));
+                            let length: usize = header
+                                .lines()
+                                .find_map(|line| {
+                                    line.to_ascii_lowercase()
+                                        .strip_prefix("content-length:")
+                                        .map(|v| v.trim().parse().unwrap())
+                                })
+                                .unwrap();
+                            let mut body = vec![0; length];
+                            stream.read_exact(&mut body).unwrap();
+                            assert_eq!(
+                                serde_json::from_slice::<serde_json::Value>(&body).unwrap()["requestId"],
+                                "origin-status-001"
+                            );
+                            stream.write_all(b"HTTP/1.1 503 Unavailable\r\nContent-Length: 2\r\nConnection: close\r\n\r\n{}").unwrap();
+                            return label;
+                        }
+                    }
+                    assert!(
+                        std::time::Instant::now() < deadline,
+                        "No original-operation status request arrived"
+                    );
+                    std::thread::sleep(Duration::from_millis(5));
+                }
+            });
+            let p: PreparedOperation =
+                serde_json::from_value(fixture()["prepared"].clone()).unwrap();
+            let policy = "origin-policy";
+            let id = "origin-status-001";
+            let mut request = p.request.clone();
+            request.operation.nonce = operation_nonce(policy, id);
+            let record = Record {
+                backend_origin: if legacy { None } else { Some(origin.clone()) },
+                policy_id: policy.into(),
+                request_id: id.into(),
+                config: p.config,
+                request,
+                prepared: None,
+                agent_signature: None,
+                status: None,
+            };
+            let temp = tempfile::tempdir().unwrap();
+            let root = temp.path().canonicalize().unwrap();
+            let journal = Store::open(&root.join("journal")).unwrap();
+            let key = sdk::hex(&record.request.operation.nonce);
+            journal.save(&key, &record).unwrap();
+            let before = std::fs::read(root.join("journal").join(format!(
+                "request-{}.json",
+                allowit_sdk::digest(key.as_bytes())
+            )))
+            .unwrap();
+            let roundtrip: Record =
+                serde_json::from_slice(&serde_json::to_vec(&record).unwrap()).unwrap();
+            assert_eq!(roundtrip.backend_origin.is_none(), legacy);
+            let supplied = if legacy { &origin } else { &other };
+            let signer = Arc::new(ProofSigner(sdk::account_for_seed(&[44; 32])));
+            assert!(
+                recover(
+                    Retained(record),
+                    &journal,
+                    signer,
+                    supplied,
+                    id,
+                    Duration::ZERO
+                )
+                .is_err()
+            );
+            assert_eq!(server.join().unwrap(), "original");
+            assert_eq!(
+                std::fs::read(root.join("journal").join(format!(
+                    "request-{}.json",
+                    allowit_sdk::digest(key.as_bytes())
+                )))
+                .unwrap(),
+                before
+            );
+        }
     }
     #[test]
     fn local_rpc_revalidates_exact_gateway_bytes_before_signing_without_credentials() {

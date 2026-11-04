@@ -3,7 +3,7 @@ use crate::{
     error::{Error, Result},
     routing,
 };
-use allowit_sdk::client::store::Store;
+use allowit_sdk_engine::Store;
 pub use allowit_sdk_engine::vendors::stellar::runtime::approval::*;
 use std::{io::Read, path::Path};
 pub(crate) fn run(args: &[String], stdout: &mut String) -> Result<i32> {

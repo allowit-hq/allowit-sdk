@@ -5,7 +5,7 @@
 //! folders is one private store of at most 1,000 records, so the journal
 //! holds up to 256,000 requests.
 use crate::error::{Error, Result};
-use allowit_sdk::client::store::Store;
+use allowit_sdk_engine::Store;
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 
@@ -35,7 +35,7 @@ pub(crate) struct Entry {
 
 /// The folder of one request ID.
 fn shard(id: &str) -> String {
-    allowit_sdk::digest(id.as_bytes())[..2].to_owned()
+    allowit_sdk_engine::digest(id.as_bytes())[..2].to_owned()
 }
 
 fn open_shard(dir: &Path, shard: &str) -> Result<Store> {

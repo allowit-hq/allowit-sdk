@@ -1,7 +1,6 @@
 //! The `allowit` command. Argument parsing, terminal output and rail adapters
 //! live here; engine requests and service composition come from
 //! `allowit-sdk-engine`, which has no terminal I/O.
-pub use allowit_sdk::admin;
 pub use allowit_sdk_engine::{VERSION, error, wallet};
 pub(crate) use allowit_sdk_engine::{config, output, request, routing};
 mod commands;

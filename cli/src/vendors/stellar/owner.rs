@@ -3,7 +3,7 @@ use crate::{
     error::{Error, Result},
     routing,
 };
-use allowit_sdk::client::store::Store;
+use allowit_sdk_engine::Store;
 pub use allowit_sdk_engine::vendors::stellar::runtime::owner::signing_url;
 use allowit_sdk_engine::vendors::stellar::runtime::owner::{SetupRequest, prepare};
 use std::{

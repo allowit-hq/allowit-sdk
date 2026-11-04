@@ -422,8 +422,6 @@ fn validate_generated(
     let shape = crate::authoring::check(&policy.code).map_err(|_| {
         Error::uncertain("Returned policy source is outside the portable vocabulary")
     })?;
-    let params = serde_json_canonicalizer::to_vec(&d.params)
-        .map_err(|_| Error::uncertain("Invalid returned policy params"))?;
     if !crate::request::request_id_valid(&policy.id)
         || policy.revision != 1
         || policy.network != network
@@ -442,7 +440,7 @@ fn validate_generated(
         || b.asset_symbol != policy.token
         || d.language != LANGUAGE
         || d.source_hash != policy.source_hash
-        || d.params_hash != allowit_sdk::digest(&params)
+        || d.params_hash != crate::authoring::canonical_digest(&d.params)?
         || d.asset.address != policy.mint
         || d.asset.symbol != policy.token
         || d.asset.decimals != 7
@@ -486,25 +484,30 @@ fn validate_generated(
     let asset = native::asset_from_identity(&b.asset_symbol, b.asset_issuer.as_deref())
         .map_err(Error::config)?;
     if native::sac_address(network, &asset).map_err(Error::config)? != b.asset
-        || !(100..=if kind == "contract-wallet" {
-            10_000_000
-        } else {
-            1_000_000
-        })
-            .contains(&b.max_fee_stroops)
+        || !(super::super::server_owner::fee_bounds().minimum
+            ..=u64::from(native::max_fee_ceiling(&if kind == "contract-wallet" {
+                native::WalletRoute::PolicyWallet
+            } else {
+                native::WalletRoute::Native
+            })))
+            .contains(&u64::from(b.max_fee_stroops))
     {
         return Err(Error::uncertain(
             "Returned policy asset or fee binding differs",
         ));
     }
     if kind == "owner-wallet" {
-        let identity = json!({"language":d.language,"tier":d.tier,"rules":d.rules,"sourceHash":d.source_hash,"paramsHash":d.params_hash});
-        let identity = serde_json_canonicalizer::to_vec(&identity)
-            .map_err(|_| Error::uncertain("Cannot encode returned native policy identity"))?;
+        let identity = crate::authoring::portable_identity(
+            &d.language,
+            &d.tier,
+            &d.rules,
+            &d.source_hash,
+            &d.params_hash,
+        )?;
         if b.route != "native"
             || b.tier.is_some()
             || !shape.canonical_only
-            || b.module_digest != allowit_sdk::digest(&identity)
+            || b.module_digest != identity
         {
             return Err(Error::uncertain("Returned native policy identity differs"));
         }

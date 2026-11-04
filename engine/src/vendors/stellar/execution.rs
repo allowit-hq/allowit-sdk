@@ -129,14 +129,15 @@ pub(in crate::vendors) fn status(
 }
 
 fn render(out: ExecutionOutcome) -> Outcome {
-    let exit_code = match out.status {
-        OperationStatus::Confirmed => 0,
-        OperationStatus::Failed => 20,
-        OperationStatus::SubmissionUnknown => 5,
-        OperationStatus::Prepared | OperationStatus::Submitted => 12,
+    let status = match out.status {
+        OperationStatus::Confirmed => crate::runtime::Status::Confirmed,
+        OperationStatus::Failed => crate::runtime::Status::Failed,
+        OperationStatus::SubmissionUnknown => crate::runtime::Status::SubmissionUnknown,
+        OperationStatus::Prepared => crate::runtime::Status::Prepared,
+        OperationStatus::Submitted => crate::runtime::Status::Submitted,
     };
     Outcome {
         document: serde_json::json!({"requestId":out.request_id,"status":out.status,"transactionHash":out.transaction_hash}),
-        exit_code,
+        status,
     }
 }

@@ -49,7 +49,7 @@ fn fee(text: &str) -> Result<u32> {
     }
     text.parse::<u32>()
         .ok()
-        .filter(|v| *v >= 100)
+        .filter(|v| u64::from(*v) >= super::server_owner::fee_bounds().minimum)
         .ok_or_else(|| Error::usage("Fee exceeds the selected rail's supported bounds"))
 }
 fn runtime(url: &str) -> Result<Runtime> {

@@ -188,7 +188,7 @@ impl Rail for Adapter {
                 Some(r),
             )?;
             cx.out.value(&out.document);
-            return Ok(out.exit_code);
+            return Ok(crate::exit::execution_status(out.status).code());
         }
         let p = binding.profile.ok_or_else(|| {
             crate::error::Error::config("Execution has no resolved verified profile")
@@ -207,7 +207,7 @@ impl Rail for Adapter {
         crate::flush_stderr(&mut cx.out.stderr);
         let out = allowit_sdk_engine::execution::execute(p, signer, &root, rpc, r)?;
         cx.out.value(&out.document);
-        Ok(out.exit_code)
+        Ok(crate::exit::execution_status(out.status).code())
     }
     fn status(
         &self,
@@ -237,7 +237,7 @@ impl Rail for Adapter {
             allowit_sdk_engine::execution::status(p, signer, &root, cx.rpc_url(self.0)?, id, wait)?
         };
         cx.out.value(&out.document);
-        Ok(out.exit_code)
+        Ok(crate::exit::execution_status(out.status).code())
     }
 }
 
@@ -263,7 +263,7 @@ mod profile_snapshot_tests {
     use super::chain;
     use super::*;
     use crate::{commands::Global, term::Out};
-    use allowit_sdk::client::store::Store;
+    use allowit_sdk_engine::Store;
     fn seed(root: &std::path::Path, id: &str, doc: &serde_json::Value) {
         Store::open(&root.join("public-profiles/versions")).unwrap().save(id,&serde_json::json!({"schema":1,"network":"stellar:testnet","backend":"http://localhost:8080","descriptor":doc})).unwrap();
     }
