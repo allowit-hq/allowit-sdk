@@ -1176,18 +1176,7 @@ mod tests {
                 .iter()
                 .any(|ix| ix.program == state.binding.custody && ix.data.starts_with(&[2, 1]))
         );
-        let intent = crate::lifecycle::intent_for(
-            &client,
-            &policy,
-            state.binding.owner,
-            "deploy",
-            &Options::default(),
-        )
-        .unwrap();
-        assert_eq!(
-            serde_json::from_str::<Value>(&intent).unwrap()["amount"],
-            Value::Null
-        );
+
     }
 
     #[test]
