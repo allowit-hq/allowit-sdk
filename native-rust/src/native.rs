@@ -1176,7 +1176,6 @@ mod tests {
                 .iter()
                 .any(|ix| ix.program == state.binding.custody && ix.data.starts_with(&[2, 1]))
         );
-
     }
 
     #[test]
