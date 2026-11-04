@@ -3,8 +3,10 @@
 use crate::error::{Error, Result};
 use std::collections::BTreeMap;
 
-const MAX_NESTING: usize = 32;
-const MAX_PATH_SYNTAX: usize = 160;
+/// Maximum group nesting accepted by the shared source parser.
+pub const MAX_NESTING: usize = 32;
+/// Maximum operators and keywords along one statement path.
+pub const MAX_PATH_SYNTAX: usize = 160;
 // Parsing, visiting and dropping syn trees need the same reserved stack as the source gate.
 const PARSE_STACK: usize = 64 << 20;
 

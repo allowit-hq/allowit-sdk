@@ -152,14 +152,14 @@ fn decimal(units: i128, decimals: u32) -> String {
 }
 
 /// A Unix time as UTC text to the minute, which [`parse_time`] reads back: "2026-11-07 14:03 UTC".
-fn time_text(at: i64) -> Option<String> {
+pub fn time_text(at: i64) -> Option<String> {
     let time = DateTime::from_timestamp(at, 0)?;
     Some(time.format("%Y-%m-%d %H:%M UTC").to_string())
 }
 
 /// The edit text of a Unix time: [`time_text`], with the seconds when they are not 0, so saving
 /// the text unchanged keeps the time.
-fn time_input(at: i64) -> Option<String> {
+pub fn time_input(at: i64) -> Option<String> {
     let time = DateTime::from_timestamp(at, 0)?;
     let format = if at % 60 == 0 {
         "%Y-%m-%d %H:%M UTC"
