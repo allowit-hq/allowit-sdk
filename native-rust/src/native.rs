@@ -454,7 +454,7 @@ impl NativeClient {
         }
         if matches!(
             method,
-            "deploy" | "fund" | "execute" | "withdraw" | "tune" | "tune_action"
+            "fund" | "execute" | "withdraw" | "tune" | "tune_action"
         ) && amount.is_none()
         {
             return Err(Error::config("Specify the amount"));
@@ -470,10 +470,14 @@ impl NativeClient {
                     "Vault already exists; recover its status instead of redeploying",
                 ));
             }
-            let source = associated_token_address(b.mint, owner, false)?;
-            let a = self.token(source)?;
-            if a.owner != owner || a.amount < amount.unwrap() {
-                return Err(Error::denied("Insufficient owner test-token balance"));
+            // Installing authority does not require a token balance. A legacy
+            // combined setup still verifies its explicitly requested deposit.
+            if let Some(amount) = amount {
+                let source = associated_token_address(b.mint, owner, false)?;
+                let a = self.token(source)?;
+                if a.owner != owner || a.amount < amount {
+                    return Err(Error::denied("Insufficient owner test-token balance"));
+                }
             }
         } else {
             let state = s
@@ -654,14 +658,12 @@ impl NativeClient {
                 fields.extend(hex32(&release().artifacts[0].sha256)?);
                 fields.extend(units(&policy.daily_limit)?.to_le_bytes());
                 fields.extend(units(&policy.action_limit)?.to_le_bytes());
-                let funding = required()?;
-                let source = owner_ata()?;
                 let approve = {
                     let mut data = vec![1];
                     data.extend(0u64.to_le_bytes());
                     data
                 };
-                vec![
+                let mut instructions = vec![
                     ata(b.owner, b.token_account, b.vault, b.mint)?,
                     instruction(
                         0,
@@ -678,24 +680,27 @@ impl NativeClient {
                             ro(b.authority),
                         ],
                     ),
-                    instruction(
+                ];
+                if let Some(amount) = options.amount.as_deref() {
+                    instructions.push(instruction(
                         1,
-                        funding.to_le_bytes().to_vec(),
+                        units(amount)?.to_le_bytes().to_vec(),
                         vec![
                             w(b.vault),
                             s(b.owner),
-                            w(source),
+                            w(owner_ata()?),
                             w(b.token_account),
                             ro(b.mint),
                             ro(Key::parse(TOKEN_PROGRAM)?),
                         ],
-                    ),
-                    instruction(
-                        2,
-                        approve,
-                        vec![w(b.vault), s(b.owner), ro(b.policy), ro(b.policy_data)],
-                    ),
-                ]
+                    ));
+                }
+                instructions.push(instruction(
+                    2,
+                    approve,
+                    vec![w(b.vault), s(b.owner), ro(b.policy), ro(b.policy_data)],
+                ));
+                instructions
             }
             "fund" => vec![instruction(
                 1,
@@ -1127,6 +1132,62 @@ mod tests {
             balance: "5000000".into(),
         };
         (client, policy, state)
+    }
+
+    #[test]
+    fn unfunded_installation_contains_no_token_deposit() {
+        let (client, policy, state) = fixture();
+        let install = client
+            .expected_instructions(
+                &policy,
+                &state.binding,
+                "deploy",
+                &Options::default(),
+                None,
+                None,
+            )
+            .unwrap();
+        let combined = client
+            .expected_instructions(
+                &policy,
+                &state.binding,
+                "deploy",
+                &Options {
+                    amount: Some("0.1".into()),
+                    ..Options::default()
+                },
+                None,
+                None,
+            )
+            .unwrap();
+        assert_eq!(install.len() + 1, combined.len());
+        assert!(
+            !install
+                .iter()
+                .any(|ix| ix.program == state.binding.custody && ix.data.first() == Some(&1))
+        );
+        assert!(
+            install
+                .iter()
+                .any(|ix| ix.program == state.binding.custody && ix.data.first() == Some(&0))
+        );
+        assert!(
+            install
+                .iter()
+                .any(|ix| ix.program == state.binding.custody && ix.data.starts_with(&[2, 1]))
+        );
+        let intent = crate::lifecycle::intent_for(
+            &client,
+            &policy,
+            state.binding.owner,
+            "deploy",
+            &Options::default(),
+        )
+        .unwrap();
+        assert_eq!(
+            serde_json::from_str::<Value>(&intent).unwrap()["amount"],
+            Value::Null
+        );
     }
 
     #[test]
