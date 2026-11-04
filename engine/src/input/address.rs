@@ -78,3 +78,18 @@ pub fn signing_digest(identity: &str, message: &str) -> Result<[u8; 32]> {
         })
         .ok_or_else(|| Error::usage("No compiled account adapter accepts this signing identity"))
 }
+
+/// Native diagnostic for an identity rejected by all compiled wallet adapters.
+pub fn wallet_error(address: &str) -> Option<String> {
+    if valid_wallet(address) {
+        return None;
+    }
+    crate::routing::all()
+        .iter()
+        .find_map(|rail| {
+            formats(rail.family)
+                .ok()
+                .and_then(|format| (format.wallet_error)(address))
+        })
+        .or_else(|| Some("No compiled wallet adapter accepts this address.".into()))
+}

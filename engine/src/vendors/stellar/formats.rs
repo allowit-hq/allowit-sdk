@@ -11,6 +11,20 @@ fn contract(s: &str) -> bool {
 fn account_or_contract(s: &str) -> bool {
     account(s) || contract(s)
 }
+fn wallet_error(address: &str) -> Option<String> {
+    if account_or_contract(address) {
+        return None;
+    }
+    let mut clipped: String = address.chars().take(64).collect();
+    if clipped.len() < address.len() {
+        clipped.push('…');
+    }
+    Some(if address.starts_with('M') {
+        format!("{clipped} is a muxed address. Use its G account address.")
+    } else {
+        format!("{clipped} is not a valid Stellar G or C address.")
+    })
+}
 fn asset_code(code: &str) -> bool {
     !code.is_empty() && code.len() <= 12 && code.bytes().all(|b| b.is_ascii_alphanumeric())
 }
@@ -57,6 +71,7 @@ fn resolve_asset(
 pub(crate) const FORMATS: Formats = Formats {
     account: (account, "a G… strkey"),
     wallet: (account_or_contract, "a G… account or C… contract strkey"),
+    wallet_error,
     recipient: (account_or_contract, "a G… or C… strkey"),
     token: (account_or_contract, "a G… issuer or C… contract"),
     signing_digest: allowit_stellar_wallet::signing::signed_message_digest,
@@ -72,7 +87,18 @@ pub(crate) const FORMATS: Formats = Formats {
 
 #[cfg(test)]
 mod tests {
-    use super::asset_code;
+    use super::{asset_code, wallet_error};
+
+    #[test]
+    fn invalid_wallet_diagnostics_are_owned_by_the_native_adapter() {
+        assert!(wallet_error("GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF").is_none());
+        assert!(wallet_error("Mfoo").unwrap().contains("muxed address"));
+        assert!(
+            wallet_error("bad")
+                .unwrap()
+                .contains("not a valid Stellar G or C address")
+        );
+    }
 
     #[test]
     fn classic_asset_codes_obey_native_limits() {

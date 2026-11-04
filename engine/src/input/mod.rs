@@ -6,6 +6,7 @@ pub(crate) type Check = (fn(&str) -> bool, &'static str);
 pub(crate) struct Formats {
     pub account: Check,
     pub wallet: Check,
+    pub wallet_error: fn(&str) -> Option<String>,
     pub recipient: Check,
     pub token: Check,
     pub signing_digest: fn(&str) -> [u8; 32],
