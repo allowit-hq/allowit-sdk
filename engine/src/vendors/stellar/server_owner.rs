@@ -177,7 +177,7 @@ pub(crate) fn explorer_link(network: &str, kind: &str, id: &str) -> Option<Strin
     let network = crate::routing::normalize(network).ok()?;
     let base = match network {
         "stellar:testnet" => "https://stellar.expert/explorer/testnet",
-        "stellar:mainnet" => "https://stellar.expert/explorer/public",
+        "stellar:pubnet" => "https://stellar.expert/explorer/public",
         _ => return None,
     };
     if !matches!(kind, "tx" | "account" | "contract") || id.is_empty() {
@@ -205,4 +205,51 @@ pub(crate) fn tier_encoding(t: Option<Tier>) -> Result<serde_json::Value> {
         Tier::Custom => native::PolicyTier::Custom,
     }))
     .map_err(|_| Error::config("Cannot encode tier"))
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::runtime::owner::explorer_link;
+
+    #[test]
+    fn public_explorer_links_accept_canonical_and_historical_networks() {
+        let identities = [
+            (
+                "account",
+                "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF",
+            ),
+            (
+                "contract",
+                "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD2KM",
+            ),
+            (
+                "tx",
+                "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+            ),
+        ];
+        for (network, explorer) in [
+            ("stellar:pubnet", "public"),
+            ("stellar:mainnet", "public"),
+            ("stellar:testnet", "testnet"),
+        ] {
+            for (kind, identity) in identities {
+                assert_eq!(
+                    explorer_link(network, kind, identity),
+                    Some(format!(
+                        "https://stellar.expert/explorer/{explorer}/{kind}/{identity}"
+                    )),
+                    "{network} {kind}",
+                );
+            }
+        }
+        assert_eq!(
+            explorer_link("stellar:unknown", "account", identities[0].1),
+            None
+        );
+        assert_eq!(
+            explorer_link("stellar:pubnet", "unknown", identities[0].1),
+            None
+        );
+        assert_eq!(explorer_link("stellar:pubnet", "account", ""), None);
+    }
 }
