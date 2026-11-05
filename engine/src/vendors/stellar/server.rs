@@ -839,6 +839,12 @@ impl super::super::RuntimeProvider for Provider {
         now: u64,
     ) -> Result<OwnerPacket> {
         let c = self.config(i)?;
+        // Renewal preserves the installed fee budget even when deployment has a larger ceiling.
+        let fee_limit = if matches!(&a, OwnerAction::Extend) {
+            fee_limit.min(u64::from(c.max_fee_stroops))
+        } else {
+            fee_limit
+        };
         let d = native::admin::Deployer {
             rpc: self.rpc(),
             network: &c.network,
