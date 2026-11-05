@@ -8,9 +8,6 @@ use std::{
     collections::VecDeque,
     sync::{Arc, Mutex},
 };
-use stellar_xdr::{
-    Limits, TransactionResult, TransactionResultExt, TransactionResultResult, WriteXdr,
-};
 
 type Events = Arc<Mutex<Vec<String>>>;
 struct ScriptedRpc {
@@ -75,45 +72,13 @@ impl OperationStore for Store {
     }
 }
 fn native_signed() -> SignedOperation {
-    let old: SignedOperation = serde_json::from_str(include_str!(
-        "../../cli/tests/fixtures/canonical-main-9682-native-signed.json"
-    ))
-    .unwrap();
-    let mut config = old.prepared.config;
-    config.language = native::PolicyLanguage::Portable;
-    config.policy_source = "use allowit::prelude::*; pub fn execute(ctx: &AllowitContext) -> allowit::Result { Ok(()) }".into();
-    config.source_hash = native::hash(&config.policy_source);
-    let mut state = old.prepared.state;
-    state.source_hash = config.source_hash;
-    let prepared = native::prepare(&config, &old.prepared.request, &state, 86401, 86700).unwrap();
-    native::authorize(
-        &prepared,
-        &[
-            native::sign(&prepared, &[2; 32], 86401).unwrap(),
-            native::sign(&prepared, &[3; 32], 86401).unwrap(),
-        ],
-        86401,
-    )
-    .unwrap()
+    native::test_support::native_signed()
 }
 fn policy_signed() -> SignedOperation {
-    let fixture: Value = serde_json::from_str(include_str!(
-        "../../cli/tests/fixtures/stellar-policy-wallet-revalidation-rpc.json"
-    ))
-    .unwrap();
-    serde_json::from_value(fixture["signed"].clone()).unwrap()
+    native::test_support::policy_signed()
 }
 fn tx_status(signed: &SignedOperation, success: bool) -> Value {
-    let result = TransactionResult {
-        fee_charged: 100,
-        result: if success {
-            TransactionResultResult::TxSuccess(Default::default())
-        } else {
-            TransactionResultResult::TxFailed(Default::default())
-        },
-        ext: TransactionResultExt::V0,
-    };
-    json!({"status":if success{"SUCCESS"}else{"FAILED"},"ledger":777,"envelopeXdr":signed.transaction_xdr,"resultXdr":result.to_xdr_base64(Limits::none()).unwrap()})
+    native::test_support::transaction_status(signed, success, 777, 100)
 }
 
 #[test]

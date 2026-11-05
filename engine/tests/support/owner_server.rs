@@ -1,9 +1,6 @@
 //! Independent replay of the current server HTTP contract, not a live generation or build proof.
 #![allow(dead_code)]
-use base64::{Engine, engine::general_purpose::STANDARD};
-use ed25519_dalek::{Signature, VerifyingKey};
 use serde_json::{Value, json};
-use sha2::{Digest, Sha256};
 use std::{
     collections::BTreeMap,
     io::{Read, Write},
@@ -18,7 +15,7 @@ use std::{
 use time::{OffsetDateTime, format_description::well_known::Rfc3339};
 
 pub fn fixture() -> Value {
-    serde_json::from_str(include_str!("../fixtures/stellar-owner-generation.json")).unwrap()
+    allowit_stellar_wallet::test_support::owner_generation_fixture()
 }
 pub fn now() -> u64 {
     SystemTime::now()
@@ -203,17 +200,13 @@ impl Server {
                     assert_eq!(body["message"], plan.challenge["message"]);
                     assert_eq!(body["id"], plan.challenge["id"]);
                     assert_eq!(body["address"], plan.owner);
-                    let mut bytes = b"Stellar Signed Message:\n".to_vec();
-                    bytes.extend(body["message"].as_str().unwrap().as_bytes());
-                    let digest = Sha256::digest(bytes);
-                    let key = allowit_stellar_wallet::account_key(&plan.owner).unwrap();
-                    let sig = STANDARD
-                        .decode(body["signature"].as_str().unwrap())
-                        .unwrap();
-                    VerifyingKey::from_bytes(&key)
-                        .unwrap()
-                        .verify_strict(&digest, &Signature::from_slice(&sig).unwrap())
-                        .unwrap();
+                    assert!(
+                        allowit_stellar_wallet::test_support::verify_owner_challenge(
+                            &plan.owner,
+                            body["message"].as_str().unwrap(),
+                            body["signature"].as_str().unwrap(),
+                        )
+                    );
                     if let Some(location) = &plan.redirect_verify {
                         reply(
                             &mut stream,

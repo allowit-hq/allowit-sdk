@@ -150,3 +150,7 @@ SDK packet deserialization delegates to that crate before exposing retained stat
 Release the reviewed Core API first, then the Stellar crate on that same Core release, then the SDK.
 The SDK dependency graph must use one Core release tag. Update downstream release tags and the lockfile
 after those approved producer releases. Keep local validation overrides outside committed manifests.
+
+Stellar protocol fixtures and codec construction belong to the Stellar crate. Its optional
+`test-support` feature supplies semantic fixtures for SDK consumer tests. The SDK keeps command,
+HTTP, storage and orchestration assertions without depending directly on native codecs or signature libraries.

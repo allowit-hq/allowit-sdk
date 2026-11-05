@@ -7,7 +7,6 @@ use allowit_sdk_engine::vendors::stellar::runtime::owner_client::{
     GenerateRequest, OwnerClient, OwnerSigner, Target,
 };
 use allowit_stellar_wallet as native;
-use ed25519_dalek::{Signer, SigningKey};
 use serde_json::{Value, json};
 use std::sync::atomic::{AtomicUsize, Ordering};
 
@@ -34,7 +33,7 @@ impl OwnerSigner for Key {
         Ok(if self.bad {
             [0; 64]
         } else {
-            SigningKey::from_bytes(&[11; 32]).sign(value).to_bytes()
+            allowit_stellar_wallet::test_support::sign_digest([11; 32], value)
         })
     }
 }
@@ -234,34 +233,7 @@ fn returned_source_and_portable_identity_are_verified_without_claiming_deploymen
 }
 
 fn existing(plan: &mut wire::Plan, owner: &str) -> native::WalletConfig {
-    let fixture: Vec<Value> =
-        serde_json::from_str(include_str!("fixtures/stellar-portable-descriptors.json")).unwrap();
-    let mut config: native::WalletConfig =
-        serde_json::from_value(fixture[2]["bundle"]["config"].clone()).unwrap();
-    let d = &plan.policy["runtime"]["instanceBinding"]["portable"];
-    config.owner = owner.into();
-    config.agent = native::account_for_seed(&[12; 32]);
-    config.server = native::account_for_seed(&[13; 32]);
-    config.wallet = stellar_strkey::Contract([3; 32]).to_string();
-    config.policy_instance = [7; 32];
-    config.module_digest = [44; 32];
-    config.asset = d["asset"]["address"].as_str().unwrap().into();
-    config.asset_symbol = "USDC".into();
-    config.asset_issuer = Some("GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5".into());
-    config.policy_source = plan.policy["code"].as_str().unwrap().into();
-    config.source_hash = native::hash(config.policy_source.as_bytes());
-    config.params = serde_json::from_value(d["params"].clone()).unwrap();
-    config.rules = serde_json::from_value(d["rules"].clone()).unwrap();
-    config.tier = Some(native::PolicyTier::Common);
-    config.max_fee_stroops = 5_000_000;
-    config.source_digest = native::policy::standard_prefix_digest(
-        native::PolicyTier::Common,
-        &config.module_digest,
-        &config.asset,
-        &config.rules,
-    )
-    .unwrap();
-    native::validate_config(&config).unwrap();
+    let config = native::test_support::existing_installation(owner, &plan.policy);
     plan.installations = json!({"installations":[{"policyId":"07".repeat(32),"profile":"allowit-stellar-policy-wallet-v1","config":config}]});
     let b = &mut plan.policy["runtime"]["instanceBinding"];
     b["template"] = json!(false);

@@ -183,13 +183,12 @@ fn source_consent_checks_exact_payload_and_current_native_authority_before_owner
 #[test]
 fn portable_native_import_checks_source_consent_current_authority_and_exact_profile_selection() {
     use allowit_sdk_engine::profiles::{Cache, Selector};
-    use ed25519_dalek::{Signer, SigningKey};
     let selected = native_selection();
     let mut profile = descriptor(&selected);
     let digest = allowit_stellar_wallet::signing::signed_message_digest(
         consent(&selected)["message"].as_str().unwrap(),
     );
-    let signature = SigningKey::from_bytes(&[11; 32]).sign(&digest).to_bytes();
+    let signature = allowit_stellar_wallet::test_support::sign_digest([11; 32], &digest);
     profile["sourceApproval"] = json!({"revision":selected.policy.revision,"signatures":[{"signer":selected.config.owner,"signature":signature.to_vec()}]});
     let chain = Chain::new(selected.config.clone());
     *chain.source.lock().unwrap() = configured_source(&selected.config);
@@ -230,7 +229,7 @@ fn portable_native_import_checks_source_consent_current_authority_and_exact_prof
                 bad["config"]["server"] = json!(selected.config.agent);
             }
             12 => {
-                let extra = SigningKey::from_bytes(&[14; 32]).sign(&digest).to_bytes();
+                let extra = allowit_stellar_wallet::test_support::sign_digest([14; 32], &digest);
                 bad["sourceApproval"]["signatures"]
                     .as_array_mut()
                     .unwrap()

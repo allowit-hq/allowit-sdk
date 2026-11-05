@@ -9,55 +9,10 @@ mod tests {
     use std::time::Duration;
 
     fn config(route: WalletRoute, usdc: bool) -> WalletConfig {
-        let owner = sdk::account_for_seed(&[1; 32]);
-        let source = "use allowit::prelude::*; pub fn execute(ctx: &AllowitContext) -> allowit::Result { Ok(()) }".to_string();
-        let mut c = WalletConfig {
-            network: "stellar:testnet".into(),
-            policy_instance: [7; 32],
-            wallet: owner.clone(),
-            owner,
-            agent: sdk::account_for_seed(&[2; 32]),
-            server: sdk::account_for_seed(&[3; 32]),
-            route: route.clone(),
-            tier: (route == WalletRoute::PolicyWallet).then_some(sdk::PolicyTier::Simple),
-            language: sdk::PolicyLanguage::Portable,
-            rules: vec![],
-            params: Default::default(),
-            source_digest: [0; 32],
-            asset: String::new(),
-            asset_symbol: if usdc { "USDC" } else { "XLM" }.into(),
-            asset_issuer: usdc.then(|| {
-                let tokens = crate::execution::tokens("stellar:testnet").unwrap();
-                tokens[1].issuer.unwrap().to_owned()
-            }),
-            source_hash: sdk::hash(&source),
-            policy_source: source,
-            module_digest: [5; 32],
-            max_fee_stroops: 50_000,
-        };
-        c.asset = sdk::sac_address(&c.network, &sdk::asset_xdr(&c).unwrap()).unwrap();
-        if route == WalletRoute::PolicyWallet {
-            c.wallet = vault(0);
-            // Policy wallets run portable source with an empty Simple binding.
-            let source = "use allowit::prelude::*;\npub fn execute(ctx: &AllowitContext) -> allowit::Result {\n    Ok(())\n}\n";
-            c.language = sdk::PolicyLanguage::Portable;
-            c.policy_source = source.into();
-            c.source_hash = sdk::hash(source);
-            c.source_digest = sdk::policy::installed_source_digest(
-                sdk::PolicyTier::Simple,
-                &c.module_digest,
-                &c.asset,
-                &[],
-                source,
-            )
-            .unwrap();
-        }
-        c
+        sdk::test_support::request_config(route, usdc)
     }
-    /// A contract strkey that names no asset of the test configurations.
     fn vault(n: u8) -> String {
-        let asset = sdk::asset_from_identity("VLT", Some(&sdk::account_for_seed(&[20 + n; 32])));
-        sdk::sac_address("stellar:testnet", &asset.unwrap()).unwrap()
+        sdk::test_support::vault(n)
     }
     fn request(op: &str, to: &str, amount: &str, token_out: Option<&str>) -> ExecRequest {
         let tokens = crate::execution::tokens("stellar:testnet").unwrap();
@@ -170,10 +125,7 @@ mod tests {
     }
     #[test]
     fn build_only_never_opens_the_sdk_provider_journal() {
-        let fixtures: serde_json::Value = serde_json::from_str(include_str!(
-            "../tests/fixtures/stellar-portable-descriptors.json"
-        ))
-        .unwrap();
+        let fixtures = sdk::test_support::portable_descriptors();
         let descriptor = serde_json::value::RawValue::from_string(
             serde_json::to_string(&fixtures[0]["bundle"]).unwrap(),
         )
