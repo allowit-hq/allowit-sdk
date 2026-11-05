@@ -35,12 +35,7 @@ pub fn info(network: &str) -> Result<&'static RailInfo> {
     all()
         .iter()
         .find(|r| r.id == network || r.aliases.contains(&network))
-        .ok_or_else(|| {
-            Error::usage(format!(
-                "unknown rail {}; run allowit rail ls",
-                crate::error::quoted(network)
-            ))
-        })
+        .ok_or_else(|| Error::usage(format!("unknown rail {}", crate::error::quoted(network))))
 }
 
 /// Returns the canonical CAIP-2 identifier for a rail identifier or alias.
@@ -53,7 +48,7 @@ pub fn family(network: &str) -> Result<Family> {
     info(network).map(|r| r.family)
 }
 
-/// The canonical identifier of the rail selected for this command.
+/// The canonical identifier of the rail selected for this caller.
 pub fn selected() -> Option<String> {
     SELECTED.with(|n| n.borrow().clone())
 }

@@ -340,7 +340,7 @@ mod tests {
     use super::*;
     fn fixture() -> serde_json::Value {
         serde_json::from_str(include_str!(
-            "../../../../../cli/tests/fixtures/stellar-approval.json"
+            "../../../../tests/fixtures/stellar-approval.json"
         ))
         .unwrap()
     }

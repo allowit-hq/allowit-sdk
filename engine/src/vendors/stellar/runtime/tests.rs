@@ -71,7 +71,7 @@ impl OperationStore for Store {
 }
 fn native_signed() -> SignedOperation {
     let old: SignedOperation = serde_json::from_str(include_str!(
-        "../../../../../cli/tests/fixtures/canonical-main-9682-native-signed.json"
+        "../../../../tests/fixtures/canonical-main-9682-native-signed.json"
     ))
     .unwrap();
     let mut config = old.prepared.config;
@@ -93,7 +93,7 @@ fn native_signed() -> SignedOperation {
 }
 fn policy_signed() -> SignedOperation {
     let fixture: Value = serde_json::from_str(include_str!(
-        "../../../../../cli/tests/fixtures/stellar-policy-wallet-revalidation-rpc.json"
+        "../../../../tests/fixtures/stellar-policy-wallet-revalidation-rpc.json"
     ))
     .unwrap();
     serde_json::from_value(fixture["signed"].clone()).unwrap()

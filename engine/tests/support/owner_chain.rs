@@ -387,7 +387,7 @@ impl Rpc for Chain {
     }
 }
 
-/// The CLI exercises actual Core HTTP/RPC against the synthetic native fixture.
+/// Callers exercise actual Core HTTP/RPC against the synthetic native fixture.
 pub(crate) struct RpcServer {
     pub(crate) url: String,
     pub(crate) chain: Arc<Chain>,
