@@ -118,6 +118,14 @@ impl Ctx {
         }
         Ok(self.settings()?.rail(rail.id).rpc_url)
     }
+    pub(crate) fn server_authority(
+        &mut self,
+        rail: &RailInfo,
+    ) -> Result<allowit_sdk_engine::config::ServerAuthority> {
+        let origin = crate::config::parse_origin(&crate::config::env_value("ALLOWIT_URL"))?;
+        let key=self.settings()?.rail(rail.id).server_authorities.get(&origin).cloned().ok_or_else(||Error::config("Configure independent server authority with allowit rail trust ORIGIN PUBLIC_KEY"))?;
+        allowit_sdk_engine::config::ServerAuthority::new(rail.id, &origin, &key)
+    }
     /// Confirms a destructive action: `--yes`, or a prompt on a terminal.
     pub(crate) fn confirm(&mut self, question: &str) -> Result<()> {
         if self.global.yes {

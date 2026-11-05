@@ -30,6 +30,26 @@ impl Default for HostTools {
         }
     }
 }
+/// Hash canonical common data with Core's digest. This grants no source admission.
+pub fn canonical_digest(value: &impl serde::Serialize) -> Result<String> {
+    serde_json_canonicalizer::to_vec(value)
+        .map(|bytes| allowit_sdk::digest(&bytes))
+        .map_err(|_| Error::config("Cannot encode canonical policy data"))
+}
+/// Exact portable source/parameter identity shared by authoring and imported profiles.
+pub fn portable_identity(
+    language: &str,
+    tier: &str,
+    rules: &[String],
+    source_hash: &str,
+    params_hash: &str,
+) -> Result<String> {
+    canonical_digest(
+        &serde_json::json!({"language":language,"tier":tier,"rules":rules,
+        "sourceHash":source_hash,"paramsHash":params_hash}),
+    )
+}
+
 pub fn check(source: &str) -> Result<policy_source::SourceShape> {
     if source.len() > MAX_SOURCE_BYTES {
         return Err(Error::usage("Portable policy source exceeds 65536 bytes"));
@@ -68,6 +88,23 @@ pub fn compile(source: &str, tools: &HostTools) -> Result<()> {
     }
     let digest = allowit_sdk::digest(source.as_bytes());
     let mut command = Command::new(&tools.python);
+    // Compiler tools receive only public runtime/toolchain paths, never provider or signer environment.
+    command
+        .env_clear()
+        .env("PATH", std::env::var_os("PATH").unwrap_or_default())
+        .env("LANG", "C")
+        .env("LC_ALL", "C");
+    for (name, suffix) in [("RUSTUP_HOME", ".rustup"), ("CARGO_HOME", ".cargo")] {
+        if let Some(path) = std::env::var_os(name)
+            .map(PathBuf::from)
+            .or_else(|| std::env::var_os("HOME").map(|home| PathBuf::from(home).join(suffix)))
+        {
+            command.env(name, path);
+        }
+    }
+    if let Some(toolchain) = std::env::var_os("RUSTUP_TOOLCHAIN") {
+        command.env("RUSTUP_TOOLCHAIN", toolchain);
+    }
     command
         .args(["-I", "-c", DRIVER])
         .arg(root)

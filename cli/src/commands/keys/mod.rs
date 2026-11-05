@@ -15,13 +15,13 @@ use clap::Subcommand;
 
 pub(crate) const EXAMPLES: &str = "\
 Examples:
-  allowit keys generate agent --fund
-  allowit keys add owner --public-key GOWNER…
+  allowit keys generate agent
+  allowit keys add owner --public-key PUBLIC_KEY
   allowit keys ls
   allowit keys use agent
   allowit keys show agent";
 
-/// Manage local Stellar keys and select the signing key
+/// Manage local keys and select the signing key
 #[derive(Subcommand, Debug)]
 pub(crate) enum Command {
     #[command(before_help = generate::EXAMPLES)]

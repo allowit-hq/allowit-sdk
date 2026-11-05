@@ -72,7 +72,7 @@ fn decode_reader<T: DeserializeOwned>(mut reader: impl Read) -> Result<T> {
         return Err(Error::usage("The request file exceeds 65536 bytes."));
     }
     let input = &bytes[..length];
-    structural_bounds(input)?;
+    validate_json(input, MAX_REQUEST_BYTES)?;
     // Do not collapse objects into Value. Canonical struct deserialization rejects duplicate fields.
     // Suppress deserializer details: they can contain private request field values.
     let mut decoder = serde_json::Deserializer::from_slice(input);
@@ -134,6 +134,76 @@ fn structural_bounds(bytes: &[u8]) -> Result<()> {
     Ok(())
 }
 
+/// Reject ambiguous object keys before any typed map or JSON projection can collapse them.
+pub(crate) fn validate_json(bytes: &[u8], limit: usize) -> Result<()> {
+    if bytes.len() > limit {
+        return Err(Error::usage("JSON document exceeds its size limit"));
+    }
+    structural_bounds(bytes)?;
+    struct Unique;
+    impl<'de> serde::Deserialize<'de> for Unique {
+        fn deserialize<D: serde::Deserializer<'de>>(d: D) -> std::result::Result<Self, D::Error> {
+            struct Visitor;
+            impl<'de> serde::de::Visitor<'de> for Visitor {
+                type Value = Unique;
+                fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+                    f.write_str("unambiguous JSON")
+                }
+                fn visit_bool<E: serde::de::Error>(
+                    self,
+                    _: bool,
+                ) -> std::result::Result<Unique, E> {
+                    Ok(Unique)
+                }
+                fn visit_i64<E: serde::de::Error>(self, _: i64) -> std::result::Result<Unique, E> {
+                    Ok(Unique)
+                }
+                fn visit_u64<E: serde::de::Error>(self, _: u64) -> std::result::Result<Unique, E> {
+                    Ok(Unique)
+                }
+                fn visit_f64<E: serde::de::Error>(self, _: f64) -> std::result::Result<Unique, E> {
+                    Ok(Unique)
+                }
+                fn visit_str<E: serde::de::Error>(self, _: &str) -> std::result::Result<Unique, E> {
+                    Ok(Unique)
+                }
+                fn visit_none<E: serde::de::Error>(self) -> std::result::Result<Unique, E> {
+                    Ok(Unique)
+                }
+                fn visit_unit<E: serde::de::Error>(self) -> std::result::Result<Unique, E> {
+                    Ok(Unique)
+                }
+                fn visit_seq<A: serde::de::SeqAccess<'de>>(
+                    self,
+                    mut a: A,
+                ) -> std::result::Result<Unique, A::Error> {
+                    while a.next_element::<Unique>()?.is_some() {}
+                    Ok(Unique)
+                }
+                fn visit_map<A: serde::de::MapAccess<'de>>(
+                    self,
+                    mut a: A,
+                ) -> std::result::Result<Unique, A::Error> {
+                    let mut keys = std::collections::BTreeSet::new();
+                    while let Some(key) = a.next_key::<String>()? {
+                        if !keys.insert(key) {
+                            return Err(serde::de::Error::custom("Duplicate JSON key"));
+                        }
+                        a.next_value::<Unique>()?;
+                    }
+                    Ok(Unique)
+                }
+            }
+            d.deserialize_any(Visitor)
+        }
+    }
+    let mut d = serde_json::Deserializer::from_slice(bytes);
+    let _: Unique = serde::Deserialize::deserialize(&mut d)
+        .map_err(|_| Error::usage("JSON document has invalid or duplicate fields"))?;
+    d.end()
+        .map_err(|_| Error::usage("JSON document must contain one object"))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -155,6 +225,13 @@ mod tests {
     }
     #[test]
     fn canonical_deserializer_rejects_duplicate_fields_before_value_collapse() {
+        assert!(validate_json(br#"{"params":{"limit":1,"limit":2}}"#, 1024).is_err());
+        assert!(validate_json(br#"{"items":[{"limit":1,"limit":2}]}"#, 1024).is_err());
+        validate_json(
+            br#"{"params":{"limit":123456789012345678901234567890}}"#,
+            1024,
+        )
+        .unwrap();
         assert!(parse(r#"{"name":"a","name":"b","child":null}"#).is_err());
         assert!(parse(r#"{"name":"a","child":{"name":"b","name":"c","child":null}}"#).is_err());
     }

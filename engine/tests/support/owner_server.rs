@@ -52,6 +52,12 @@ pub struct Plan {
     pub lost_generation: bool,
     pub redirect_challenge: Option<String>,
     pub redirect_verify: Option<String>,
+    pub owner_prepare: Option<Value>,
+    pub owner_next_prepare: Option<Value>,
+    pub lose_owner_reply: bool,
+    pub approval: Option<Value>,
+    pub activation: Option<Value>,
+    pub export: Option<Value>,
 }
 impl Plan {
     pub fn new(owner: &str) -> Self {
@@ -74,6 +80,12 @@ impl Plan {
             lost_generation: false,
             redirect_challenge: None,
             redirect_verify: None,
+            owner_prepare: None,
+            owner_next_prepare: None,
+            lose_owner_reply: false,
+            approval: None,
+            activation: None,
+            export: None,
         }
     }
 }
@@ -81,6 +93,7 @@ impl Plan {
 pub struct State {
     pub calls: BTreeMap<String, usize>,
     pub generated: Vec<Value>,
+    pub owner_submissions: Vec<Value>,
 }
 pub struct Server {
     pub url: String,
@@ -221,6 +234,63 @@ impl Server {
                 }
                 assert_eq!(headers.get("cookie"), Some(&owner));
                 match path.as_str() {
+                    "/api/native/approval" => reply(
+                        &mut stream,
+                        200,
+                        plan.approval.clone().expect("approval fixture"),
+                        "",
+                    ),
+                    "/api/micro/allocation/confirm" => reply(
+                        &mut stream,
+                        200,
+                        plan.activation.clone().expect("activation fixture"),
+                        "",
+                    ),
+                    "/api/native/export" => reply(
+                        &mut stream,
+                        200,
+                        plan.export.clone().expect("public export fixture"),
+                        "",
+                    ),
+                    "/api/native/owner/prepare" | "/api/native/deploy/prepare" => {
+                        reply(
+                            &mut stream,
+                            200,
+                            if captured.lock().unwrap().owner_submissions.is_empty() {
+                                plan.owner_prepare.clone()
+                            } else {
+                                plan.owner_next_prepare
+                                    .clone()
+                                    .or_else(|| plan.owner_prepare.clone())
+                            }
+                            .expect("owner preparation fixture"),
+                            "",
+                        );
+                    }
+                    "/api/native/owner/submit" => {
+                        let signed = body["transactionXdr"].as_str().unwrap();
+                        captured
+                            .lock()
+                            .unwrap()
+                            .owner_submissions
+                            .push(body.clone());
+                        if plan.lose_owner_reply
+                            && captured.lock().unwrap().owner_submissions.len() == 1
+                        {
+                            continue;
+                        }
+                        let hash = allowit_stellar_wallet::rpc::signed_transaction_hash(
+                            "stellar:testnet",
+                            signed,
+                        )
+                        .unwrap();
+                        reply(
+                            &mut stream,
+                            200,
+                            json!({"status":"confirmed","transactionHash":allowit_stellar_wallet::hex(&hash)}),
+                            "",
+                        );
+                    }
                     "/api/micro/runtime" => reply(&mut stream, 200, plan.discovery.clone(), ""),
                     "/api/native/templates" => {
                         assert_eq!(body, json!({}));

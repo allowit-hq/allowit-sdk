@@ -14,6 +14,7 @@ use allowit_sdk::{
         rpc::Options,
     },
 };
+use allowit_stellar_wallet::rpc::Rpc;
 use allowit_stellar_wallet::workflow::ExecutionRequest;
 use allowit_stellar_wallet::{
     self as sdk, DetachedSignature, OperationStatus, PreparedOperation, SignedOperation,
@@ -47,9 +48,17 @@ pub struct Bundle {
     route: WalletRoute,
     pub config: WalletConfig,
     endpoints: Endpoints,
+    #[serde(default)]
+    source_approval: Option<SourceApproval>,
     /// A public profile never holds this; reading refuses a file that does.
     #[serde(default, deserialize_with = "local_secret")]
     signing_seed: Option<Zeroizing<String>>,
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+struct SourceApproval {
+    revision: u32,
+    signatures: Vec<DetachedSignature>,
 }
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
@@ -89,13 +98,12 @@ fn validate_portable_profile(bundle: &Bundle) -> Result<()> {
         ));
     };
     let shape = crate::authoring::check(&bundle.config.policy_source)?;
-    let params = serde_json_canonicalizer::to_vec(&portable.params)
-        .map_err(|_| Error::config("Cannot encode portable Stellar params"))?;
+    let params_hash = crate::authoring::canonical_digest(&portable.params)?;
     if bundle.language.as_deref() != Some("allowit-portable-v1")
         || portable.language != "allowit-portable-v1"
         || portable.source_hash != bundle.source_hash
         || portable.params != bundle.config.params
-        || portable.params_hash != allowit_sdk::digest(&params)
+        || portable.params_hash != params_hash
         || portable.asset.address != bundle.config.asset
         || portable.asset.symbol != bundle.config.asset_symbol
         || portable.asset.decimals != 7
@@ -122,10 +130,22 @@ fn validate_portable_profile(bundle: &Bundle) -> Result<()> {
         &portable.kinds,
     );
     if bundle.route == WalletRoute::Native {
-        let identity = json!({"language":portable.language,"tier":portable.tier,"rules":portable.rules,"sourceHash":portable.source_hash,"paramsHash":portable.params_hash});
-        let identity = serde_json_canonicalizer::to_vec(&identity)
-            .map_err(|_| Error::config("Cannot encode portable Stellar identity"))?;
-        if allowit_sdk::digest(&identity) != bundle.module_digest {
+        if bundle.config.tier.is_some()
+            || bundle.config.source_digest != [0; 32]
+            || (!bundle.config.rules.is_empty() && bundle.config.rules != portable.rules)
+        {
+            return Err(Error::config(
+                "Native configuration contradicts its signed portable binding",
+            ));
+        }
+        let identity = crate::authoring::portable_identity(
+            &portable.language,
+            &portable.tier,
+            &portable.rules,
+            &portable.source_hash,
+            &portable.params_hash,
+        )?;
+        if identity != bundle.module_digest {
             return Err(Error::config(
                 "The Native Stellar module identity differs from its portable source",
             ));
@@ -162,6 +182,9 @@ struct Operation {
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 struct Record {
+    /// Original service identity for new records. Old records rely on caller-retained bindings.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    backend_origin: Option<String>,
     policy_id: String,
     request_id: String,
     config: WalletConfig,
@@ -170,10 +193,15 @@ struct Record {
     agent_signature: Option<DetachedSignature>,
     status: Option<OperationStatus>,
 }
+struct ExecutionProfile {
+    policy_id: String,
+    config: WalletConfig,
+    endpoints: Endpoints,
+}
 pub struct Client {
     http: HttpClient,
     origin: String,
-    bundle: Bundle,
+    bundle: ExecutionProfile,
     signer: Arc<dyn AgentSigner>,
     account: String,
     rpc_url: String,
@@ -184,6 +212,19 @@ fn revalidate_with_rpc_url(
     value: &str,
 ) -> Result<PreparedOperation> {
     if p.config.route == WalletRoute::Native {
+        let rpc = checked(sdk::rpc::HttpRpc::new(value))?;
+        if checked(rpc.call("getNetwork", json!({})))?["passphrase"]
+            != checked(sdk::passphrase(&p.config.network))?
+        {
+            return Err(Error::config("Signing RPC belongs to another network"));
+        }
+        let current = checked(sdk::rpc::get_account(&rpc, &p.config.wallet))?;
+        verify_native_members(&current, &p.config)?;
+        if current != p.state.source {
+            return Err(Error::uncertain(
+                "Native source account changed before signing. Retain the original packet.",
+            ));
+        }
         return Ok(p.clone());
     }
     if value.is_empty() {
@@ -207,16 +248,13 @@ fn journal_error(_: Error) -> Error {
     Error::config("Stellar operation journal is unsafe or unreadable; retain the original journal")
 }
 fn same_policy_config(expected: &WalletConfig, actual: &WalletConfig) -> bool {
-    let mut current = actual.clone();
-    // The server signer is checked against the prepared live chain state, not frozen token metadata.
-    current.server = expected.server.clone();
-    &current == expected
+    expected == actual
 }
 fn same_retained_policy_config(expected: &WalletConfig, actual: &WalletConfig) -> bool {
     let mut original = actual.clone();
-    // Public role identities may rotate. Read-only recovery still binds the original approved source and exact packet.
     original.agent = expected.agent.clone();
-    same_policy_config(expected, &original)
+    original.server = expected.server.clone();
+    &original == expected
 }
 fn validate_bundle(policy: &str, bundle: &Bundle) -> Result<()> {
     if bundle.version != 1
@@ -248,12 +286,25 @@ fn validate_bundle(policy: &str, bundle: &Bundle) -> Result<()> {
 }
 pub fn read_public_bundle(path: &Path) -> Result<Bundle> {
     // The file reader reports request-file errors; name the profile instead.
-    let mut bundle: Bundle = crate::typed_request::read_request_file(path).map_err(|_| {
+    let bundle: Bundle = crate::typed_request::read_request_file(path).map_err(|_| {
         Error::config(format!(
             "{} is not a readable public Stellar wallet profile",
             path.display()
         ))
     })?;
+    validate_public_bundle(bundle)
+}
+/// Decode a strict public descriptor before any JSON value projection.
+pub fn decode_public_bundle(bytes: &[u8]) -> Result<Bundle> {
+    if bytes.len() > 1_048_576 {
+        return Err(Error::config("Public wallet profile exceeds its limit"));
+    }
+    crate::typed_request::validate_json(bytes, 1_048_576)?;
+    let bundle = serde_json::from_slice(bytes)
+        .map_err(|_| Error::config("Invalid public wallet profile"))?;
+    validate_public_bundle(bundle)
+}
+fn validate_public_bundle(mut bundle: Bundle) -> Result<Bundle> {
     if let Some(_private) = bundle.signing_seed.take() {
         return Err(Error::config(
             "The public Stellar bundle must not contain signing material",
@@ -313,9 +364,14 @@ impl Client {
     pub fn new(
         bundle: Bundle,
         signer: Arc<dyn AgentSigner>,
-        origin: &str,
+        authority: &crate::config::ServerAuthority,
         rpc_url: Option<String>,
     ) -> Result<Self> {
+        if authority.network() != crate::routing::normalize(&bundle.network)? {
+            return Err(Error::config("Server authority belongs to another rail"));
+        }
+        bundle.verify_server_role(authority.public_key())?;
+        let origin = authority.origin();
         let account = signer.account().to_owned();
         if account != bundle.config.agent {
             return Err(Error::config(
@@ -323,6 +379,28 @@ impl Client {
             ));
         }
         validate_bundle(&bundle.policy_id, &bundle)?;
+        if bundle.config.route == WalletRoute::Native {
+            let endpoint=rpc_url.as_deref().filter(|v|!v.is_empty()).ok_or_else(||Error::config("Fresh Native execution requires independent RPC to verify source consent and current roles"))?;
+            bundle.verify_import(endpoint)?;
+        }
+        Self::from_context(
+            ExecutionProfile {
+                policy_id: bundle.policy_id,
+                config: bundle.config,
+                endpoints: bundle.endpoints,
+            },
+            signer,
+            origin,
+            rpc_url,
+        )
+    }
+    fn from_context(
+        bundle: ExecutionProfile,
+        signer: Arc<dyn AgentSigner>,
+        origin: &str,
+        rpc_url: Option<String>,
+    ) -> Result<Self> {
+        let account = signer.account().to_owned();
         Ok(Self {
             http: HttpClient::new(Options {
                 timeout: Duration::from_secs(30),
@@ -339,29 +417,17 @@ impl Client {
         })
     }
     fn post(&self, path: &str, body: serde_json::Value) -> Result<Response> {
-        use ed25519_dalek::{Signature, VerifyingKey};
         let issued_at = clock()?;
         let canonical = serde_json_canonicalizer::to_vec(&body)
             .map_err(|_| Error::config("Cannot encode Stellar request"))?;
-        let mut message = format!("allowit-stellar-request-v1\n{issued_at}\n{path}\n").into_bytes();
-        message.extend_from_slice(&canonical);
-        let digest = sdk::hash(message);
-        let signature = checked(self.signer.sign_hash(&digest))?;
-        checked(
-            VerifyingKey::from_bytes(&checked(sdk::account_key(&self.account))?)
-                .map_err(|_| "Invalid Stellar signing account".to_owned())
-                .and_then(|key| {
-                    key.verify_strict(&digest, &Signature::from_bytes(&signature))
-                        .map_err(|_| {
-                            "Signing capability returned an invalid request signature".to_owned()
-                        })
-                }),
+        let proof = crate::request_proof::authorize(
+            crate::vendors::stellar::server::request_proof_protocol(),
+            &self.account,
+            issued_at,
+            path,
+            &canonical,
+            |digest| checked(self.signer.sign_hash(digest)).map(|signature| signature.to_vec()),
         )?;
-        let proof = format!(
-            "Bearer stellar-proof.{}.{issued_at}.{}",
-            self.account,
-            sdk::hex(&signature)
-        );
         let bytes = serde_json::to_vec(&body)
             .map_err(|_| Error::config("Cannot encode Stellar request"))?;
         let headers = [
@@ -493,6 +559,9 @@ pub fn status(c: &Client, journal: &Store, id: &str, wait: Duration) -> Result<E
     let old: Option<Record> = journal.load(&name).map_err(journal_error)?;
     if old.as_ref().is_some_and(|v| {
         v.policy_id != policy
+            || v.backend_origin
+                .as_ref()
+                .is_some_and(|origin| origin != &c.origin)
             || v.request_id != *id
             || !same_retained_policy_config(&c.bundle.config, &v.config)
     }) {
@@ -533,6 +602,10 @@ pub fn exec(
     }
     let (mut record, resumed) = if let Some(old) = old {
         if old.policy_id != policy
+            || old
+                .backend_origin
+                .as_ref()
+                .is_some_and(|origin| origin != &c.origin)
             || old.request_id != id
             || !same_retained_policy_config(&c.bundle.config, &old.config)
             || old.request != request
@@ -567,6 +640,7 @@ pub fn exec(
     } else {
         (
             Record {
+                backend_origin: Some(c.origin.clone()),
                 policy_id: policy.clone(),
                 request_id: id.clone(),
                 config: c.bundle.config.clone(),
@@ -653,6 +727,7 @@ fn poll(
         let mut old = match record {
             Some(old) => old,
             None => Record {
+                backend_origin: Some(c.origin.clone()),
                 policy_id: c.bundle.policy_id.clone(),
                 request_id: id.into(),
                 config: c.bundle.config.clone(),
@@ -689,12 +764,21 @@ fn render(r: &Response) -> ExecutionOutcome {
     }
 }
 
+pub(crate) fn verify_native_members(account: &sdk::AccountState, c: &WalletConfig) -> Result<()> {
+    if account.address != c.wallet {
+        return Err(Error::config(
+            "Native account differs from the selected wallet",
+        ));
+    }
+    checked(account.validate_roles(&c.owner, &c.agent, &c.server))
+}
+
 #[cfg(test)]
 mod portable_descriptor_tests {
     use super::*;
     fn fixtures() -> Vec<serde_json::Value> {
         serde_json::from_str(include_str!(
-            "../../tests/fixtures/stellar-portable-descriptors.json"
+            "../../../../tests/fixtures/stellar-portable-descriptors.json"
         ))
         .unwrap()
     }
@@ -747,7 +831,7 @@ mod public_bundle_tests {
     use crate::typed_request::decode_bytes;
     fn fixture() -> serde_json::Value {
         let f: serde_json::Value = serde_json::from_str(include_str!(
-            "../../../cli/tests/fixtures/stellar-approval.json"
+            "../../../../../cli/tests/fixtures/stellar-approval.json"
         ))
         .unwrap();
         let policy = &f["policy"];
@@ -835,6 +919,194 @@ mod public_bundle_tests {
     }
 }
 
+/// Immutable original journal context. It can only enter the receipt path.
+pub struct Retained(Record);
+impl Retained {
+    pub(crate) fn config(&self) -> &WalletConfig {
+        &self.0.config
+    }
+    pub(crate) fn policy_id(&self) -> &str {
+        &self.0.policy_id
+    }
+    pub(crate) fn request(&self) -> &ExecutionRequest {
+        &self.0.request
+    }
+    pub(crate) fn signed(&self) -> bool {
+        self.0.agent_signature.is_some()
+    }
+}
+pub fn retained(
+    journal: &Store,
+    network: &str,
+    wallet: Option<&str>,
+    id: &str,
+) -> Result<Option<Retained>> {
+    let mut found = Vec::new();
+    for record in journal.entries::<Record>().map_err(journal_error)? {
+        if record.request_id != id
+            || checked(sdk::network_id(&record.config.network))?
+                != checked(sdk::network_id(network))?
+            || wallet.is_some_and(|w| w != record.config.wallet)
+        {
+            continue;
+        }
+        if record.request.operation.nonce != operation_nonce(&record.policy_id, id) {
+            return Err(Error::config("Original operation nonce changed"));
+        }
+        if let Some(origin) = &record.backend_origin
+            && parse_origin(origin)? != *origin
+        {
+            return Err(Error::config("Original backend identity changed"));
+        }
+        checked(sdk::validate_config(&record.config))?;
+        if let Some(p) = &record.prepared {
+            if p.request != record.request
+                || !same_retained_policy_config(&record.config, &p.config)
+            {
+                return Err(Error::config("Original retained preparation changed"));
+            }
+            checked(sdk::validate_retained_prepared(p))?;
+            if let Some(signature) = &record.agent_signature {
+                if signature.signer != p.config.agent {
+                    return Err(Error::config("Original agent signature changed roles"));
+                }
+                checked(sdk::signing::verify_digest(
+                    &signature.signer,
+                    &p.transaction_hash,
+                    &signature.signature,
+                ))?;
+            }
+        } else if record.agent_signature.is_some() {
+            return Err(Error::config("Signed journal has no original preparation"));
+        }
+        found.push(Retained(record));
+    }
+    match found.len() {
+        0 => Ok(None),
+        1 => Ok(found.pop()),
+        _ => Err(Error::config(
+            "Several policies retain this request ID. Select its original wallet.",
+        )),
+    }
+}
+/// This constructor never returns a client and cannot prepare, sign or submit an operation.
+pub fn recover(
+    original: Retained,
+    journal: &Store,
+    signer: Arc<dyn AgentSigner>,
+    backend: &str,
+    id: &str,
+    wait: Duration,
+) -> Result<ExecutionOutcome> {
+    // New records carry the original service. The supplied origin is only an explicit
+    // compatibility binding for old journals; it is never used to replace a stored origin.
+    let backend = original.0.backend_origin.as_deref().unwrap_or(backend);
+    let client = Client::from_context(
+        ExecutionProfile {
+            policy_id: original.0.policy_id.clone(),
+            config: original.0.config.clone(),
+            endpoints: Endpoints {
+                execute: "/api/native/execute".into(),
+                status: "/api/native/execute/status".into(),
+            },
+        },
+        signer,
+        backend,
+        None,
+    )?;
+    status(&client, journal, id, wait)
+}
+
+impl Bundle {
+    /// Reconstruct the existing v1 public approval message without granting signing authority.
+    pub fn source_approval_message(&self, revision: u32) -> Result<String> {
+        validate_bundle(&self.policy_id, self)?;
+        if revision == 0 || self.config.route != WalletRoute::Native {
+            return Err(Error::usage("Select a Native policy revision"));
+        }
+        let c = &self.config;
+        let portable = self
+            .portable
+            .as_ref()
+            .ok_or_else(|| Error::config("Native source binding is missing"))?;
+        let payload = super::consent::payload(
+            &self.policy_id,
+            revision,
+            c,
+            &self.source_hash,
+            &self.ir_hash,
+            &self.module_digest,
+            super::consent::Portable {
+                language: &portable.language,
+                tier: &portable.tier,
+                rules: &portable.rules,
+                params: &portable.params,
+                params_hash: &portable.params_hash,
+            },
+        )?;
+        super::consent::message(&payload)
+    }
+    pub(crate) fn verify_server_role(&self, server: &str) -> Result<()> {
+        if self.config.server != server
+            || (self.config.route == WalletRoute::Native && self.config.owner != self.config.wallet)
+        {
+            return Err(Error::config(
+                "Profile roles differ from independently configured server authority",
+            ));
+        }
+        Ok(())
+    }
+    pub(crate) fn verify_import(&self, endpoint: &str) -> Result<()> {
+        let rpc = checked(sdk::rpc::HttpRpc::new(endpoint))?;
+        self.verify_import_with(&rpc)
+    }
+    pub(crate) fn verify_optional_import_proof(&self, rpc: &dyn sdk::rpc::Rpc) -> Result<()> {
+        if self.source_approval.is_some() {
+            self.verify_import_with(rpc)
+        } else {
+            Ok(())
+        }
+    }
+    pub(crate) fn verify_import_with(&self, rpc: &dyn sdk::rpc::Rpc) -> Result<()> {
+        let c = &self.config;
+        if checked(rpc.call("getNetwork", json!({})))?["passphrase"]
+            != checked(sdk::passphrase(&c.network))?
+        {
+            return Err(Error::config("Import RPC belongs to another network"));
+        }
+        if c.language != sdk::PolicyLanguage::Portable {
+            return Err(Error::unsupported(
+                "Retired profiles support retained operation recovery only",
+            ));
+        }
+        if c.route == WalletRoute::PolicyWallet {
+            let live = checked(sdk::rpc::trusted_state_for_discovery(rpc, c, None))?;
+            if live.paused
+                || live.state.owner != c.owner
+                || live.state.agent != c.agent
+                || live.state.server != c.server
+                || live.state.policy_instance != c.policy_instance
+                || live.state.module_digest != c.module_digest
+                || live.state.policy_state.as_ref().is_none_or(|p| {
+                    p.params != c.params || p.rules != c.rules || p.source_digest != c.source_digest
+                })
+            {
+                return Err(Error::config(
+                    "Imported profile differs from current native policy or authority",
+                ));
+            }
+            return Ok(());
+        }
+        let proof=self.source_approval.as_ref().filter(|p|p.revision>0 && (1..=20).contains(&p.signatures.len()))
+            .ok_or_else(||Error::config("Native import requires the exact administrator source approval. Export this active policy from the owner workspace."))?;
+        let message = self.source_approval_message(proof.revision)?;
+        let digest = sdk::signing::signed_message_digest(&message);
+        let live = checked(sdk::rpc::get_account(rpc, &c.wallet))?;
+        verify_native_members(&live, c)?;
+        checked(live.validate_authority_signatures(&digest, &proof.signatures))
+    }
+}
+
 #[cfg(test)]
 mod native_revalidation_tests {
     use super::*;
@@ -844,9 +1116,125 @@ mod native_revalidation_tests {
     };
     fn fixture() -> serde_json::Value {
         serde_json::from_str(include_str!(
-            "../../../cli/tests/fixtures/stellar-policy-wallet-revalidation-rpc.json"
+            "../../../../../cli/tests/fixtures/stellar-policy-wallet-revalidation-rpc.json"
         ))
         .unwrap()
+    }
+    #[test]
+    fn recovery_uses_the_original_service_even_if_the_caller_changes_its_default() {
+        struct ProofSigner(String);
+        impl AgentSigner for ProofSigner {
+            fn account(&self) -> &str {
+                &self.0
+            }
+            fn sign_hash(&self, hash: &[u8; 32]) -> sdk::Result<[u8; 64]> {
+                use ed25519_dalek::Signer;
+                Ok(ed25519_dalek::SigningKey::from_bytes(&[44; 32])
+                    .sign(hash)
+                    .to_bytes())
+            }
+        }
+        for legacy in [false, true] {
+            let original = TcpListener::bind("127.0.0.1:0").unwrap();
+            let changed = TcpListener::bind("127.0.0.1:0").unwrap();
+            let origin = format!("http://{}", original.local_addr().unwrap());
+            let other = format!("http://{}", changed.local_addr().unwrap());
+            original.set_nonblocking(true).unwrap();
+            changed.set_nonblocking(true).unwrap();
+            let server = std::thread::spawn(move || {
+                let deadline = std::time::Instant::now() + Duration::from_secs(5);
+                loop {
+                    for (label, listener) in [("original", &original), ("changed", &changed)] {
+                        if let Ok((mut stream, _)) = listener.accept() {
+                            stream.set_nonblocking(false).unwrap();
+                            stream
+                                .set_read_timeout(Some(Duration::from_secs(2)))
+                                .unwrap();
+                            let mut header = Vec::new();
+                            while !header.ends_with(b"\r\n\r\n") {
+                                let mut byte = [0];
+                                stream.read_exact(&mut byte).unwrap();
+                                header.push(byte[0]);
+                            }
+                            let header = String::from_utf8(header).unwrap();
+                            assert!(header.starts_with("POST /api/native/execute/status "));
+                            let length: usize = header
+                                .lines()
+                                .find_map(|line| {
+                                    line.to_ascii_lowercase()
+                                        .strip_prefix("content-length:")
+                                        .map(|v| v.trim().parse().unwrap())
+                                })
+                                .unwrap();
+                            let mut body = vec![0; length];
+                            stream.read_exact(&mut body).unwrap();
+                            assert_eq!(
+                                serde_json::from_slice::<serde_json::Value>(&body).unwrap()["requestId"],
+                                "origin-status-001"
+                            );
+                            stream.write_all(b"HTTP/1.1 503 Unavailable\r\nContent-Length: 2\r\nConnection: close\r\n\r\n{}").unwrap();
+                            return label;
+                        }
+                    }
+                    assert!(
+                        std::time::Instant::now() < deadline,
+                        "No original-operation status request arrived"
+                    );
+                    std::thread::sleep(Duration::from_millis(5));
+                }
+            });
+            let p: PreparedOperation =
+                serde_json::from_value(fixture()["prepared"].clone()).unwrap();
+            let policy = "origin-policy";
+            let id = "origin-status-001";
+            let mut request = p.request.clone();
+            request.operation.nonce = operation_nonce(policy, id);
+            let record = Record {
+                backend_origin: if legacy { None } else { Some(origin.clone()) },
+                policy_id: policy.into(),
+                request_id: id.into(),
+                config: p.config,
+                request,
+                prepared: None,
+                agent_signature: None,
+                status: None,
+            };
+            let temp = tempfile::tempdir().unwrap();
+            let root = temp.path().canonicalize().unwrap();
+            let journal = Store::open(&root.join("journal")).unwrap();
+            let key = sdk::hex(&record.request.operation.nonce);
+            journal.save(&key, &record).unwrap();
+            let before = std::fs::read(root.join("journal").join(format!(
+                "request-{}.json",
+                allowit_sdk::digest(key.as_bytes())
+            )))
+            .unwrap();
+            let roundtrip: Record =
+                serde_json::from_slice(&serde_json::to_vec(&record).unwrap()).unwrap();
+            assert_eq!(roundtrip.backend_origin.is_none(), legacy);
+            let supplied = if legacy { &origin } else { &other };
+            let signer = Arc::new(ProofSigner(sdk::account_for_seed(&[44; 32])));
+            assert!(
+                recover(
+                    Retained(record),
+                    &journal,
+                    signer,
+                    supplied,
+                    id,
+                    Duration::ZERO
+                )
+                .is_err()
+            );
+            assert_eq!(server.join().unwrap(), "original");
+            assert_eq!(
+                std::fs::read(root.join("journal").join(format!(
+                    "request-{}.json",
+                    allowit_sdk::digest(key.as_bytes())
+                )))
+                .unwrap(),
+                before
+            );
+        }
     }
     #[test]
     fn local_rpc_revalidates_exact_gateway_bytes_before_signing_without_credentials() {
@@ -907,7 +1295,7 @@ mod native_revalidation_tests {
         sdk::sign(&checked, &[2; 32], 86402).unwrap();
     }
     #[test]
-    fn missing_rpc_stale_and_tampered_intents_fail_before_signing_but_classic_bypasses() {
+    fn fresh_signing_requires_rpc_while_historical_validation_keeps_original_bytes() {
         let data = fixture();
         let p: PreparedOperation = serde_json::from_value(data["prepared"].clone()).unwrap();
         assert!(revalidate_with_rpc_url(&p, 86402, "").is_err());
@@ -916,13 +1304,11 @@ mod native_revalidation_tests {
         changed.request.operation.nonce[0] ^= 1;
         assert!(revalidate_with_rpc_url(&changed, 86402, "http://127.0.0.1:1").is_err());
         let old: SignedOperation = serde_json::from_str(include_str!(
-            "../../../cli/tests/fixtures/canonical-main-9682-native-signed.json"
+            "../../../../../cli/tests/fixtures/canonical-main-9682-native-signed.json"
         ))
         .unwrap();
-        assert_eq!(
-            revalidate_with_rpc_url(&old.prepared, 86402, "").unwrap(),
-            old.prepared
-        );
+        assert!(revalidate_with_rpc_url(&old.prepared, 86402, "").is_err());
+        sdk::validate_retained_prepared(&old.prepared).unwrap();
     }
     #[test]
     fn failed_policy_wallet_envelope_remains_unknown_on_the_server_client_wire() {
@@ -992,13 +1378,22 @@ mod native_revalidation_tests {
             .unwrap();
             stream.write_all(&body).unwrap();
         });
-        let vectors: Vec<serde_json::Value> = serde_json::from_str(include_str!(
-            "../../tests/fixtures/stellar-portable-descriptors.json"
-        ))
+        // Exercise the private transport projection with the original signed context.
+        // Fresh profile admission is tested through the public constructor elsewhere.
+        let client = Client::from_context(
+            ExecutionProfile {
+                policy_id: "wire-status-policy".into(),
+                config: signed.prepared.config.clone(),
+                endpoints: Endpoints {
+                    execute: "/api/native/execute".into(),
+                    status: "/api/native/execute/status".into(),
+                },
+            },
+            Arc::new(TestKey { account }),
+            &origin,
+            None,
+        )
         .unwrap();
-        let mut bundle: Bundle = serde_json::from_value(vectors[1]["bundle"].clone()).unwrap();
-        bundle.config.agent = account.clone();
-        let client = Client::new(bundle, Arc::new(TestKey { account }), &origin, None).unwrap();
         let response = client
             .post(
                 "/api/native/execute/status",

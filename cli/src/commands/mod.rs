@@ -1,8 +1,8 @@
-//! The command tree. One folder per command group and one file per verb;
-//! each verb file holds its clap arguments and its `run`. Command files reach
-//! a chain only through `vendors::rail`.
+//! The command tree. Each verb owns its arguments and terminal interaction.
+//! SDK engine supplies shared execution and recovery workflows.
 mod completion;
 mod config;
+mod examples;
 pub(crate) mod exec;
 mod guide;
 mod history;
@@ -32,9 +32,9 @@ fn examples_template(examples: &str) -> String {
 
 const ROOT_EXAMPLES: &str = "\
 Examples:
-  allowit rail use stellar:testnet
-  allowit keys generate agent --fund
-  allowit exec --op transfer --to GDEST… --amount XLM:5
+  allowit rail use __ALLOWIT_EXAMPLE_RAIL__
+  allowit keys generate agent
+  allowit exec --op transfer --to DESTINATION --amount ASSET:5
   allowit status pay-0001 --wait 60s";
 
 const EXIT_CODES: &str = "\
@@ -54,7 +54,7 @@ pub(crate) enum Format {
 #[derive(Args, Clone, Debug, Default)]
 #[command(next_help_heading = "Global options")]
 pub(crate) struct Global {
-    /// Stellar rail: stellar:testnet or stellar:pubnet
+    /// Rail identifier or alias from rail ls
     #[arg(
         long,
         short = 'n',
@@ -65,7 +65,7 @@ pub(crate) struct Global {
         value_name = "RAIL"
     )]
     pub rail: Option<String>,
-    /// Stellar wallet address (G… classic account or C… policy contract)
+    /// Wallet address accepted by the selected rail
     #[arg(
         long,
         env = "ALLOWIT_WALLET",
@@ -240,7 +240,7 @@ pub(crate) fn parse(argv: &[String], color: bool) -> Parsed {
                     cli.global.rail_flag = rail_flag;
                     cli.global.wallet_flag = wallet_flag;
                     match cli.command {
-                        None => Parsed::Print(cmd.render_help().to_string()),
+                        None => Parsed::Print(examples::help(cmd.render_help().to_string(), argv)),
                         Some(_) => Parsed::Run(Box::new(cli)),
                     }
                 }
@@ -251,7 +251,7 @@ pub(crate) fn parse(argv: &[String], color: bool) -> Parsed {
             clap::error::ErrorKind::DisplayHelp
             | clap::error::ErrorKind::DisplayVersion
             | clap::error::ErrorKind::DisplayHelpOnMissingArgumentOrSubcommand => {
-                Parsed::Print(e.render().to_string())
+                Parsed::Print(examples::help(e.render().to_string(), argv))
             }
             // A bare group prints its help and changes nothing.
             clap::error::ErrorKind::MissingSubcommand => {
@@ -261,7 +261,10 @@ pub(crate) fn parse(argv: &[String], color: bool) -> Parsed {
                     clap::ColorChoice::Never
                 });
                 root.build();
-                Parsed::Print(group(&mut root, argv).render_help().to_string())
+                Parsed::Print(examples::help(
+                    group(&mut root, argv).render_help().to_string(),
+                    argv,
+                ))
             }
             _ => Parsed::Error(e),
         },
@@ -347,7 +350,7 @@ pub(crate) fn dispatch(command: Command, cx: &mut Ctx) -> Result<i32> {
     }
 }
 
-/// True for commands that read no rail, wallet or credential.
+/// True for commands that need no selected rail, wallet or signing credential.
 pub(crate) fn is_local(command: &Command) -> bool {
     matches!(
         command,

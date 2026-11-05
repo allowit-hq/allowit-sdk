@@ -6,7 +6,7 @@ edition = "2024"
 rust-version = "1.98"
 license = "MIT"
 publish = false
-description = "The allowit command: Stellar requests, local key custody and portable policy tools"
+description = "The allowit command: policy requests, local key custody and portable policy tools"
 
 [lib]
 name = "allowit_cli"
@@ -15,12 +15,13 @@ name = "allowit_cli"
 name = "allowit"
 path = "src/main.rs"
 
+[features]
+default = ["stellar"]
+stellar = ["allowit-sdk-engine/stellar"]
+
 [dependencies]
-allowit-sdk = { workspace = true, features = ["std", "client"] }
 allowit-sdk-engine = { path = "../engine", default-features = false }
-allowit-stellar-wallet.workspace = true
 serde_json_canonicalizer = "0.3"
-ed25519-dalek = "2"
 clap = { version = "4.6", features = ["derive", "env", "wrap_help"] }
 clap_complete = "4.6"
 libc = "0.2.190"
@@ -32,6 +33,9 @@ toml = "0.9"
 zeroize = "1.8.2"
 
 [dev-dependencies]
+allowit-sdk = { workspace = true, features = ["std", "client"] }
+allowit-stellar-wallet = { workspace = true }
+ed25519-dalek = "2"
 time = { version = "0.3.55", features = ["formatting"] }
 sha2 = "0.10.9"
 base64 = "0.22.1"

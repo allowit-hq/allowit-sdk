@@ -251,7 +251,7 @@ fn invalid_stellar_input_fails_before_any_settings_bundle_or_network_access() {
     let mock = Mock::new();
     sandbox
         .set("ALLOWIT_URL", &mock.url)
-        .set("ALLOWIT_STELLAR_BUNDLE", "/must-not-be-read");
+        .set("ALLOWIT_PROFILE_UNSUPPORTED", "/must-not-be-read");
     let invalid = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v";
     let stellar = "GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5";
     for (args, needle) in [
@@ -389,8 +389,8 @@ fn stellar_sandbox(profile: &Value) -> Sandbox {
     let mut sandbox = Sandbox::new("stellar-profile");
     let path = sandbox.work().join("public-stellar.json");
     std::fs::write(&path, serde_json::to_vec(profile).unwrap()).unwrap();
+    common::public_profile_fixture(&sandbox, profile, "http://127.0.0.1:1");
     sandbox
-        .set("ALLOWIT_STELLAR_BUNDLE", &path)
         .set("ALLOWIT_STELLAR_SIGNER", "/must-never-be-opened")
         .set("ALLOWIT_URL", "not-a-server-origin");
     sandbox
@@ -447,7 +447,7 @@ fn rail_conflict_and_secret_material_in_a_public_profile_fail_before_transport()
     let sandbox = stellar_sandbox(&profile);
     let output = sandbox.run(&["--rail", "stellar:pubnet", "wallet", "show"]);
     assert_eq!(code(&output), Some(3));
-    assert!(stderr(&output).contains("belongs to stellar:testnet"));
+    assert!(stderr(&output).contains("No verified public profile matches"));
     assert!(output.stdout.is_empty());
     let native = allowit_stellar_wallet::asset_from_identity("XLM", None).unwrap();
     let other = allowit_stellar_wallet::sac_address("stellar:testnet", &native).unwrap();
@@ -460,13 +460,9 @@ fn rail_conflict_and_secret_material_in_a_public_profile_fail_before_transport()
         "show",
     ]);
     assert_eq!(code(&output), Some(3), "{}", stderr(&output));
-    assert!(stderr(&output).contains("the wallet profile is for"));
+    assert!(stderr(&output).contains("No verified public profile matches"));
     profile["signingSeed"] = json!("must-remain-local");
-    std::fs::write(
-        sandbox.work().join("public-stellar.json"),
-        serde_json::to_vec(&profile).unwrap(),
-    )
-    .unwrap();
+    common::public_profile_fixture(&sandbox, &profile, "http://127.0.0.1:1");
     let output = sandbox.run(&["--rail", "stellar:testnet", "wallet", "show"]);
     assert_eq!(code(&output), Some(3));
     assert!(stderr(&output).contains("must not contain signing material"));
@@ -687,5 +683,5 @@ fn classic_g_wallet_selection_keeps_checksum_and_exact_profile_binding() {
     let other = allowit_stellar_wallet::account_for_seed(&[9; 32]);
     let refused = sandbox.run(&["--wallet", &other, "wallet", "show"]);
     assert_eq!(code(&refused), Some(3), "{}", stderr(&refused));
-    assert!(stderr(&refused).contains("wallet profile"));
+    assert!(stderr(&refused).contains("public profile"));
 }

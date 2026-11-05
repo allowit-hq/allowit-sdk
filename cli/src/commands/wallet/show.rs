@@ -4,7 +4,7 @@ use crate::{ctx::Ctx, error::Result};
 pub(crate) const EXAMPLES: &str = "\
 Examples:
   allowit wallet show
-  allowit wallet show --wallet CWALLET… --json";
+  allowit wallet show --wallet WALLET --json";
 
 /// Show the wallet: its roles, asset and state
 #[derive(clap::Args, Debug)]

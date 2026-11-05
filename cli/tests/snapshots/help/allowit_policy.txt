@@ -8,21 +8,25 @@ Examples:
   allowit policy show --source
 
 Commands:
-  generate  Generate a portable draft through the owner-authenticated server; does not deploy or
-            spend
-  show      Show the wallet's installed policy
-  check     Validate the structure and allowed operations of portable Rust source
-  build     Type-check portable Rust against the pinned Core host library and emit its source
-  help      Print this message or the help of the given subcommand(s)
+  owner-status  Read original owner transaction receipts
+  deploy        Deploy a reviewed policy and executable
+  fund          Fund the selected policy wallet
+  activate      Approve exact policy source and parameters
+  export        Verify and cache the active public profile
+  generate      Generate a portable draft through the owner-authenticated server; does not deploy or
+                spend
+  show          Show the wallet's installed policy
+  check         Validate the structure and allowed operations of portable Rust source
+  build         Type-check portable Rust against the pinned Core host library and emit its source
+  help          Print this message or the help of the given subcommand(s)
 
 Options:
   -h, --help  Print help
 
 Global options:
-  -n, --rail <RAIL>       Stellar rail: stellar:testnet or stellar:pubnet [env: ALLOWIT_RAIL]
-                          [alias: --network]
-      --wallet <ADDR>     Stellar wallet address (G… classic account or C… policy contract) [env:
-                          ALLOWIT_WALLET]
+  -n, --rail <RAIL>       Rail identifier or alias from rail ls [env: ALLOWIT_RAIL] [alias:
+                          --network]
+      --wallet <ADDR>     Wallet address accepted by the selected rail [env: ALLOWIT_WALLET]
       --output <FORMAT>   Output format [possible values: text, json]
       --json              Same as --output json
   -y, --yes               Confirm destructive actions without a prompt

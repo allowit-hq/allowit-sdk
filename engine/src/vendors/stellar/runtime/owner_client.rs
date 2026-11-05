@@ -1,20 +1,11 @@
 //! Owner HTTP authentication and portable generation. This workflow grants no spending authority.
-use crate::{
-    config::parse_origin,
-    error::{Error, Result},
-};
-use allowit_sdk::transport::{
-    http::{HttpClient, Method, Request, Response},
-    rpc::Options,
-};
+pub mod workflow;
+use crate::error::{Error, Result};
+use allowit_sdk::transport::http::Method;
 use allowit_stellar_wallet::{self as native, PolicyParams, PolicyTier};
 use base64::{Engine, engine::general_purpose::STANDARD};
-use ed25519_dalek::{Signature, VerifyingKey};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
-use std::time::{Duration, Instant};
-use time::{OffsetDateTime, format_description::well_known::Rfc3339};
-use zeroize::Zeroizing;
 
 const SOURCE_PROFILE: &str = "allowit-stellar-transfer-v1";
 const OPERATION: &str = "stellar::sep41_transfer";
@@ -26,70 +17,11 @@ pub trait OwnerSigner {
     fn sign_hash(&self, digest: &[u8; 32]) -> native::Result<[u8; 64]>;
 }
 
-#[derive(Clone, Debug)]
-pub enum Target {
-    NewWallet,
-    Installation(String),
-}
-#[derive(Clone, Debug)]
-pub struct GenerateRequest {
-    pub prompt: String,
-    pub network: String,
-    pub profile: String,
-    pub target: Target,
-}
-impl GenerateRequest {
-    pub fn validate(&self) -> Result<()> {
-        if !(5..=3000).contains(&self.prompt.len()) {
-            return Err(Error::usage("Describe the policy in 5–3000 UTF-8 bytes"));
-        }
-        crate::routing::info(&self.network)?;
-        if self.profile.is_empty()
-            || self.profile.len() > 128
-            || !self
-                .profile
-                .bytes()
-                .all(|b| b.is_ascii_alphanumeric() || b"._:-".contains(&b))
-        {
-            return Err(Error::usage("Select an advertised Stellar wallet profile"));
-        }
-        if let Target::Installation(id) = &self.target {
-            lower_hash(id)?;
-        }
-        Ok(())
-    }
-}
+pub use crate::generation::{GenerateRequest, Target};
 
 pub struct OwnerClient {
-    http: HttpClient,
-    backend: String,
-    origin: String,
-    owner: String,
-    session: Option<OwnerSession>,
-}
-struct OwnerSession {
-    cookie: Zeroizing<String>,
-    expires: u64,
-}
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields, rename_all = "camelCase")]
-struct Challenge {
-    id: String,
-    message: String,
-    address: String,
-    origin: String,
-    expires_at: String,
-}
-#[derive(Deserialize)]
-struct Authenticated {
-    session: SessionInfo,
-}
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields, rename_all = "camelCase")]
-struct SessionInfo {
-    address: String,
-    network: String,
-    expires_at: String,
+    session: crate::owner_session::Client,
+    pub(super) authority: Option<crate::config::ServerAuthority>,
 }
 #[derive(Deserialize)]
 struct Discovery {
@@ -147,7 +79,7 @@ struct Generated {
 }
 
 /// Only public generation fields are returned. Extra server state and credentials are never copied.
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct GeneratedPolicy {
     pub id: String,
@@ -165,7 +97,7 @@ pub struct GeneratedPolicy {
     pub mint: String,
     pub runtime: PublicRuntime,
 }
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PublicRuntime {
     pub source_profile: String,
@@ -173,12 +105,12 @@ pub struct PublicRuntime {
     pub operation: String,
     pub instance_binding: PolicyBinding,
 }
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct WalletSelection {
     pub kind: String,
     pub profile: String,
 }
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct PolicyBinding {
     pub profile: String,
@@ -198,7 +130,7 @@ pub struct PolicyBinding {
     pub template: Option<bool>,
     pub portable: PortableDraft,
 }
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct PortableDraft {
     pub language: String,
@@ -214,14 +146,14 @@ pub struct PortableDraft {
     #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
     pub kinds: std::collections::BTreeMap<String, String>,
 }
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct PortableAsset {
     pub symbol: String,
     pub address: String,
     pub decimals: u32,
 }
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct BuildReport {
     pub prefix: Vec<String>,
@@ -241,214 +173,65 @@ fn lower_hash(value: &str) -> Result<()> {
         Err(Error::config("Invalid lowercase Stellar identity"))
     }
 }
-fn timestamp(value: &str) -> Result<u64> {
-    let parsed = OffsetDateTime::parse(value, &Rfc3339)
-        .map_err(|_| Error::config("Invalid owner authentication timestamp"))?;
-    if parsed.format(&Rfc3339).ok().as_deref() != Some(value) {
-        return Err(Error::config("Noncanonical owner authentication timestamp"));
-    }
-    u64::try_from(parsed.unix_timestamp())
-        .map_err(|_| Error::config("Invalid owner authentication timestamp"))
-}
-fn cookie(response: &Response, backend: &str) -> Result<Zeroizing<String>> {
-    let headers: Vec<_> = response.header_values("set-cookie").collect();
-    if headers.len() != 1 {
-        return Err(Error::config(
-            "Owner authentication requires one unambiguous session cookie",
-        ));
-    }
-    let raw = std::str::from_utf8(headers[0])
-        .map_err(|_| Error::config("Invalid owner session cookie"))?;
-    if !raw.bytes().all(|b| (32..127).contains(&b)) {
-        return Err(Error::config("Invalid owner session cookie"));
-    }
-    let mut fields = raw.split(';').map(str::trim);
-    let pair = fields
-        .next()
-        .ok_or_else(|| Error::config("Missing owner session cookie"))?;
-    let (name, value) = pair
-        .split_once('=')
-        .ok_or_else(|| Error::config("Invalid owner session cookie"))?;
-    if !matches!(name, "allowit_session" | "__Host-allowit")
-        || value.len() != 32
-        || !value
-            .bytes()
-            .all(|b| b.is_ascii_alphanumeric() || b"_-".contains(&b))
-    {
-        return Err(Error::config("Invalid owner session cookie"));
-    }
-    let attributes: Vec<_> = fields.map(str::to_ascii_lowercase).collect();
-    let mut seen = std::collections::BTreeSet::new();
-    if attributes
-        .iter()
-        .any(|a| !seen.insert(a.split('=').next().unwrap_or("")))
-    {
-        return Err(Error::config("Ambiguous owner session cookie attributes"));
-    }
-    if !attributes.iter().any(|a| a == "path=/")
-        || !attributes.iter().any(|a| a == "httponly")
-        || !attributes.iter().any(|a| a == "samesite=lax")
-        || attributes.iter().any(|a| a.starts_with("domain="))
-        || (name == "__Host-allowit"
-            && (!backend.starts_with("https://") || !attributes.iter().any(|a| a == "secure")))
-    {
-        return Err(Error::config("Unsafe owner session cookie scope"));
-    }
-    Ok(Zeroizing::new(pair.to_owned()))
-}
 impl OwnerClient {
     pub fn new(backend: &str, origin: &str, owner: &str) -> Result<Self> {
-        let owner_key = native::account_key(owner)
+        native::signing::canonical_account_key(owner)
             .map_err(|_| Error::config("Select a canonical Stellar G owner account"))?;
-        if stellar_strkey::ed25519::PublicKey(owner_key).to_string() != owner {
-            return Err(Error::config("Select a canonical Stellar G owner account"));
-        }
-        if origin.is_empty() {
-            return Err(Error::config("Set the explicit owner sign-in Origin"));
-        }
         Ok(Self {
-            http: HttpClient::new(Options {
-                timeout: Duration::from_secs(180),
-                max_response_bytes: 1_048_576,
-                no_proxy: false,
-                connect_timeout: None,
-            })
-            .map_err(|_| Error::config("Cannot initialize owner HTTP transport"))?,
-            backend: parse_origin(backend)?,
-            origin: parse_origin(origin)?,
-            owner: owner.into(),
-            session: None,
+            session: crate::owner_session::Client::new(backend, origin, owner)?,
+            authority: None,
         })
     }
-    fn send(
-        &self,
-        method: Method,
-        path: &str,
-        body: Option<&Value>,
-        session: Option<&str>,
-        uncertain: bool,
-    ) -> Result<Response> {
-        let mut headers = vec![("Origin".into(), self.origin.clone())];
-        if let Some(cookie) = session {
-            headers.push(("Cookie".into(), cookie.into()));
-        }
-        let bytes = body
-            .map(serde_json::to_vec)
-            .transpose()
-            .map_err(|_| Error::config("Cannot encode owner request"))?;
-        if bytes.is_some() {
-            headers.push(("Content-Type".into(), "application/json".into()));
-        }
-        let response=self.http.send_success_body(Request{method,url:&format!("{}{path}",self.backend),headers:&headers,body:bytes.as_deref()},if uncertain {None} else {Some(Instant::now()+Duration::from_secs(30))})
-            .map_err(|_|if uncertain {Error::uncertain("Policy creation is uncertain; inspect the owner workspace before any new generation")} else {Error::config("Owner server request is unavailable")})?;
-        if !(200..300).contains(&response.status) {
-            if uncertain && response.status >= 500 {
-                return Err(Error::uncertain(
-                    "Policy creation returned a server error; inspect the owner workspace before any new generation",
-                ));
-            }
-            return Err(Error::api(response.status, "Owner request was refused"));
-        }
-        Ok(response)
-    }
-    fn decode<T: serde::de::DeserializeOwned>(response: &Response, uncertain: bool) -> Result<T> {
-        serde_json::from_slice(&response.body).map_err(|_|if uncertain {Error::uncertain("Invalid generation response; inspect the original owner workspace before retrying")} else {Error::config("Invalid owner server response")})
+    pub fn with_authority(
+        authority: &crate::config::ServerAuthority,
+        origin: &str,
+        owner: &str,
+    ) -> Result<Self> {
+        let mut client = Self::new(authority.origin(), origin, owner)?;
+        client.authority = Some(authority.clone());
+        Ok(client)
     }
     pub fn authenticate(&mut self, signer: &dyn OwnerSigner, now: u64) -> Result<()> {
-        if signer.account() != self.owner {
+        if signer.account() != self.session.owner {
             return Err(Error::config(
                 "Owner signer differs from the selected account",
             ));
         }
-        self.session = None;
-        let response = self.send(
-            Method::Post,
-            "/api/auth/challenge",
-            Some(&json!({"address":self.owner})),
-            None,
-            false,
-        )?;
-        let guest = cookie(&response, &self.backend)?;
-        let challenge: Challenge = Self::decode(&response, false)?;
-        let expiry = timestamp(&challenge.expires_at)?;
-        lower_hash(&challenge.id)?;
-        let host = self.origin.split_once("://").expect("parsed origin").1;
-        let prefix = format!(
-            "{host} wants you to sign in with your Stellar account:\n{}\n\nSign in to AllowIt. This does not authorize spending or move funds.\n\nURI: {}\nVersion: 1\nNonce: {}\nIssued At: ",
-            self.owner, self.origin, challenge.id
-        );
-        let (issued, expiration) = challenge
-            .message
-            .strip_prefix(&prefix)
-            .and_then(|s| s.split_once("\nExpiration Time: "))
-            .ok_or_else(|| {
-                Error::config("Owner sign-in message differs from its exact account and Origin")
-            })?;
-        let issued = timestamp(issued)?;
-        if challenge.address != self.owner
-            || challenge.origin != self.origin
-            || expiration != challenge.expires_at
-            || expiry <= now
-            || expiry.checked_sub(issued) != Some(300)
-            || issued > now.saturating_add(30)
-            || now.saturating_sub(issued) > 300
-        {
-            return Err(Error::config(
-                "Owner sign-in challenge is invalid or expired",
-            ));
-        }
-        let mut message = b"Stellar Signed Message:\n".to_vec();
-        message.extend_from_slice(challenge.message.as_bytes());
-        let digest = native::hash(message);
-        let signature = signer
-            .sign_hash(&digest)
-            .map_err(|_| Error::config("Owner signing capability failed"))?;
-        VerifyingKey::from_bytes(&native::account_key(&self.owner).map_err(Error::config)?)
-            .map_err(|_| Error::config("Invalid owner key"))?
-            .verify_strict(&digest, &Signature::from_bytes(&signature))
-            .map_err(|_| Error::config("Owner signer returned an invalid signature"))?;
-        let response=self.send(Method::Post,"/api/auth/verify",Some(&json!({"id":challenge.id,"address":self.owner,"message":challenge.message,"signature":STANDARD.encode(signature)})),Some(&guest),false)?;
-        let authenticated: Authenticated = Self::decode(&response, false)?;
-        let rotated = cookie(&response, &self.backend)?;
-        let expires = timestamp(&authenticated.session.expires_at)?;
-        if rotated.as_str() == guest.as_str()
-            || authenticated.session.address != self.owner
-            || authenticated.session.network != "stellar"
-            || expires <= now
-            || expires > now.saturating_add(86_490)
-        {
-            return Err(Error::config(
-                "Owner session was not safely rotated for this account",
-            ));
-        }
-        self.session = Some(OwnerSession {
-            cookie: rotated,
-            expires,
-        });
-        Ok(())
-    }
-    fn owner_request<T: serde::de::DeserializeOwned>(
-        &self,
-        method: Method,
-        path: &str,
-        body: Option<&Value>,
-        now: u64,
-        uncertain: bool,
-    ) -> Result<T> {
-        let session = self
-            .session
-            .as_ref()
-            .filter(|s| s.expires > now)
-            .ok_or_else(|| Error::config("Authenticate the selected Stellar owner first"))?;
-        Self::decode(
-            &self.send(method, path, body, Some(&session.cookie), uncertain)?,
-            uncertain,
-        )
+        let owner = self.session.owner.clone();
+        let origin = self.session.origin.clone();
+        self.session.authenticate("stellar", now, |challenge| {
+            let (issued, expiration) = native::signing::sign_in_message_times(
+                &challenge.message,
+                &owner,
+                &origin,
+                &challenge.id,
+            )
+            .map_err(Error::config)?;
+            let issued = crate::owner_session::timestamp(issued)?;
+            let expiry = crate::owner_session::timestamp(&challenge.expires_at)?;
+            if expiration != challenge.expires_at
+                || expiry.checked_sub(issued) != Some(300)
+                || issued > now.saturating_add(30)
+                || now.saturating_sub(issued) > 300
+            {
+                return Err(Error::config(
+                    "Owner sign-in challenge is invalid or expired",
+                ));
+            }
+            let digest = native::signing::signed_message_digest(&challenge.message);
+            let signature = signer
+                .sign_hash(&digest)
+                .map_err(|_| Error::config("Owner signing capability failed"))?;
+            native::signing::verify_digest(&owner, &digest, &signature)
+                .map_err(|_| Error::config("Owner signer returned an invalid signature"))?;
+            Ok(STANDARD.encode(signature))
+        })
     }
     pub fn generate(&self, request: &GenerateRequest, now: u64) -> Result<GeneratedPolicy> {
         request.validate()?;
         let discovery: Discovery =
-            self.owner_request(Method::Get, "/api/micro/runtime", None, now, false)?;
+            self.session
+                .owner_request(Method::Get, "/api/micro/runtime", None, now, false)?;
         let candidates: Vec<_> = discovery
             .wallets
             .iter()
@@ -486,7 +269,7 @@ impl OwnerClient {
                         "A new wallet requires an advertised contract-wallet template",
                     ));
                 }
-                let templates: Templates = self.owner_request(
+                let templates: Templates = self.session.owner_request(
                     Method::Post,
                     "/api/native/templates",
                     Some(&json!({})),
@@ -510,7 +293,9 @@ impl OwnerClient {
                 )
                 .map_err(|_| Error::config("Invalid advertised template asset"))?;
                 if native::sac_address(network, &asset).map_err(Error::config)? != template.asset
-                    || !(100..=10_000_000).contains(&template.max_fee_stroops)
+                    || !(super::super::server_owner::fee_bounds().minimum
+                        ..=u64::from(native::max_fee_ceiling(&native::WalletRoute::PolicyWallet)))
+                        .contains(&u64::from(template.max_fee_stroops))
                 {
                     return Err(Error::config("Advertised template asset or fee is invalid"));
                 }
@@ -518,8 +303,13 @@ impl OwnerClient {
                 String::new()
             }
             Target::Installation(id) => {
-                let all: Installations =
-                    self.owner_request(Method::Get, "/api/native/policies", None, now, false)?;
+                let all: Installations = self.session.owner_request(
+                    Method::Get,
+                    "/api/native/policies",
+                    None,
+                    now,
+                    false,
+                )?;
                 let matching: Vec<_> = all
                     .installations
                     .iter()
@@ -527,7 +317,7 @@ impl OwnerClient {
                         i.policy_id == *id
                             && i.profile == request.profile
                             && i.config.network == *network
-                            && i.config.owner == self.owner
+                            && i.config.owner == self.session.owner
                             && native::hex(&i.config.policy_instance) == *id
                     })
                     .collect();
@@ -560,7 +350,7 @@ impl OwnerClient {
                 id.clone()
             }
         };
-        let result:Generated=self.owner_request(Method::Post,"/api/micro/generate",Some(&json!({"prompt":request.prompt,"network":network,"runtime":{"sourceProfile":SOURCE_PROFILE,"wallet":{"kind":wallet.kind,"profile":request.profile}},"operation":{"function":OPERATION},"stellarInstallationId":installation})),now,true)?;
+        let result:Generated=self.session.owner_request(Method::Post,"/api/micro/generate",Some(&json!({"prompt":request.prompt,"network":network,"runtime":{"sourceProfile":SOURCE_PROFILE,"wallet":{"kind":wallet.kind,"profile":request.profile}},"operation":{"function":OPERATION},"stellarInstallationId":installation})),now,true)?;
         if result.policies.len() > 30 || result.selected_id.is_empty() {
             return Err(Error::uncertain(
                 "Generation returned an invalid workspace identity",
@@ -634,8 +424,6 @@ fn validate_generated(
     let shape = crate::authoring::check(&policy.code).map_err(|_| {
         Error::uncertain("Returned policy source is outside the portable vocabulary")
     })?;
-    let params = serde_json_canonicalizer::to_vec(&d.params)
-        .map_err(|_| Error::uncertain("Invalid returned policy params"))?;
     if !crate::request::request_id_valid(&policy.id)
         || policy.revision != 1
         || policy.network != network
@@ -654,7 +442,7 @@ fn validate_generated(
         || b.asset_symbol != policy.token
         || d.language != LANGUAGE
         || d.source_hash != policy.source_hash
-        || d.params_hash != allowit_sdk::digest(&params)
+        || d.params_hash != crate::authoring::canonical_digest(&d.params)?
         || d.asset.address != policy.mint
         || d.asset.symbol != policy.token
         || d.asset.decimals != 7
@@ -698,25 +486,30 @@ fn validate_generated(
     let asset = native::asset_from_identity(&b.asset_symbol, b.asset_issuer.as_deref())
         .map_err(Error::config)?;
     if native::sac_address(network, &asset).map_err(Error::config)? != b.asset
-        || !(100..=if kind == "contract-wallet" {
-            10_000_000
-        } else {
-            1_000_000
-        })
-            .contains(&b.max_fee_stroops)
+        || !(super::super::server_owner::fee_bounds().minimum
+            ..=u64::from(native::max_fee_ceiling(&if kind == "contract-wallet" {
+                native::WalletRoute::PolicyWallet
+            } else {
+                native::WalletRoute::Native
+            })))
+            .contains(&u64::from(b.max_fee_stroops))
     {
         return Err(Error::uncertain(
             "Returned policy asset or fee binding differs",
         ));
     }
     if kind == "owner-wallet" {
-        let identity = json!({"language":d.language,"tier":d.tier,"rules":d.rules,"sourceHash":d.source_hash,"paramsHash":d.params_hash});
-        let identity = serde_json_canonicalizer::to_vec(&identity)
-            .map_err(|_| Error::uncertain("Cannot encode returned native policy identity"))?;
+        let identity = crate::authoring::portable_identity(
+            &d.language,
+            &d.tier,
+            &d.rules,
+            &d.source_hash,
+            &d.params_hash,
+        )?;
         if b.route != "native"
             || b.tier.is_some()
             || !shape.canonical_only
-            || b.module_digest != allowit_sdk::digest(&identity)
+            || b.module_digest != identity
         {
             return Err(Error::uncertain("Returned native policy identity differs"));
         }
@@ -757,3 +550,6 @@ fn validate_generated(
     }
     Ok(())
 }
+
+#[cfg(test)]
+mod tests;

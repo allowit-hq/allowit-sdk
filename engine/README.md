@@ -47,11 +47,16 @@ Rail packages can use common core primitives directly. Core has no dependency on
 | Module | Purpose |
 | --- | --- |
 | `authoring` | Shared portable source gate and bounded real compilation using embedded Core resources |
-| `stellar` | Native execution, caller-owned OperationStore, ordered authorization retention and exact-hash recovery |
-| `stellar::owner_client` | Owner sign-in and server-backed portable generation with explicit template or installation selection |
-| `stellar::client` | Authenticated server requests, signer capabilities and exact-intent client resumption |
+| `generation` | Registered owner-authenticated generation with exact selected-rail binding |
+| `owner` | Common owner deployment, funding, activation, export and receipt workflows |
+| `profiles` | Verified public exports, portable imports, immutable versions and explicit selection |
+| `execution`, `input` | Shared request orchestration, amount parsing and selected native format checks |
+| `runtime` | Common local execution, caller-owned OperationStore and original-packet recovery |
+| `vendors::stellar` | Native request, owner-signing, simulation and receipt bindings |
+| `vendors::stellar::runtime::owner_client` | Owner sign-in and server-backed portable generation with explicit template or installation selection |
+| `vendors::stellar::runtime::client` | Authenticated server requests, signer capabilities and exact-intent client resumption |
 | `request`, `typed_request` | Bounded request identifiers, input documents and operation identities |
-| `config`, `routing`, `wallet` | Configuration, Stellar network selection and caller-owned key bindings |
+| `config`, `routing`, `wallet` | Configuration, registered network selection and caller-owned opaque signers |
 | `output` | Shared printable values |
 | `error` | The error type from `allowit_sdk::client::error` |
 
@@ -67,13 +72,18 @@ Provider delivery and chain settlement remain separate results.
 The complete authorization must be durable before the second native simulation starts.
 Retention failure prevents that RPC step. The caller retains the returned final packet before exposing it to an agent.
 
-`stellar::owner_client` takes a distinct caller-owned owner signer. It checks the complete sign-in
-message, account, Origin, nonce and expiry before signing, then requires a rotated owner session.
-It validates advertised generation profiles, networks and terms before sending one creation request.
-Returned source, params and native bindings are checked as a draft, never as publication or spending authority.
+`wallet::local_signer` selects the compiled key provider without exposing native private-key bytes.
+Native key formats, cryptography and message domains live in the vendor library.
+SDK engine retains secure files, configuration, sessions and workflow sequencing.
+`generation::generate` requires a matching signer network before selecting its registered backend capability.
+
+`vendors::stellar::runtime::owner_client` takes a distinct caller-owned owner signer. Native helpers check the exact
+sign-in message, account, Origin and nonce. SDK engine checks freshness and requires a rotated owner session.
+It checks advertised generation profiles, networks and terms before sending one creation request.
+The SDK checks returned source, params and native bindings as a draft. This draft grants no publication or spending authority.
 An uncertain generation is not repeated automatically.
 
-`stellar::client` takes a caller-owned signer capability and private core `Store`.
+`vendors::stellar::runtime::client` takes a caller-owned signer capability and private core `Store`.
 It saves the original intent before preparation and the exact signed proof before transmission.
 It preserves packet bytes, hashes and request IDs through status and recovery.
 CLI exit codes and terminal rendering stay in the CLI.
@@ -94,3 +104,36 @@ Run these commands from the repository root:
 cargo test --locked -p allowit-sdk-engine
 cargo clippy --locked -p allowit-sdk-engine --all-targets -- -D warnings
 ```
+
+## Compiled capabilities and public profiles
+
+The vendor library defines native network identities and protocol aliases. SDK adapters register friendly aliases, display labels, asset defaults and explorer links for common routing and presentation.
+A build without vendor features exposes an empty rail inventory.
+CLI examples use the selected rail, then the first network supported by the build.
+
+Owner export installs only the exact independently checked activation result.
+Explicit public import checks current native authority before saving a profile.
+Native imports also check the existing administrator signatures over the exact source and parameters.
+Common profile parameters use Core `PolicyValue`. The selected vendor checks native addresses and converts values for its execution model.
+
+The SDK stores public profiles separately from signing keys and private execution journals.
+Each profile version retains its complete public binding and server origin.
+Historical status consumes a sealed original journal context and a current request signer.
+It uses the original signed configuration and packet, without a current profile or authority pin.
+That status path cannot prepare or sign a replacement operation.
+
+## Public server authority
+
+`config::ServerAuthority::new(network, origin, public_key)` binds an independently configured public identity to a canonical rail and backend origin.
+`profiles::Cache::import` takes that authority and an independent RPC endpoint.
+`owner::Context` carries the same authority. The selected vendor checks the exact native role and current administrator quorum.
+The common CLI records the pin with `rail trust ORIGIN PUBLIC_KEY` in the selected rail’s `server_authorities` map.
+
+A public descriptor and an unauthenticated server response cannot supply their own trusted identity.
+Fresh Native signing verifies actual source consent and current roles through independent RPC.
+The compiler receives an explicit allowlist of public toolchain paths. Provider credentials, signer values and authoring overrides do not enter Python or rustc.
+
+A resolved execution profile and its authority remain owned by one command across its journal check and dispatch.
+The receipt-only recovery capability instead reads the original private record, without importing an obsolete public profile.
+It accepts no fresh preparation or operation-signing path. Recovery queries the configured settlement service for the original packet.
+A final success requires a verified receipt.

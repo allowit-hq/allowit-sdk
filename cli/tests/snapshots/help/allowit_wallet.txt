@@ -1,25 +1,26 @@
-Select and inspect installed Stellar policy wallets
+Select and inspect installed policy wallets
 
 Usage: allowit wallet [OPTIONS] <COMMAND>
 
 Examples:
-  allowit wallet use CWALLET…
+  allowit wallet use WALLET
   allowit wallet show
 
 Commands:
-  ls    List the wallets this device knows on the current rail [alias: list]
-  show  Show the wallet: its roles, asset and state
-  use   Make an address the current rail's default wallet
-  help  Print this message or the help of the given subcommand(s)
+  import  Verify and cache a public profile without changing the selected agent key
+  setup   Configure a fresh funded account with distinct owner, agent and server roles
+  ls      List the wallets this device knows on the current rail [alias: list]
+  show    Show the wallet: its roles, asset and state
+  use     Make an address the current rail's default wallet
+  help    Print this message or the help of the given subcommand(s)
 
 Options:
   -h, --help  Print help
 
 Global options:
-  -n, --rail <RAIL>       Stellar rail: stellar:testnet or stellar:pubnet [env: ALLOWIT_RAIL]
-                          [alias: --network]
-      --wallet <ADDR>     Stellar wallet address (G… classic account or C… policy contract) [env:
-                          ALLOWIT_WALLET]
+  -n, --rail <RAIL>       Rail identifier or alias from rail ls [env: ALLOWIT_RAIL] [alias:
+                          --network]
+      --wallet <ADDR>     Wallet address accepted by the selected rail [env: ALLOWIT_WALLET]
       --output <FORMAT>   Output format [possible values: text, json]
       --json              Same as --output json
   -y, --yes               Confirm destructive actions without a prompt

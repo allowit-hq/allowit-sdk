@@ -5,48 +5,34 @@ use crate::error::{Error, Result};
 use std::cell::RefCell;
 thread_local! { static SELECTED: RefCell<Option<String>> = const { RefCell::new(None) }; }
 
-/// The chain family of a rail.
+/// Opaque identity of a compiled vendor registration.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Family {
-    Stellar,
-}
+pub struct Family(pub(crate) &'static str);
 impl Family {
     pub fn name(self) -> &'static str {
-        match self {
-            Family::Stellar => "stellar",
-        }
+        self.0
     }
 }
-
 /// One admitted rail.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct RailInfo {
     /// Canonical CAIP-2 identifier. Output always uses it.
     pub id: &'static str,
+    /// User-facing name supplied by the native registration.
+    pub label: &'static str,
     /// Friendly input aliases. The first one is the display name.
     pub aliases: &'static [&'static str],
     pub family: Family,
     pub testnet: bool,
 }
-/// Every admitted rail, in display order.
-pub const RAILS: &[RailInfo] = &[
-    RailInfo {
-        id: "stellar:testnet",
-        aliases: &["stellar:testnet"],
-        family: Family::Stellar,
-        testnet: true,
-    },
-    RailInfo {
-        id: "stellar:pubnet",
-        aliases: &["stellar:mainnet", "stellar:pubnet"],
-        family: Family::Stellar,
-        testnet: false,
-    },
-];
-
+/// Every network advertised by the compiled vendor registrations, in build order.
+pub fn all() -> &'static [RailInfo] {
+    static RAILS: std::sync::OnceLock<Vec<RailInfo>> = std::sync::OnceLock::new();
+    RAILS.get_or_init(crate::vendors::networks)
+}
 /// Looks up a rail by canonical identifier or alias.
 pub fn info(network: &str) -> Result<&'static RailInfo> {
-    RAILS
+    all()
         .iter()
         .find(|r| r.id == network || r.aliases.contains(&network))
         .ok_or_else(|| {
@@ -93,6 +79,7 @@ mod tests {
         .unwrap();
         assert!(selected().is_none());
     }
+    #[cfg(feature = "stellar")]
     #[test]
     fn aliases_normalize_to_canonical_caip2() {
         for (input, canonical) in [
@@ -107,5 +94,15 @@ mod tests {
         for bad in ["eip155:1", "solana", "", "stellar:futurenet"] {
             assert_eq!(normalize(bad).unwrap_err().code, 2, "{bad}");
         }
+    }
+}
+
+#[cfg(all(test, not(feature = "stellar")))]
+mod empty_build {
+    #[test]
+    fn no_compiled_vendor_exposes_no_network() {
+        assert!(super::all().is_empty());
+        assert!(super::info("stellar:testnet").is_err());
+        assert!(super::family("stellar:testnet").is_err());
     }
 }

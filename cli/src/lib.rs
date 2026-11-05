@@ -1,20 +1,18 @@
 //! The `allowit` command. Argument parsing, terminal output and rail adapters
 //! live here; engine requests and service composition come from
 //! `allowit-sdk-engine`, which has no terminal I/O.
-pub use allowit_sdk::admin;
 pub use allowit_sdk_engine::{VERSION, error, wallet};
-pub(crate) use allowit_sdk_engine::{config, output, request, routing, typed_request};
-pub use allowit_stellar_wallet as stellar;
+pub(crate) use allowit_sdk_engine::{config, output, request, routing};
 mod commands;
 mod ctx;
 mod exit;
+mod owner;
 mod settings;
 mod term;
-mod vendors;
+pub mod vendors;
 use crate::{config::env_value, error::Error, exit::Exit, term::Out};
 use serde_json::{Value, json};
 use std::io::Write;
-pub use vendors::stellar::{approval as stellar_approval, owner as stellar_owner};
 
 /// Every command path, hidden aliases included, for the help snapshot tests.
 #[doc(hidden)]

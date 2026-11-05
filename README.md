@@ -4,9 +4,13 @@
 
 This repository contains `allowit-sdk-engine`, the shared offchain execution library, and the `allowit` CLI.
 Both CLI and server callers use SDK engine. Each actor retains its own keys, authorization and durable application state.
+The CLI owns command UX and client-side validation of selected bindings and requests.
+It uses shared Core and SDK logic for checks that also run at server or rail boundaries.
+Server enforcement, native authority and verified settlement remain authoritative.
 
 [Allowit core](https://github.com/allowit-hq/allowit-core) contains the portable `allowit` policy library, its shared source gate and feature-gated host primitives.
-[Stellar rail core](https://github.com/allowit-hq/allowit-contracts-stellar/tree/main/stellar/core) owns native requests, encoding, signatures, RPC methods, simulation and settlement rules.
+Rail libraries own native requests, encoding, signatures, RPC methods, simulation and settlement rules.
+The [workspace manifest](Cargo.toml), [lockfile](Cargo.lock), [rail table](engine/src/routing.rs) and [adapter wiring](cli/src/vendors/mod.rs) define this build.
 SDK engine composes those capabilities into preparation, execution, status and recovery workflows.
 The server adds trusted policy context, admission, server authority, reservations and accounting.
 
@@ -45,15 +49,22 @@ cargo build --locked --release --bin allowit
 The [CLI reference](cli/README.md) describes owner-authenticated draft generation, local keys, public wallet profiles and agent execution.
 
 ```sh
-allowit rail use stellar:testnet
+allowit rail ls --json
+allowit rail show RAIL --json
+allowit rail use RAIL
 allowit keys import agent agent.key
 allowit keys use agent
-allowit exec --op transfer --to GDEST… --amount XLM:5 --request-id pay-0001
+allowit wallet use WALLET
+allowit exec --op transfer --to DESTINATION --amount ASSET:5 --request-id pay-0001
 allowit status pay-0001 --wait 60s
 ```
 
-`ALLOWIT_STELLAR_BUNDLE` names the owner's public wallet profile and `ALLOWIT_URL` selects the server origin.
-The profile contains public bindings, never a signing seed. The selected key must match its agent before any request or signature.
+Replace `RAIL`, `WALLET`, `DESTINATION` and `ASSET:5` with values from the selected adapter.
+`rail ls` and `rail show` report the installed executable's registered rails and capabilities.
+Follow that [adapter's configuration](cli/src/vendors/) for the owner's public wallet profile.
+[Known issues](known_issues.md) records profile and native-binding workarounds.
+`ALLOWIT_URL` selects the server origin. A public profile contains no signing material.
+The selected key must match its agent before any request or signature.
 An uncertain operation retains its original request ID and signed bytes. Read its status before authorizing another operation.
 
 ## Write a portable policy
@@ -64,6 +75,7 @@ Policies are synchronous Rust against the `allowit` package:
 use allowit::prelude::*;
 
 pub fn execute(ctx: &AllowitContext) -> allowit::Result {
+    allowit::operations(ctx, &ctx.params[allowit::OPERATIONS])?;
     allowit::daily_spending_limit(ctx, &ctx.params[allowit::DAILY_SPENDING_LIMIT])?;
     allowit::payment_limit(ctx, &ctx.params[allowit::PAYMENT_LIMIT])?;
     Ok(())
@@ -91,11 +103,11 @@ See the [portable policy reference](docs/policy-reference.md) for source restric
 
 [`engine/`](engine/) contains shared workflows without terminal I/O:
 
-- `stellar::Runtime` composes native preparation, required durable retention, submission and recovery.
-- `stellar::owner_client` validates owner sign-in, binds its private session to the backend and Origin, and generates a portable draft with an explicit template or installation selection.
-- `stellar::client` implements the authenticated server protocol, exact-intent resumption and receipt validation. Callers pass their signer capability and a private core `Store`.
+- `runtime::Runtime` composes native preparation, required durable retention, submission and recovery.
+- `vendors::stellar::runtime::owner_client` validates owner sign-in, binds its private session to the backend and Origin, and generates a portable draft with an explicit template or installation selection.
+- `vendors::stellar::runtime::client` implements the authenticated server protocol, exact-intent resumption and receipt validation. Callers pass their signer capability and a private core `Store`.
 - `typed_request` bounds document ingress and derives the versioned operation identity.
-- `wallet`, `routing` and `config` supply explicit caller bindings and Stellar network selection.
+- `wallet`, `routing` and `config` supply explicit caller bindings and registered network selection.
 
 Authorization is retained before post-authorization RPC simulation. Signed proof is retained before transmission.
 A failed policy-wallet envelope does not prove that its reusable address authorization cannot execute in another envelope.
@@ -116,7 +128,7 @@ Provider delivery is separate from native chain settlement.
 | [`docs/policy-reference.md`](docs/policy-reference.md) | Portable source and execution contract |
 
 All packages share one Cargo workspace, lockfile and version. Packages in this repository depend on each other by path.
-Dependencies from other repositories use release tags. Core and rail dependencies must resolve the same core release.
+Cross-repository dependencies identify immutable release tags or exact source commits. A commit pin does not identify a published release. Core and rail dependencies must resolve the same core release.
 Published tags are immutable.
 
 ## Develop

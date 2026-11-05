@@ -4,7 +4,7 @@ use crate::{ctx::Ctx, error::Result, routing, vendors};
 pub(crate) const EXAMPLES: &str = "\
 Examples:
   allowit rail show
-  allowit rail show stellar:testnet --json";
+  allowit rail show __ALLOWIT_EXAMPLE_RAIL__ --json";
 
 /// Show a rail: its identity, what works on it, and its local settings
 #[derive(clap::Args, Debug)]

@@ -13,7 +13,7 @@ pub(crate) const EXAMPLES: &str = "\
 Examples:
   allowit status pay-0001
   allowit status pay-0001 --wait 60s
-  allowit status pay-0001 --wallet CWALLET… --json";
+  allowit status pay-0001 --wallet WALLET --json";
 
 /// Read a request's state. The local journal supplies its rail and wallet;
 /// --rail and --wallet are the fallback
@@ -76,18 +76,24 @@ pub(crate) fn run(args: Args, cx: &mut Ctx) -> Result<i32> {
     };
     let vendor = vendors::rail(rail);
     let code = routing::with_network(Some(rail.id.into()), || {
+        let binding = vendor.status_binding(cx, wallet.as_deref(), &args.id)?;
         // A request reads only under the policy that sent it.
-        if let Some(recorded) = entry.as_ref().and_then(|e| e.policy.as_deref()) {
-            let binding = vendor.exec_binding(cx, wallet.as_deref())?;
-            if binding.policy.as_deref() != Some(recorded) {
-                return Err(Error::config(format!(
-                    "request {} was sent under policy {recorded}; the installed profile names {}",
-                    args.id,
-                    binding.policy.as_deref().unwrap_or("none")
-                )));
-            }
+        if let Some(recorded) = entry.as_ref().and_then(|e| e.policy.as_deref())
+            && binding.policy.as_deref() != Some(recorded)
+        {
+            return Err(Error::config(format!(
+                "request {} was sent under policy {recorded}; the installed profile names {}",
+                args.id,
+                binding.policy.as_deref().unwrap_or("none")
+            )));
         }
-        vendor.status(cx, &args.id, wallet.as_deref(), args.wait)
+        vendor.status(
+            cx,
+            &args.id,
+            binding,
+            args.wait,
+            entry.as_ref().and_then(|e| e.server_origin.as_deref()),
+        )
     })?;
     if entry.is_some() {
         super::exec::finish(cx, &dir, &args.id, code);

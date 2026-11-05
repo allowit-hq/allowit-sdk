@@ -1,6 +1,7 @@
 //! Shared Stellar execution workflows. Callers retain keys, authority and durable application state.
 pub mod approval;
 pub mod client;
+mod consent;
 pub mod owner;
 pub mod owner_client;
 
@@ -11,24 +12,9 @@ use allowit_stellar_wallet::{
 };
 use std::{sync::Arc, time::Duration};
 
-/// Caller-owned storage for the original signed operation and its projected status.
-/// Implementations must reject a different packet under an existing operation ID.
-pub trait OperationStore {
-    fn record(
-        &mut self,
-        operation_id: [u8; 32],
-        signed: &SignedOperation,
-        status: OperationStatus,
-    ) -> native::Result<()>;
-    fn load(
-        &self,
-        operation_id: [u8; 32],
-    ) -> native::Result<Option<(SignedOperation, OperationStatus)>>;
-}
-
 /// A verified observation of one known policy-wallet authorization envelope.
 /// A failed envelope leaves the reusable address authorization unresolved.
-pub struct ObservedAuthorization {
+pub(crate) struct ObservedAuthorization {
     pub signed: SignedOperation,
     pub receipt: rpc::VerifiedReceipt,
 }
@@ -41,7 +27,7 @@ impl ObservedAuthorization {
     }
 }
 
-pub struct Runtime {
+pub(crate) struct Runtime {
     rpc: Arc<dyn rpc::Rpc>,
 }
 impl Runtime {
@@ -111,85 +97,6 @@ impl Runtime {
         now: u64,
     ) -> native::Result<PreparedOperation> {
         rpc::revalidate_prepared(self.rpc(), prepared, now)
-    }
-
-    /// Save exact signed bytes before a single broadcast attempt. A retry looks up the original hash first.
-    /// Only native validity can permit resending those same bytes; no replacement is built or signed here.
-    pub fn submit(
-        &self,
-        store: &mut dyn OperationStore,
-        signed: &SignedOperation,
-        now: u64,
-    ) -> native::Result<OperationStatus> {
-        let id = signed.prepared.request.operation.nonce;
-        if let Some((previous, status)) = store.load(id)? {
-            if previous != *signed {
-                return Err("Operation ID already binds different signed bytes".into());
-            }
-            native::validate_retained_signed(&previous)?;
-            let status = projected_status(&signed.prepared.config.route, status);
-            if terminal(&status) {
-                return Ok(status);
-            }
-            if status != OperationStatus::Prepared {
-                let observed = rpc::status_by_hash(
-                    self.rpc(),
-                    &signed.prepared.config.network,
-                    &signed.transaction_hash,
-                )?;
-                let observed = projected_status(&signed.prepared.config.route, observed);
-                if observed != OperationStatus::SubmissionUnknown
-                    || native::validate_signed(signed, now).is_err()
-                {
-                    store.record(id, signed, observed.clone())?;
-                    return Ok(observed);
-                }
-            }
-        }
-        native::validate_signed(signed, now)?;
-        store.record(id, signed, OperationStatus::SubmissionUnknown)?;
-        let status = match rpc::broadcast(self.rpc(), signed, now)? {
-            rpc::Broadcast::Submitted => OperationStatus::Submitted,
-            rpc::Broadcast::Rejected { .. } => rpc::status_by_hash(
-                self.rpc(),
-                &signed.prepared.config.network,
-                &signed.transaction_hash,
-            )
-            .unwrap_or(OperationStatus::SubmissionUnknown),
-            rpc::Broadcast::RetryLater | rpc::Broadcast::Unknown => {
-                OperationStatus::SubmissionUnknown
-            }
-        };
-        let status = projected_status(&signed.prepared.config.route, status);
-        if status != OperationStatus::SubmissionUnknown {
-            store.record(id, signed, status.clone())?;
-        }
-        Ok(status)
-    }
-
-    /// Recover the original signed identity without new admission, signing or broadcast.
-    pub fn recover(
-        &self,
-        store: &mut dyn OperationStore,
-        operation_id: [u8; 32],
-    ) -> native::Result<OperationStatus> {
-        let (signed, previous) = store.load(operation_id)?.ok_or("No retained operation")?;
-        if signed.prepared.request.operation.nonce != operation_id {
-            return Err("Retained operation identity differs".into());
-        }
-        native::validate_retained_signed(&signed)?;
-        let previous = projected_status(&signed.prepared.config.route, previous);
-        if terminal(&previous) {
-            return Ok(previous);
-        }
-        let status = rpc::status_by_hash(
-            self.rpc(),
-            &signed.prepared.config.network,
-            &signed.transaction_hash,
-        )?;
-        let status = projected_status(&signed.prepared.config.route, status);
-        store.record(operation_id, &signed, status.clone())?;
-        Ok(status)
     }
 
     /// Observe known envelopes without changing reservations or caller accounting.
@@ -272,7 +179,7 @@ impl Runtime {
     }
 }
 #[derive(Clone, Copy, Debug)]
-pub struct Poll {
+pub(crate) struct Poll {
     pub attempts: u32,
     pub interval: Duration,
 }
@@ -284,13 +191,13 @@ impl Default for Poll {
         }
     }
 }
-fn terminal(status: &OperationStatus) -> bool {
-    matches!(status, OperationStatus::Confirmed | OperationStatus::Failed)
-}
-fn projected_status(route: &WalletRoute, status: OperationStatus) -> OperationStatus {
+pub(super) fn projected_status(route: &WalletRoute, status: OperationStatus) -> OperationStatus {
     if *route == WalletRoute::PolicyWallet && status == OperationStatus::Failed {
         OperationStatus::SubmissionUnknown
     } else {
         status
     }
 }
+
+#[cfg(test)]
+mod tests;

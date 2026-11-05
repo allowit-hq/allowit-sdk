@@ -1,5 +1,5 @@
 //! `allowit rail ls`.
-use crate::{ctx::Ctx, error::Result, routing::RAILS};
+use crate::{ctx::Ctx, error::Result, routing};
 
 pub(crate) const EXAMPLES: &str = "\
 Examples:
@@ -13,7 +13,7 @@ pub(crate) struct Args {}
 pub(crate) fn run(_: Args, cx: &mut Ctx) -> Result<i32> {
     let current = cx.rail_opt().ok().flatten().map(|r| r.id);
     if cx.out.json {
-        let rails: Vec<_> = RAILS
+        let rails: Vec<_> = routing::all()
             .iter()
             .map(|r| {
                 serde_json::json!({
@@ -34,7 +34,7 @@ pub(crate) fn run(_: Args, cx: &mut Ctx) -> Result<i32> {
         "ALIAS".into(),
         "NETWORK".into(),
     ]];
-    for r in RAILS {
+    for r in routing::all() {
         rows.push(vec![
             if current == Some(r.id) { "*" } else { "" }.into(),
             r.id.into(),

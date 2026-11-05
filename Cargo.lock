@@ -19,8 +19,8 @@ dependencies = [
 
 [[package]]
 name = "allowit"
-version = "0.2.0"
-source = "git+https://github.com/allowit-hq/allowit-core.git?tag=v0.2.0#6aa4235e6229e18d1f9780a6a9fdf80aceb0f348"
+version = "0.3.1"
+source = "git+https://github.com/allowit-hq/allowit-core.git?tag=v0.3.1#96b558633d4e01a077d3fd1e75d2b9fe927f2036"
 
 [[package]]
 name = "allowit-cli"
@@ -55,8 +55,8 @@ dependencies = [
 
 [[package]]
 name = "allowit-sdk"
-version = "0.2.0"
-source = "git+https://github.com/allowit-hq/allowit-core.git?tag=v0.2.0#6aa4235e6229e18d1f9780a6a9fdf80aceb0f348"
+version = "0.3.1"
+source = "git+https://github.com/allowit-hq/allowit-core.git?tag=v0.3.1#96b558633d4e01a077d3fd1e75d2b9fe927f2036"
 dependencies = [
  "allowit",
  "libc",
@@ -71,18 +71,22 @@ dependencies = [
 name = "allowit-sdk-engine"
 version = "0.4.0"
 dependencies = [
+ "allowit",
  "allowit-sdk",
  "allowit-stellar-wallet",
  "base64 0.22.1",
+ "chrono",
  "ed25519-dalek",
  "getrandom 0.3.4",
  "libc",
+ "proc-macro2",
  "serde",
  "serde_json",
  "serde_json_canonicalizer",
  "sha2",
  "stellar-strkey",
  "stellar-xdr",
+ "syn 2.0.119",
  "tempfile",
  "time",
  "zeroize",
@@ -90,8 +94,8 @@ dependencies = [
 
 [[package]]
 name = "allowit-stellar-wallet"
-version = "0.2.0"
-source = "git+https://github.com/allowit-hq/allowit-contracts-stellar.git?tag=v0.2.0#1724fde351a53701e013d919bf650e801ffec0d0"
+version = "0.3.0"
+source = "git+https://github.com/allowit-hq/allowit-contracts-stellar.git?rev=961ce34a5382b80537c8df7fdfa8bcf976039bde#961ce34a5382b80537c8df7fdfa8bcf976039bde"
 dependencies = [
  "allowit",
  "allowit-sdk",
@@ -99,9 +103,11 @@ dependencies = [
  "ed25519-dalek",
  "serde",
  "serde_json",
+ "serde_json_canonicalizer",
  "sha2",
  "stellar-strkey",
  "stellar-xdr",
+ "zeroize",
 ]
 
 [[package]]
@@ -159,6 +165,12 @@ name = "atomic-waker"
 version = "1.1.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1505bd5d3d116872e7271a6d4e16d81d0c8570876c8de68093a09ac269d8aac0"
+
+[[package]]
+name = "autocfg"
+version = "1.5.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f2032f911046de80f0a198e0901378627c33f59ea0ac00e363d481118bd70a53"
 
 [[package]]
 name = "base64"
@@ -260,6 +272,15 @@ dependencies = [
  "cfg-if",
  "cpufeatures 0.3.1",
  "rand_core 0.10.1",
+]
+
+[[package]]
+name = "chrono"
+version = "0.4.45"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1aa79e62e7697b8e29b513a68abacf485adcd1fe8284a4316c5ae868e6633327"
+dependencies = [
+ "num-traits",
 ]
 
 [[package]]
@@ -981,6 +1002,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "521739c6d2bac4aa25192232afe6841231376b2b26d4d9fae5ecf8ca5772e441"
 
 [[package]]
+name = "num-traits"
+version = "0.2.19"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "071dfc062690e90b734c0b2273ce72ad0ffa95f0c74596bc250dcfd960262841"
+dependencies = [
+ "autocfg",
+]
+
+[[package]]
 name = "once_cell"
 version = "1.21.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1578,7 +1608,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "32497e9a4c7b38532efcdebeef879707aa9f794296a4f0244f6f69e9bc8574bd"
 dependencies = [
  "fastrand",
- "getrandom 0.4.3",
+ "getrandom 0.3.4",
  "once_cell",
  "rustix",
  "windows-sys 0.61.2",

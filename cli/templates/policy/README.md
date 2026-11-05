@@ -11,13 +11,16 @@ allowit policy check cli/templates/policy/src/policy.rs
 allowit policy build cli/templates/policy/src/policy.rs -o wallet.rs
 ```
 
-The template reads the owner-approved daily and per-payment limits. It denies when a required limit is absent or invalid.
+The template first checks the owner-approved operation set, then the daily and per-payment limits.
+It denies an unlisted operation or an absent or invalid required value.
+The [authoring contract](../../../docs/policy-reference.md#authoring-order) defines this rule order.
 Amounts use native base units. The executing host and rail supply authenticated request facts and accounting.
 
 ```rust
 use allowit::prelude::*;
 
 pub fn execute(ctx: &AllowitContext) -> allowit::Result {
+    allowit::operations(ctx, &ctx.params[allowit::OPERATIONS])?;
     allowit::daily_spending_limit(ctx, &ctx.params[allowit::DAILY_SPENDING_LIMIT])?;
     allowit::payment_limit(ctx, &ctx.params[allowit::PAYMENT_LIMIT])?;
     Ok(())

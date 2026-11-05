@@ -5,7 +5,7 @@
 //! folders is one private store of at most 1,000 records, so the journal
 //! holds up to 256,000 requests.
 use crate::error::{Error, Result};
-use allowit_sdk::client::store::Store;
+use allowit_sdk_engine::Store;
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 
@@ -20,6 +20,10 @@ pub(crate) struct Entry {
     /// The policy that the rail resolved for the request.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub policy: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub profile_version: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub server_origin: Option<String>,
     pub op: String,
     pub to: String,
     pub amount: String,
@@ -31,7 +35,7 @@ pub(crate) struct Entry {
 
 /// The folder of one request ID.
 fn shard(id: &str) -> String {
-    allowit_sdk::digest(id.as_bytes())[..2].to_owned()
+    allowit_sdk_engine::digest(id.as_bytes())[..2].to_owned()
 }
 
 fn open_shard(dir: &Path, shard: &str) -> Result<Store> {
@@ -73,6 +77,12 @@ pub(crate) fn record(dir: &Path, entry: &Entry) -> Result<()> {
             || old.rail != entry.rail
             || old.wallet != entry.wallet
             || old.policy != entry.policy
+            || (old.profile_version.is_some()
+                && entry.profile_version.is_some()
+                && old.profile_version != entry.profile_version)
+            || (old.server_origin.is_some()
+                && entry.server_origin.is_some()
+                && old.server_origin != entry.server_origin)
             || old.op != entry.op
             || old.to != entry.to
             || old.amount != entry.amount
@@ -158,6 +168,8 @@ mod tests {
             op: "transfer".into(),
             to: "GDEST".into(),
             amount: "XLM:5".into(),
+            profile_version: None,
+            server_origin: None,
             created_at: at,
             exit: None,
         }

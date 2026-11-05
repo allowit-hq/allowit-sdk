@@ -2,7 +2,11 @@
 //! `status ID` with the agent key from `keys use` and the public wallet
 //! profile. The mock checks the agent's request proof and real signatures.
 #![cfg(unix)]
+#[path = "../../engine/tests/support/owner_chain.rs"]
+mod chain_fixture;
 mod common;
+#[path = "../../engine/tests/support/owner_server.rs"]
+mod wire;
 
 use allowit_stellar_wallet::workflow::*;
 use allowit_stellar_wallet::{self as sdk, *};
@@ -156,6 +160,16 @@ fn profile(c: &WalletConfig) -> Value {
         value["language"] = json!("allowit-portable-v1");
         value["irHash"] = json!("");
     }
+    if c.route == WalletRoute::Native && c.language == sdk::PolicyLanguage::Portable {
+        let b = allowit_sdk_engine::vendors::stellar::runtime::client::decode_public_bundle(
+            &serde_json::to_vec(&value).unwrap(),
+        )
+        .unwrap();
+        let message = b.source_approval_message(1).unwrap();
+        let key = sdk::signing::LocalSigner::from_entropy(&[1; 32]).unwrap();
+        assert_eq!(key.account(), c.owner);
+        value["sourceApproval"] = json!({"revision":1,"signatures":[{"signer":key.account(),"signature":key.sign_digest(&sdk::signing::signed_message_digest(&message)).unwrap()}]});
+    }
     value
 }
 
@@ -170,8 +184,21 @@ fn setup(c: &WalletConfig, seed: u8, mock: &Mock) -> Sandbox {
     sandbox.ok(&["keys", "use", "agent"]);
     let path = sandbox.work().join("profile.json");
     std::fs::write(&path, profile(c).to_string()).unwrap();
-    sandbox.set("ALLOWIT_STELLAR_BUNDLE", &path);
+    common::public_profile_fixture(&sandbox, &profile(c), &mock.url);
     sandbox.set("ALLOWIT_URL", &mock.url);
+    sandbox.ok(&["rail", "trust", &mock.url, &sdk::account_for_seed(&[3; 32])]);
+    let chain = chain_fixture::Chain::new(c.clone());
+    *chain.source.lock().unwrap() = chain_fixture::configured_source(c);
+    chain.source.lock().unwrap().sequence = 40;
+    let rpc = chain_fixture::RpcServer::new(chain);
+    let path = sandbox.config().join("config.toml");
+    let mut config: toml::Value = toml::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+    config["rails"]["stellar:testnet"]
+        .as_table_mut()
+        .unwrap()
+        .insert("rpc_url".into(), toml::Value::String(rpc.url.clone()));
+    std::fs::write(path, toml::to_string(&config).unwrap()).unwrap();
+    sandbox.keep_alive(rpc);
     sandbox
 }
 
@@ -423,11 +450,25 @@ fn malformed_profiles_and_flags_fail_before_network() {
     let sandbox = setup(&c, 2, &mock);
     let path = sandbox.work().join("profile.json");
     let original = std::fs::read(&path).unwrap();
-    std::fs::write(&path, "{}").unwrap();
+    common::public_profile_fixture(&sandbox, &json!({"network":"stellar:testnet"}), &mock.url);
     let output = exec(&sandbox);
     assert_eq!(code(&output), Some(3), "{}", stderr(&output));
-    assert!(stderr(&output).contains("public Stellar wallet profile"));
-    std::fs::write(&path, &original).unwrap();
+    assert!(stderr(&output).contains("public wallet profile"));
+    let mut proof_free: Value = serde_json::from_slice(&original).unwrap();
+    proof_free.as_object_mut().unwrap().remove("sourceApproval");
+    common::public_profile_fixture(&sandbox, &proof_free, &mock.url);
+    let refused = exec(&sandbox);
+    assert_eq!(code(&refused), Some(3), "{}", stderr(&refused));
+    assert!(
+        stderr(&refused).contains("source approval"),
+        "{}",
+        stderr(&refused)
+    );
+    common::public_profile_fixture(
+        &sandbox,
+        &serde_json::from_slice(&original).unwrap(),
+        &mock.url,
+    );
     let to = dest();
     for (args, expected) in [
         (vec!["exec", "--op", "transfer", "--action", "transfer"], 2),
@@ -727,53 +768,78 @@ fn expired_unsigned_packet_observation_prevents_repreparation_after_404() {
 
 #[test]
 fn replacement_agent_key_recovers_original_receipt_and_exact_journal_without_signing() {
-    let (config, request, state, now) = fixture();
-    let prepared = sdk::prepare(&config, &request, &state, now, expires(now)).unwrap();
-    let agent = sdk::sign(&prepared, &[2; 32], now).unwrap();
-    let signed = sdk::authorize(
-        &prepared,
-        &[agent.clone(), sdk::sign(&prepared, &[3; 32], now).unwrap()],
-        now,
-    )
-    .unwrap();
-    let mock = Mock::new();
-    let sandbox = setup(&config, 2, &mock);
-    retain_unsigned(&sandbox, &config, &request, &state, now);
-    let file = journal_file(&sandbox, &request);
-    let mut original: Value = serde_json::from_slice(&std::fs::read(&file).unwrap()).unwrap();
-    original["agentSignature"] = json!(agent);
-    original["status"] = json!("submissionUnknown");
-    common::private_write(&file, &original.to_string());
-    // The owner rotates the agent: a new key and a profile that names it.
-    let key = sandbox.private_file("agent9.key", &common::stellar_seed([9; 32]));
-    sandbox.ok(&["keys", "import", "agent9", key.to_str().unwrap()]);
-    sandbox.ok(&["keys", "use", "agent9"]);
-    let mut rotated = profile(&config);
-    rotated["config"]["agent"] = json!(sdk::account_for_seed(&[9; 32]));
-    std::fs::write(sandbox.work().join("profile.json"), rotated.to_string()).unwrap();
-    let listener = mock.listener;
-    let server = std::thread::spawn(move || {
-        for _ in 0..2 {
-            let (mut connection, _) = listener.accept().unwrap();
-            let (head, body) = read_for(&mut connection, &sdk::account_for_seed(&[9; 32]));
-            assert!(head.starts_with("POST /api/native/execute/status "));
-            assert_eq!(body, json!({"policyId":POLICY,"requestId":ID}));
-            ok(
-                &mut connection,
-                response(&prepared, Some(&signed), "confirmed"),
-            );
+    for changed_source in [false, true] {
+        let (config, request, state, now) = fixture();
+        let prepared = sdk::prepare(&config, &request, &state, now, expires(now)).unwrap();
+        let agent = sdk::sign(&prepared, &[2; 32], now).unwrap();
+        let signed = sdk::authorize(
+            &prepared,
+            &[agent.clone(), sdk::sign(&prepared, &[3; 32], now).unwrap()],
+            now,
+        )
+        .unwrap();
+        let mock = Mock::new();
+        let sandbox = setup(&config, 2, &mock);
+        retain_unsigned(&sandbox, &config, &request, &state, now);
+        let file = journal_file(&sandbox, &request);
+        let mut original: Value = serde_json::from_slice(&std::fs::read(&file).unwrap()).unwrap();
+        original["agentSignature"] = json!(agent);
+        original["status"] = json!("submissionUnknown");
+        common::private_write(&file, &original.to_string());
+        // The owner rotates the agent: a new key and a profile that names it.
+        let key = sandbox.private_file("agent9.key", &common::stellar_seed([9; 32]));
+        sandbox.ok(&["keys", "import", "agent9", key.to_str().unwrap()]);
+        sandbox.ok(&["keys", "use", "agent9"]);
+        let mut current = config.clone();
+        current.agent = sdk::account_for_seed(&[9; 32]);
+        if changed_source {
+            current.policy_source.push_str("\n// revised source\n");
+            current.source_hash = sdk::hash(&current.policy_source);
+            common::portable_descriptor(&mut current);
+            let shard = allowit_sdk::digest(ID.as_bytes())[..2].to_owned();
+            let ux = allowit_sdk::client::store::Store::open(
+                &sandbox.config().join("requests").join(shard),
+            )
+            .unwrap();
+            ux.save(ID,&json!({"requestId":ID,"command":"exec","rail":config.network,"wallet":config.wallet,"policy":format!("{}@{}",POLICY,sdk::hex(&config.module_digest)),"op":"transfer","to":dest(),"amount":"XLM:0.1","createdAt":now,"exit":5})).unwrap();
         }
-    });
-    let shown = status(&sandbox);
-    assert_eq!(code(&shown), Some(0), "{}", stderr(&shown));
-    let recovered = exec(&sandbox);
-    assert_eq!(code(&recovered), Some(0), "{}", stderr(&recovered));
-    let after: Value = serde_json::from_slice(&std::fs::read(&file).unwrap()).unwrap();
-    assert_eq!(after["prepared"], original["prepared"]);
-    assert_eq!(after["agentSignature"], original["agentSignature"]);
-    assert_eq!(after["config"], original["config"]);
-    assert_eq!(after["request"], original["request"]);
-    server.join().unwrap();
+        let rotated = profile(&current);
+        common::public_profile_fixture(&sandbox, &rotated, &mock.url);
+        // Prior-release journals have no public cache envelope or new authority pin.
+        // Recovery must observe the retained operation without fresh admission.
+        std::fs::remove_dir_all(sandbox.config().join("public-profiles")).unwrap();
+        let settings = sandbox.config().join("config.toml");
+        let mut values: toml::Value =
+            toml::from_str(&std::fs::read_to_string(&settings).unwrap()).unwrap();
+        values["rails"]["stellar:testnet"]
+            .as_table_mut()
+            .unwrap()
+            .remove("server_authorities");
+        std::fs::write(settings, toml::to_string(&values).unwrap()).unwrap();
+        let listener = mock.listener;
+        let server = std::thread::spawn(move || {
+            for _ in 0..2 {
+                let (mut connection, _) = listener.accept().unwrap();
+                let (head, body) = read_for(&mut connection, &sdk::account_for_seed(&[9; 32]));
+                assert!(head.starts_with("POST /api/native/execute/status "));
+                assert_eq!(body, json!({"policyId":POLICY,"requestId":ID}));
+                ok(
+                    &mut connection,
+                    response(&prepared, Some(&signed), "confirmed"),
+                );
+            }
+        });
+        let shown = status(&sandbox);
+        assert_eq!(code(&shown), Some(0), "{}", stderr(&shown));
+        let recovered = exec(&sandbox);
+        assert_eq!(code(&recovered), Some(0), "{}", stderr(&recovered));
+        let after: Value = serde_json::from_slice(&std::fs::read(&file).unwrap()).unwrap();
+        assert_eq!(after["prepared"], original["prepared"]);
+        assert_eq!(after["agentSignature"], original["agentSignature"]);
+        assert_eq!(after["config"], original["config"]);
+        assert_eq!(after["request"], original["request"]);
+        server.join().unwrap();
+    }
 }
 
 #[test]
@@ -792,6 +858,11 @@ fn status_uses_the_journaled_rail_and_refuses_another() {
         assert!(head.starts_with("POST /api/native/execute/status "));
         let prepared = sdk::prepare(&config, &r, &s, now, expires(now)).unwrap();
         ok(&mut conn, response(&prepared, None, "prepared"));
+        let (mut conn, _) = listener.accept().unwrap();
+        let (head, body) = read(&mut conn);
+        assert!(head.starts_with("POST /api/native/execute/status "));
+        assert_eq!(body, json!({"policyId":POLICY,"requestId":ID}));
+        ok(&mut conn, response(&prepared, None, "prepared"));
     });
     assert_eq!(code(&exec(&sandbox)), Some(4));
     // Another current rail does not change where status looks: neither
@@ -803,13 +874,12 @@ fn status_uses_the_journaled_rail_and_refuses_another() {
     let refused = sandbox.run(&["--rail", "stellar:pubnet", "status", ID]);
     assert_eq!(code(&refused), Some(2));
     assert!(stderr(&refused).contains("belongs to stellar:testnet"));
-    server.join().unwrap();
     // The journal binds the request ID to the resolved wallet and policy:
     // after the installed profile changes, the same ID neither sends a new
     // request nor reads another policy's state.
     let mut moved = profile(&c);
     moved["policyId"] = json!("another-policy");
-    std::fs::write(sandbox.work().join("profile.json"), moved.to_string()).unwrap();
+    common::public_profile_fixture(&sandbox, &moved, &mock.url);
     sandbox.set("ALLOWIT_RAIL", "stellar:testnet");
     let retry = exec(&sandbox);
     assert_eq!(code(&retry), Some(2), "{}", stderr(&retry));
@@ -819,12 +889,9 @@ fn status_uses_the_journaled_rail_and_refuses_another() {
         stderr(&retry)
     );
     let shown = status(&sandbox);
-    assert_eq!(code(&shown), Some(3), "{}", stderr(&shown));
-    assert!(
-        stderr(&shown).contains("was sent under policy"),
-        "{}",
-        stderr(&shown)
-    );
+    assert_eq!(code(&shown), Some(12), "{}", stderr(&shown));
+    // Status read the original policy; it did not admit the selected replacement.
+    server.join().unwrap();
 }
 
 #[test]
@@ -834,6 +901,6 @@ fn selected_key_must_match_the_wallet_agent_before_transport_or_signing() {
     let sandbox = setup(&config, 9, &mock);
     let refused = exec(&sandbox);
     assert_eq!(code(&refused), Some(3), "{}", stderr(&refused));
-    assert!(stderr(&refused).contains("agent key differs from the wallet profile agent"));
+    assert!(stderr(&refused).contains("No verified public profile matches"));
     mock.assert_untouched();
 }
