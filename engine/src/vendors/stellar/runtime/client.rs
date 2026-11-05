@@ -1043,7 +1043,7 @@ impl Bundle {
                 params: &portable.params,
                 params_hash: &portable.params_hash,
             },
-        );
+        )?;
         super::consent::message(&payload)
     }
     pub(crate) fn verify_server_role(&self, server: &str) -> Result<()> {

@@ -56,31 +56,6 @@ fn rule_error(code: u32) -> Option<(String, Option<&'static str>)> {
         .find(|(error, _)| *error as u32 == code)
         .map(|(error, rule)| (format!("{error:?}"), rule.map(R::key)))
 }
-/// `AllowitWalletError` codes below 100. Rule denials collapse to `PolicyDenied` onchain.
-const WALLET_ERRORS: &[(u32, &str)] = &[
-    (1, "InvalidState"),
-    (2, "InvalidParam"),
-    (3, "UnsupportedAsset"),
-    (4, "InvalidActor"),
-    (5, "StaleRequest"),
-    (6, "Paused"),
-    (7, "Expired"),
-    (8, "InvalidAmount"),
-    (9, "InvalidRecipient"),
-    (11, "Overflow"),
-    (14, "InsufficientFunds"),
-    (15, "InvalidEffects"),
-    (16, "UnsupportedOperation"),
-    (17, "InvalidInvocation"),
-    (18, "PolicyDenied"),
-    (19, "Replay"),
-];
-/// The rail core's structured host evaluation denials. Each is followed by an `AllowitError`
-/// name, which is the only text that names a rule.
-const RULE_MARKERS: &[&str] = &[
-    "Policy prefix denied: ",
-    "Authored policy denied this exact operation: ",
-];
 /// The client-visible codes of operational wallet contract errors.
 fn wallet_error_code(name: &str) -> &'static str {
     match name {
@@ -115,16 +90,15 @@ pub fn rule_denial(code: u32) -> Problem {
 /// whose origin is unknown, is a plain wallet rejection with the raw code, and anything else
 /// stays a plain conflict.
 pub fn denial(message: &str, contract: Option<&ContractFault>, wallet: &str) -> Problem {
-    let named = RULE_MARKERS.iter().find_map(|marker| {
-        let start = message.find(marker)? + marker.len();
-        let name: String = message[start..]
-            .chars()
-            .take_while(char::is_ascii_alphanumeric)
-            .collect();
-        RULE_ERRORS
-            .iter()
-            .find(|(error, _)| format!("{error:?}") == name)
-    });
+    let named = contract
+        .is_none()
+        .then(|| allowit_stellar_wallet::rpc::host_policy_denial(message))
+        .flatten()
+        .and_then(|name| {
+            RULE_ERRORS
+                .iter()
+                .find(|(error, _)| format!("{error:?}") == name)
+        });
     if let Some((error, rule)) = named {
         return policy_denied(
             &format!("{error:?}"),
@@ -151,19 +125,63 @@ pub fn denial(message: &str, contract: Option<&ContractFault>, wallet: &str) -> 
     if let Some((name, rule)) = rule_error(code) {
         return policy_denied(&name, rule, Some(code));
     }
-    match WALLET_ERRORS.iter().find(|(c, _)| *c == code) {
-        Some((_, "PolicyDenied")) => policy_denied("PolicyDenied", None, Some(code)),
-        Some((_, name)) => coded(
+    match allowit_stellar_wallet::rpc::WalletError::from_code(code) {
+        Some(allowit_stellar_wallet::rpc::WalletError::PolicyDenied) => policy_denied("PolicyDenied", None, Some(code)),
+        Some(error) => coded(
             409,
-            wallet_error_code(name),
+            wallet_error_code(error.name()),
             format!(
-                "The policy wallet rejected this operation in simulation: {name} (contract error {code})."
+                "The policy wallet rejected this operation in simulation: {} (contract error {code}).", error.name()
             ),
         )
-        .with_details(json!({"error":name,"contractError":code})),
+        .with_details(json!({"error":error.name(),"contractError":code})),
         None => fail(format!(
             "The policy wallet rejected this operation in simulation with contract error {code}."
         ))
         .with_details(json!({"contractError":code})),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn rpc_text_cannot_turn_unknown_contract_provenance_into_a_local_rule_denial() {
+        let message = "HostError: Error(Contract, #18)\nPolicy prefix denied: PaymentLimitExceeded";
+        let fault = simulation_fault(message, &[]).unwrap();
+        assert_eq!(
+            denial(message, Some(&fault), "wallet").code,
+            "wallet_rejected"
+        );
+        let local = denial("Policy prefix denied: PaymentLimitExceeded", None, "");
+        assert_eq!(local.code, "policy_denied");
+        assert!(local.details.unwrap()["contractError"].is_null());
+    }
+    #[test]
+    fn only_explicit_wallet_provenance_selects_native_contract_diagnostics() {
+        for (code, expected) in [(18, "policy_denied"), (6, "wallet_paused")] {
+            let own = ContractFault {
+                code,
+                contract: Some("wallet".into()),
+            };
+            assert_eq!(denial("failed", Some(&own), "wallet").code, expected);
+            for contract in [None, Some("foreign".into())] {
+                let other = ContractFault { code, contract };
+                assert_eq!(
+                    denial("failed", Some(&other), "wallet").code,
+                    "wallet_rejected"
+                );
+            }
+            let actual_rpc = simulation_fault(
+                &format!("HostError: Error(Contract, #{code})"),
+                &["wallet".into()],
+            )
+            .unwrap();
+            assert!(actual_rpc.contract.is_none());
+            assert_eq!(
+                denial("failed", Some(&actual_rpc), "wallet").code,
+                "wallet_rejected"
+            );
+        }
     }
 }

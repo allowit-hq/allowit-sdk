@@ -358,6 +358,11 @@ pub trait Transport: Send + Sync {
     fn call(&self, method: &str, params: serde_json::Value) -> Result<serde_json::Value>;
 }
 
+pub(crate) struct DiagnosticSession {
+    pub runtime: Runtime,
+    pub classify: Box<dyn FnOnce(&crate::error::Error) -> Problem>,
+}
+
 pub struct Runtime {
     pub(crate) provider: Box<dyn crate::vendors::RuntimeProvider>,
 }
@@ -579,6 +584,24 @@ pub struct Problem {
     pub details: Option<serde_json::Value>,
 }
 impl Runtime {
+    /// Return diagnostics with one operation, without retaining evidence for a later call.
+    /// The installation selects the expected wallet; it does not prove a fault's origin.
+    pub fn diagnose<T>(
+        &self,
+        installation: &Installation,
+        operation: impl FnOnce(&Runtime) -> Result<T>,
+    ) -> std::result::Result<T, Problem> {
+        let session = self
+            .provider
+            .diagnostic_session(installation)
+            .map_err(|error| self.provider.problem(&error))?;
+        match session {
+            Some(session) => {
+                operation(&session.runtime).map_err(|error| (session.classify)(&error))
+            }
+            None => operation(self).map_err(|error| self.provider.problem(&error)),
+        }
+    }
     pub fn problem(&self, error: &crate::error::Error) -> Problem {
         self.provider.problem(error)
     }

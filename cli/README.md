@@ -54,7 +54,7 @@ allowit guide
 ## Vendors and build output
 
 The [workspace manifest](../Cargo.toml) selects vendor dependencies. The [lockfile](../Cargo.lock) fixes their source revisions.
-The [SDK registry](../engine/src/vendors/mod.rs) selects compiled vendor bindings. Each vendor library supplies its network identities and aliases.
+The [SDK registry](../engine/src/vendors/mod.rs) selects compiled vendor bindings. Vendor libraries supply native network identities. SDK adapters register friendly aliases and asset defaults.
 [CLI adapter wiring](src/vendors/mod.rs) calls the shared capabilities. Adding a dependency alone does not make a vendor available.
 
 ```sh

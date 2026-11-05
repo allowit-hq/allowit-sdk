@@ -207,6 +207,37 @@ pub(crate) fn tier_encoding(t: Option<Tier>) -> Result<serde_json::Value> {
     .map_err(|_| Error::config("Cannot encode tier"))
 }
 
+pub(crate) fn source_consent<P: serde::Serialize>(
+    a: &crate::runtime::owner::SourceConsent<'_, P>,
+) -> Result<(serde_json::Value, String)> {
+    let c: WalletConfig = serde_json::from_slice(a.configuration.bytes())
+        .map_err(|_| Error::config("Invalid source-consent configuration"))?;
+    let payload = native::signing::source_approval_payload(&native::signing::SourceApproval {
+        policy_id: a.policy_id,
+        revision: a.revision,
+        network: &c.network,
+        wallet: &c.wallet,
+        route: c.route.encoding(),
+        policy_instance: &c.policy_instance,
+        source: a.source,
+        source_hash: a.source_hash,
+        ir_hash: a.ir_hash,
+        module_digest: a.module_digest,
+        asset: &c.asset,
+        asset_symbol: &c.asset_symbol,
+        asset_issuer: &c.asset_issuer,
+        max_fee_stroops: c.max_fee_stroops,
+        language: a.language,
+        tier: a.tier,
+        rules: a.rules,
+        params: a.params,
+        params_hash: a.params_hash,
+    })
+    .map_err(Error::config)?;
+    let message = native::signing::source_approval_message(&payload).map_err(Error::config)?;
+    Ok((payload, message))
+}
+
 #[cfg(test)]
 mod tests {
     use crate::runtime::owner::explorer_link;

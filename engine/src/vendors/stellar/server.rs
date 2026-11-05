@@ -257,7 +257,7 @@ pub(in crate::vendors) fn receipt_info(p: &Packet) -> Result<ReceiptInfo> {
 pub(in crate::vendors) struct Provider {
     network: String,
     runtime: crate::vendors::stellar::runtime::Runtime,
-    problem: std::sync::Arc<std::sync::Mutex<Option<Problem>>>,
+    transport: std::sync::Arc<dyn rpc::Rpc>,
 }
 impl Provider {
     pub(in crate::vendors) fn new(network: &str, endpoint: &str) -> Result<Self> {
@@ -267,50 +267,10 @@ impl Provider {
         ))
     }
     fn from_rpc_inner(network: &str, inner: std::sync::Arc<dyn rpc::Rpc>) -> Self {
-        struct Probe {
-            inner: std::sync::Arc<dyn rpc::Rpc>,
-            problem: std::sync::Arc<std::sync::Mutex<Option<Problem>>>,
-        }
-        impl rpc::Rpc for Probe {
-            fn call(
-                &self,
-                method: &str,
-                params: serde_json::Value,
-            ) -> native::Result<serde_json::Value> {
-                if let Ok(mut slot) = self.problem.lock() {
-                    *slot = None;
-                }
-                let value = self.inner.call(method, params)?;
-                if method == "simulateTransaction"
-                    && let Some(error) = value["error"].as_str()
-                {
-                    let events = value["events"]
-                        .as_array()
-                        .map(|items| {
-                            items
-                                .iter()
-                                .filter_map(|item| item.as_str().map(str::to_owned))
-                                .collect::<Vec<_>>()
-                        })
-                        .unwrap_or_default();
-                    let evidence = rpc::simulation_fault(error, &events);
-                    let problem = super::diagnostics::denial(error, evidence.as_ref(), "");
-                    if let Ok(mut slot) = self.problem.lock() {
-                        *slot = Some(problem);
-                    }
-                }
-                Ok(value)
-            }
-        }
-        let problem = std::sync::Arc::new(std::sync::Mutex::new(None));
-        let probe = std::sync::Arc::new(Probe {
-            inner,
-            problem: problem.clone(),
-        });
         Self {
             network: network.into(),
-            runtime: super::runtime::Runtime::from_rpc(probe),
-            problem,
+            runtime: super::runtime::Runtime::from_rpc(inner.clone()),
+            transport: inner,
         }
     }
     #[cfg(test)]
@@ -413,11 +373,58 @@ impl Provider {
 }
 impl super::super::RuntimeProvider for Provider {
     fn problem(&self, error: &Error) -> Problem {
-        self.problem
-            .lock()
-            .ok()
-            .and_then(|mut value| value.take())
-            .unwrap_or_else(|| super::diagnostics::denial(&error.to_string(), None, ""))
+        super::diagnostics::denial(&error.to_string(), None, "")
+    }
+    fn diagnostic_session(&self, installation: &Installation) -> Result<Option<DiagnosticSession>> {
+        let config = self.config(installation)?;
+        struct Probe {
+            inner: std::sync::Arc<dyn rpc::Rpc>,
+            wallet: String,
+            captured: std::sync::Arc<std::sync::Mutex<Option<(String, Problem)>>>,
+        }
+        impl rpc::Rpc for Probe {
+            fn call(
+                &self,
+                method: &str,
+                params: serde_json::Value,
+            ) -> native::Result<serde_json::Value> {
+                let value = self.inner.call(method, params)?;
+                if method == "simulateTransaction"
+                    && let Some(error) = value["error"].as_str()
+                    && let Some(fault) = rpc::simulation_fault(error, &[])
+                {
+                    let problem = super::diagnostics::denial(error, Some(&fault), &self.wallet);
+                    if let Ok(mut captured) = self.captured.lock() {
+                        *captured = Some((error.into(), problem));
+                    }
+                    // This terminal contract failure propagates directly to this operation.
+                    // Missing-export probes and other native response handling remain unchanged.
+                    return Err(error.into());
+                }
+                Ok(value)
+            }
+        }
+        let captured = std::sync::Arc::new(std::sync::Mutex::new(None));
+        let probe = std::sync::Arc::new(Probe {
+            inner: self.transport.clone(),
+            wallet: config.wallet,
+            captured: captured.clone(),
+        });
+        let provider = Self::from_rpc_inner(&self.network, probe);
+        Ok(Some(DiagnosticSession {
+            runtime: crate::runtime::Runtime {
+                provider: Box::new(provider),
+            },
+            classify: Box::new(move |error| {
+                captured
+                    .lock()
+                    .ok()
+                    .and_then(|mut capture| capture.take())
+                    .filter(|(message, _)| message == &error.message)
+                    .map(|(_, problem)| problem)
+                    .unwrap_or_else(|| super::diagnostics::denial(&error.to_string(), None, ""))
+            }),
+        }))
     }
 
     fn discover_snapshot(
@@ -1261,5 +1268,89 @@ mod capability_tests {
         let mut changed = fresh;
         changed.0.network = "stellar:mainnet".into();
         assert!(prepared(&changed).is_err());
+    }
+}
+
+#[cfg(test)]
+mod diagnostic_regressions {
+    use super::*;
+    use std::sync::Arc;
+    struct Refused;
+    impl rpc::Rpc for Refused {
+        fn call(&self, _: &str, _: serde_json::Value) -> native::Result<serde_json::Value> {
+            Ok(serde_json::json!({"error":"HostError: Error(Contract, #18)"}))
+        }
+    }
+    #[test]
+    fn diagnosed_operation_returns_owned_fault_without_lending_it_to_later_errors() {
+        struct RefusedSimulation(serde_json::Value);
+        impl rpc::Rpc for RefusedSimulation {
+            fn call(
+                &self,
+                method: &str,
+                params: serde_json::Value,
+            ) -> native::Result<serde_json::Value> {
+                if method == "simulateTransaction" {
+                    return Refused.call(method, params);
+                }
+                self.0["calls"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .find(|call| call["method"] == method && call["params"] == params)
+                    .map(|call| call["result"].clone())
+                    .ok_or_else(|| format!("Unexpected RPC {method}"))
+            }
+        }
+        let fixture: serde_json::Value = serde_json::from_str(include_str!(
+            "../../../../cli/tests/fixtures/stellar-policy-wallet-revalidation-rpc.json"
+        ))
+        .unwrap();
+        let original: PreparedOperation =
+            serde_json::from_value(fixture["prepared"].clone()).unwrap();
+        let configuration = crate::runtime::owner::configuration(
+            "stellar:testnet",
+            &serde_json::to_vec(&original.config).unwrap(),
+        )
+        .unwrap();
+        let installation = Installation::from_configuration(&configuration);
+        let retained: Prepared = serde_json::from_value(fixture["prepared"].clone()).unwrap();
+        let runtime = crate::runtime::Runtime {
+            provider: Box::new(Provider::from_rpc(
+                "stellar:testnet",
+                Arc::new(RefusedSimulation(fixture)),
+            )),
+        };
+        let first = runtime
+            .diagnose(&installation, |runtime| {
+                runtime.revalidate(&installation, &retained, 86402)
+            })
+            .unwrap_err();
+        assert_eq!(first.code, "wallet_rejected");
+        assert_eq!(first.details.as_ref().unwrap()["contractError"], 18);
+        assert!(first.details.as_ref().unwrap()["contract"].is_null());
+        let later = runtime
+            .read_request(&installation, b"not-json")
+            .unwrap_err();
+        assert!(runtime.problem(&later).details.is_none());
+        assert_eq!(first.details.as_ref().unwrap()["contractError"], 18);
+    }
+    #[test]
+    fn an_unconsumed_simulation_fault_does_not_classify_a_later_local_error() {
+        let provider = Provider::from_rpc("stellar:testnet", Arc::new(Refused));
+        let _ = provider
+            .rpc()
+            .call("simulateTransaction", serde_json::json!({}));
+        let local =
+            decode::<WalletConfig>(&RawValue::from_string("{}".into()).unwrap()).unwrap_err();
+        let runtime = crate::runtime::Runtime {
+            provider: Box::new(provider),
+        };
+        let problem = runtime.problem(&local);
+        assert!(
+            problem.details.is_none(),
+            "local decode inherited prior RPC evidence"
+        );
+        assert!(problem.message.contains("Invalid retained native packet"));
     }
 }

@@ -275,6 +275,12 @@ pub(crate) fn recover(
 type Retain<'a, T> = Box<dyn FnOnce(&T) -> Result<()> + 'a>;
 
 pub(crate) trait RuntimeProvider {
+    fn diagnostic_session(
+        &self,
+        _installation: &crate::runtime::Installation,
+    ) -> Result<Option<crate::runtime::DiagnosticSession>> {
+        Ok(None)
+    }
     fn problem(&self, error: &Error) -> crate::runtime::Problem {
         crate::runtime::Problem {
             status: 409,
@@ -696,4 +702,14 @@ pub(crate) fn runtime_request_id(p: &crate::runtime::Packet) -> Result<[u8; 32]>
 pub(crate) enum PreparationCapability {
     #[cfg(feature = "stellar")]
     Stellar(stellar::server::PreparationCapability),
+}
+
+pub(crate) fn owner_source_consent<P: serde::Serialize>(
+    _input: &crate::runtime::owner::SourceConsent<'_, P>,
+) -> Result<(serde_json::Value, String)> {
+    match routing::family(&_input.configuration.network)? {
+        #[cfg(feature = "stellar")]
+        stellar::FAMILY => stellar::server_owner::source_consent(_input),
+        _ => Err(unavailable()),
+    }
 }

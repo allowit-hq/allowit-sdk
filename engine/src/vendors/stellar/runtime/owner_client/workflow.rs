@@ -793,7 +793,7 @@ struct Activation {
     signature: Option<native::DetachedSignature>,
     completed: bool,
 }
-fn approval_payload(selection: &OwnerPolicy) -> Value {
+fn approval_payload(selection: &OwnerPolicy) -> Result<Value> {
     let c = &selection.config;
     let p = &selection.policy;
     let d = &p.runtime.instance_binding.portable;
@@ -844,7 +844,7 @@ impl OwnerClient {
             ));
         }
         self.verify_binding(selection, rpc)?;
-        let payload = approval_payload(selection);
+        let payload = approval_payload(selection)?;
         let message = super::super::consent::message(&payload)?;
         let identity = intent_hash(&json!({"selection":selection,"message":message}))?;
         let mut record = match store.load::<Activation>(id)? {
@@ -968,7 +968,7 @@ impl OwnerClient {
         let activation: Activation = store
             .load(activation_id)?
             .ok_or_else(|| Error::config("Complete the retained owner activation before export"))?;
-        let message = super::super::consent::message(&approval_payload(selection))?;
+        let message = super::super::consent::message(&approval_payload(selection)?)?;
         if !activation.completed
             || activation.backend != self.session.backend
             || activation.origin != self.session.origin

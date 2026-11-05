@@ -107,7 +107,7 @@ cargo clippy --locked -p allowit-sdk-engine --all-targets -- -D warnings
 
 ## Compiled capabilities and public profiles
 
-The vendor library defines its network identities and aliases. SDK registration maps that metadata into common routing.
+The vendor library defines native network identities and protocol aliases. SDK adapters register friendly aliases, display labels, asset defaults and explorer links for common routing and presentation.
 A build without vendor features exposes an empty rail inventory.
 CLI examples use the selected rail, then the first network supported by the build.
 

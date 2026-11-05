@@ -175,3 +175,25 @@ pub fn custody_encoding(network: &str, custody: Custody) -> Result<serde_json::V
 pub fn tier_encoding(network: &str, tier: Option<Tier>) -> Result<serde_json::Value> {
     crate::vendors::owner_tier_encoding(network, tier)
 }
+
+/// Literal source-consent inputs. The native codec owns field names and the signing domain.
+/// Encoding these values does not approve a policy or establish wallet authority.
+pub struct SourceConsent<'a, P: serde::Serialize> {
+    pub configuration: &'a Configuration,
+    pub policy_id: &'a str,
+    pub revision: u32,
+    pub source: &'a str,
+    pub source_hash: &'a str,
+    pub ir_hash: &'a str,
+    pub module_digest: &'a str,
+    pub language: &'a str,
+    pub tier: &'a str,
+    pub rules: &'a [String],
+    pub params: &'a P,
+    pub params_hash: &'a str,
+}
+pub fn source_consent<P: serde::Serialize>(
+    input: &SourceConsent<'_, P>,
+) -> Result<(serde_json::Value, String)> {
+    crate::vendors::owner_source_consent(input)
+}

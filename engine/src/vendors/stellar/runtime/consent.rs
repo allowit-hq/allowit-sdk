@@ -1,7 +1,7 @@
 //! One codec for the exact native v1 portable source-consent payload.
 use crate::error::{Error, Result};
 use allowit_stellar_wallet::{PolicyParams, WalletConfig};
-use serde_json::{Value, json};
+use serde_json::Value;
 pub(super) struct Portable<'a> {
     pub language: &'a str,
     pub tier: &'a str,
@@ -17,16 +17,33 @@ pub(super) fn payload(
     ir_hash: &str,
     module_digest: &str,
     d: Portable<'_>,
-) -> Value {
-    json!({"version":1,"policyId":policy_id,"revision":revision,"network":c.network,
-        "wallet":c.wallet,"route":c.route,"policyInstance":allowit_stellar_wallet::hex(&c.policy_instance),
-        "source":c.policy_source,"sourceHash":source_hash,"irHash":ir_hash,
-        "moduleDigest":module_digest,"asset":c.asset,
-        "assetSymbol":c.asset_symbol,"assetIssuer":c.asset_issuer,"maxFeeStroops":c.max_fee_stroops,
-        "language":d.language,"tier":d.tier,"rules":d.rules,"params":d.params,"paramsHash":d.params_hash})
+) -> Result<Value> {
+    allowit_stellar_wallet::signing::source_approval_payload(
+        &allowit_stellar_wallet::signing::SourceApproval {
+            policy_id,
+            revision,
+            network: &c.network,
+            wallet: &c.wallet,
+            route: c.route.encoding(),
+            policy_instance: &c.policy_instance,
+            source: &c.policy_source,
+            source_hash,
+            ir_hash,
+            module_digest,
+            asset: &c.asset,
+            asset_symbol: &c.asset_symbol,
+            asset_issuer: &c.asset_issuer,
+            max_fee_stroops: c.max_fee_stroops,
+            language: d.language,
+            tier: d.tier,
+            rules: d.rules,
+            params: d.params,
+            params_hash: d.params_hash,
+        },
+    )
+    .map_err(Error::config)
 }
+
 pub(super) fn message(payload: &Value) -> Result<String> {
-    serde_json_canonicalizer::to_string(payload)
-        .map(|json| format!("AllowIt Native policy approval v1\n{json}"))
-        .map_err(|_| Error::config("Cannot encode exact source consent"))
+    allowit_stellar_wallet::signing::source_approval_message(payload).map_err(Error::config)
 }
