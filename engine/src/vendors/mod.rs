@@ -33,6 +33,21 @@ pub(crate) fn owner(network: &str) -> Result<&'static dyn OwnerProvider> {
         _ => Err(unavailable()),
     }
 }
+
+#[cfg(feature = "stellar")]
+fn open_provider_store(root: &std::path::Path, namespace: &str) -> Result<crate::Store> {
+    crate::Store::open(&root.join(namespace))
+}
+pub(crate) fn owner_store(root: &std::path::Path, network: &str) -> Result<crate::Store> {
+    match routing::family(network)? {
+        #[cfg(feature = "stellar")]
+        stellar::FAMILY => open_provider_store(root, stellar::OWNER_STORE_NAMESPACE),
+        _ => {
+            let _ = root;
+            Err(unavailable())
+        }
+    }
+}
 pub(crate) fn generate(
     _backend: &str,
     _origin: &str,
@@ -93,7 +108,12 @@ pub(crate) fn build_execution(
 ) -> Result<serde_json::Value> {
     match routing::family(&p.description().network)? {
         #[cfg(feature = "stellar")]
-        stellar::FAMILY => stellar::execution::build(&p.0, _root, _rpc, _r),
+        stellar::FAMILY => stellar::execution::build(
+            &p.0,
+            &|| open_provider_store(_root, stellar::EXECUTION_STORE_NAMESPACE),
+            _rpc,
+            _r,
+        ),
         _ => Err(unavailable()),
     }
 }
@@ -106,9 +126,13 @@ pub(crate) fn execute(
 ) -> Result<crate::execution::Outcome> {
     match routing::family(&p.description().network)? {
         #[cfg(feature = "stellar")]
-        stellar::FAMILY => {
-            stellar::execution::execute(p.0, std::sync::Arc::new(_s), _root, _rpc, _r)
-        }
+        stellar::FAMILY => stellar::execution::execute(
+            p.0,
+            std::sync::Arc::new(_s),
+            &|| open_provider_store(_root, stellar::EXECUTION_STORE_NAMESPACE),
+            _rpc,
+            _r,
+        ),
         _ => Err(unavailable()),
     }
 }
@@ -122,9 +146,14 @@ pub(crate) fn execution_status(
 ) -> Result<crate::execution::Outcome> {
     match routing::family(&p.description().network)? {
         #[cfg(feature = "stellar")]
-        stellar::FAMILY => {
-            stellar::execution::status(p.0, std::sync::Arc::new(_s), _root, _rpc, _id, _wait)
-        }
+        stellar::FAMILY => stellar::execution::status(
+            p.0,
+            std::sync::Arc::new(_s),
+            &|| open_provider_store(_root, stellar::EXECUTION_STORE_NAMESPACE),
+            _rpc,
+            _id,
+            _wait,
+        ),
         _ => Err(unavailable()),
     }
 }
@@ -157,7 +186,12 @@ pub(crate) fn retained(
 ) -> Result<Option<crate::execution::Recovery>> {
     match routing::family(network)? {
         #[cfg(feature = "stellar")]
-        stellar::FAMILY => stellar::execution::retained(_root, network, _wallet, _id),
+        stellar::FAMILY => stellar::execution::retained(
+            &|| open_provider_store(_root, stellar::EXECUTION_STORE_NAMESPACE),
+            network,
+            _wallet,
+            _id,
+        ),
         _ => Err(unavailable()),
     }
 }
@@ -176,7 +210,7 @@ pub(crate) fn recover(
             original,
             std::sync::Arc::new(_signer),
             _backend,
-            _root,
+            &|| open_provider_store(_root, stellar::EXECUTION_STORE_NAMESPACE),
             _id,
             _wait,
             _request,

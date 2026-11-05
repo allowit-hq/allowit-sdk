@@ -142,6 +142,8 @@ A final success requires a verified receipt.
 
 The host crate in Core exposes provider contracts behind its optional `vendor` feature.
 The SDK retains generic orchestration, storage, routing and consumer integration tests.
+It opens private journal namespaces declared by each provider. A caller-owned store opener preserves
+native validation before filesystem changes.
 Its existing Stellar client paths reexport the implementation from the Stellar crate.
 SDK packet deserialization delegates to that crate before exposing retained state.
 

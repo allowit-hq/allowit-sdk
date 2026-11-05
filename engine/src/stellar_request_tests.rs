@@ -168,4 +168,34 @@ mod tests {
         let more = request("deposit", &vault(1), "USDC:6", Some("4900000"));
         assert_ne!(rebuild("policy-1", &c, &more, &old).unwrap().request, old);
     }
+    #[test]
+    fn build_only_never_opens_the_sdk_provider_journal() {
+        let fixtures: serde_json::Value = serde_json::from_str(include_str!(
+            "../tests/fixtures/stellar-portable-descriptors.json"
+        ))
+        .unwrap();
+        let descriptor = serde_json::value::RawValue::from_string(
+            serde_json::to_string(&fixtures[0]["bundle"]).unwrap(),
+        )
+        .unwrap();
+        let (description, binding) =
+            crate::vendors::decode_profile("stellar:testnet", descriptor.get().as_bytes()).unwrap();
+        let profile = crate::profiles::Profile(allowit_sdk::vendor::profiles::Profile {
+            description,
+            binding,
+            descriptor,
+            version: "build-only".into(),
+            backend: "http://localhost:8080".into(),
+            authority: None,
+        });
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("unopened");
+        let request = request("transfer", &sdk::account_for_seed(&[6; 32]), "1", None);
+        let wire = crate::execution::build(&profile, &root, None, &request).unwrap();
+        assert_eq!(wire["requestId"], request.request_id);
+        assert!(
+            !root.exists(),
+            "A build-only request must not invoke the host store opener"
+        );
+    }
 }
