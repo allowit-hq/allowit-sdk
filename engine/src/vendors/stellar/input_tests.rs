@@ -217,3 +217,33 @@ fn every_registered_alias_uses_the_canonical_network_asset_defaults() {
         }
     }
 }
+
+#[test]
+fn registered_protocol_and_presentation_aliases_preserve_the_existing_inventory() {
+    for native in allowit_stellar_wallet::networks::NETWORKS {
+        let registered = crate::routing::info(native.id).unwrap();
+        let presentation = if native.testnet {
+            "stellar-testnet"
+        } else {
+            "stellar-mainnet"
+        };
+        let expected: Vec<_> = native
+            .aliases
+            .iter()
+            .copied()
+            .chain(std::iter::once(presentation))
+            .collect();
+        assert_eq!(registered.aliases, expected);
+        for alias in expected {
+            assert_eq!(crate::routing::normalize(alias).unwrap(), native.id);
+        }
+    }
+    assert_eq!(
+        crate::routing::info("stellar:pubnet").unwrap().aliases,
+        &["stellar:mainnet", "stellar-mainnet"]
+    );
+    assert_eq!(
+        crate::routing::info("stellar:testnet").unwrap().aliases,
+        &["stellar-testnet"]
+    );
+}

@@ -1108,10 +1108,7 @@ pub(crate) fn configure_native(
                 .sequence
                 .checked_add(1)
                 .ok_or_else(|| Error::config("Native source sequence overflow"))?,
-            max_fee_stroops: request
-                .fee_per_operation
-                .checked_mul(3)
-                .ok_or_else(|| Error::config("Native setup fee overflow"))?,
+            max_fee_stroops: record.setup.fee_stroops,
             valid_until: record.setup.expires_at,
         },
         action: OwnerAction::NativeSetup {
@@ -1217,20 +1214,7 @@ pub(crate) fn configure_native(
         ));
     }
     let account = checked(rpc::get_account(runtime.rpc(), &request.owner))?;
-    if account.master_weight != 3
-        || account.low_threshold != 2
-        || account.medium_threshold != 2
-        || account.high_threshold != 3
-        || account.signers.len() != 2
-        || account.signers.iter().any(|s| {
-            s.weight != 1
-                || ![request.agent.as_str(), request.server.as_str()].contains(&s.key.as_str())
-        })
-    {
-        return Err(Error::config(
-            "Current Native setup authority differs from the selected roles",
-        ));
-    }
+    checked(account.validate_roles(&request.owner, &request.agent, &request.server))?;
     Ok(
         json!({"state":"configured","requestId":request.request_id,"network":request.network,"wallet":request.owner,"owner":request.owner,"agent":request.agent,"server":request.server,"transactionHash":record.setup.transaction_hash,"ledger":receipt.ledger}),
     )

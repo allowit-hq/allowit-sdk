@@ -293,7 +293,9 @@ impl OwnerClient {
                 )
                 .map_err(|_| Error::config("Invalid advertised template asset"))?;
                 if native::sac_address(network, &asset).map_err(Error::config)? != template.asset
-                    || !(100..=10_000_000).contains(&template.max_fee_stroops)
+                    || !(super::super::server_owner::fee_bounds().minimum
+                        ..=u64::from(native::max_fee_ceiling(&native::WalletRoute::PolicyWallet)))
+                        .contains(&u64::from(template.max_fee_stroops))
                 {
                     return Err(Error::config("Advertised template asset or fee is invalid"));
                 }

@@ -150,20 +150,33 @@ pub(crate) fn tokens_for(rail: &str) -> &'static [Token] {
 
 pub(super) const FAMILY: crate::routing::Family = crate::routing::Family("stellar");
 pub(super) fn networks() -> Vec<crate::routing::RailInfo> {
+    // Native owns protocol aliases. The SDK adds only these historical presentation spellings.
+    static ALIASES: std::sync::OnceLock<Vec<Vec<&'static str>>> = std::sync::OnceLock::new();
+    let aliases = ALIASES.get_or_init(|| {
+        native::networks::NETWORKS
+            .iter()
+            .map(|network| {
+                let mut aliases = network.aliases.to_vec();
+                aliases.push(if network.testnet {
+                    "stellar-testnet"
+                } else {
+                    "stellar-mainnet"
+                });
+                aliases
+            })
+            .collect()
+    });
     native::networks::NETWORKS
         .iter()
-        .map(|n| crate::routing::RailInfo {
+        .zip(aliases)
+        .map(|(n, aliases)| crate::routing::RailInfo {
             id: n.id,
             label: if n.testnet {
                 "Stellar Testnet"
             } else {
                 "Stellar Mainnet"
             },
-            aliases: if n.testnet {
-                &["stellar-testnet"]
-            } else {
-                &["stellar:mainnet", "stellar-mainnet"]
-            },
+            aliases,
             family: FAMILY,
             testnet: n.testnet,
         })
