@@ -26,10 +26,12 @@ pub fn with_settings<T>(settings: &[(&str, String)], f: impl FnOnce() -> Result<
 }
 /// Independently configured public authority for one backend and selected rail.
 #[derive(Clone, Debug)]
-pub struct ServerAuthority {
-    network: String,
-    origin: String,
-    public_key: String,
+pub struct ServerAuthority(pub(crate) allowit_sdk::vendor::config::ServerAuthority);
+impl std::ops::Deref for ServerAuthority {
+    type Target = allowit_sdk::vendor::config::ServerAuthority;
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
 }
 impl ServerAuthority {
     pub fn new(network: &str, origin: &str, public_key: &str) -> Result<Self> {
@@ -43,20 +45,17 @@ impl ServerAuthority {
             .map_err(|_| {
                 crate::error::Error::usage("Invalid public server identity for the selected rail")
             })?;
-        Ok(Self {
-            network: network.into(),
-            origin: parse_origin(origin)?,
-            public_key: public_key.into(),
-        })
+        allowit_sdk::vendor::config::ServerAuthority::validated(network, origin, public_key)
+            .map(Self)
     }
     pub fn network(&self) -> &str {
-        &self.network
+        self.0.network()
     }
     pub fn origin(&self) -> &str {
-        &self.origin
+        self.0.origin()
     }
     pub fn public_key(&self) -> &str {
-        &self.public_key
+        self.0.public_key()
     }
 }
 

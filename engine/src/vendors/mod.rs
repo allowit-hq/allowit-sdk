@@ -5,61 +5,7 @@ use crate::{
     error::{Error, Result},
     routing,
 };
-use zeroize::Zeroizing;
-pub(crate) trait PrivateSigner: Send + Sync {
-    fn address(&self) -> &str;
-    fn public_key(&self) -> &str;
-    fn key_type(&self) -> &str;
-    fn encoded_secret(&self) -> Zeroizing<String>;
-    fn sign_hash(&self, digest: &[u8]) -> Result<Vec<u8>>;
-}
-
-pub(crate) trait KeyProvider: Sync {
-    fn entropy_bytes(&self) -> usize;
-    fn derive(&self, entropy: &[u8]) -> Result<Box<dyn PrivateSigner>>;
-    fn parse(&self, secret: &str) -> Result<Box<dyn PrivateSigner>>;
-    fn validate_identity(&self, address: &str, public_key: &str, key_type: &str) -> Result<()>;
-}
-
-pub(crate) trait OwnerProvider {
-    fn deploy(
-        &self,
-        cx: &crate::owner::Context<'_>,
-        r: crate::owner::Deploy<'_>,
-    ) -> Result<serde_json::Value>;
-    fn fund(
-        &self,
-        cx: &crate::owner::Context<'_>,
-        document: &[u8],
-        id: &str,
-        amount: &str,
-        fee: &str,
-    ) -> Result<serde_json::Value>;
-    fn activate(
-        &self,
-        cx: &crate::owner::Context<'_>,
-        r: crate::owner::Activate<'_>,
-    ) -> Result<serde_json::Value>;
-    fn export(
-        &self,
-        cx: &crate::owner::Context<'_>,
-        document: &[u8],
-        id: &str,
-    ) -> Result<crate::profiles::Profile>;
-    fn setup(
-        &self,
-        cx: &crate::owner::Context<'_>,
-        r: crate::owner::Setup<'_>,
-    ) -> Result<serde_json::Value>;
-    fn status(
-        &self,
-        root: &std::path::Path,
-        network: &str,
-        rpc: &str,
-        id: &str,
-    ) -> Result<serde_json::Value>;
-}
-
+pub(crate) use allowit_sdk::vendor::{KeyProvider, OwnerProvider, PrivateSigner, RuntimeProvider};
 fn unavailable() -> Error {
     Error::unsupported("The selected build has no matching vendor capability")
 }
@@ -107,10 +53,7 @@ pub(crate) fn formats(family: routing::Family) -> Result<&'static crate::input::
         _ => Err(unavailable()),
     }
 }
-pub(crate) enum ProfileBinding {
-    #[cfg(feature = "stellar")]
-    Stellar(crate::vendors::stellar::runtime::client::Bundle),
-}
+pub(crate) type ProfileBinding = Box<dyn allowit_sdk::vendor::profiles::ProfileBinding>;
 pub(crate) fn decode_profile(
     network: &str,
     _bytes: &[u8],
@@ -150,7 +93,7 @@ pub(crate) fn build_execution(
 ) -> Result<serde_json::Value> {
     match routing::family(&p.description().network)? {
         #[cfg(feature = "stellar")]
-        stellar::FAMILY => stellar::execution::build(p, _root, _rpc, _r),
+        stellar::FAMILY => stellar::execution::build(&p.0, _root, _rpc, _r),
         _ => Err(unavailable()),
     }
 }
@@ -163,7 +106,9 @@ pub(crate) fn execute(
 ) -> Result<crate::execution::Outcome> {
     match routing::family(&p.description().network)? {
         #[cfg(feature = "stellar")]
-        stellar::FAMILY => stellar::execution::execute(p, _s, _root, _rpc, _r),
+        stellar::FAMILY => {
+            stellar::execution::execute(p.0, std::sync::Arc::new(_s), _root, _rpc, _r)
+        }
         _ => Err(unavailable()),
     }
 }
@@ -177,7 +122,9 @@ pub(crate) fn execution_status(
 ) -> Result<crate::execution::Outcome> {
     match routing::family(&p.description().network)? {
         #[cfg(feature = "stellar")]
-        stellar::FAMILY => stellar::execution::status(p, _s, _root, _rpc, _id, _wait),
+        stellar::FAMILY => {
+            stellar::execution::status(p.0, std::sync::Arc::new(_s), _root, _rpc, _id, _wait)
+        }
         _ => Err(unavailable()),
     }
 }
@@ -196,52 +143,11 @@ pub(crate) fn fund_key(network: &str, _address: &str, _endpoint: Option<&str>) -
     }
 }
 
-pub(crate) fn verify_profile_import(_binding: &ProfileBinding, _endpoint: &str) -> Result<()> {
-    #[cfg(feature = "stellar")]
-    {
-        let ProfileBinding::Stellar(b) = _binding;
-        b.verify_import(_endpoint)
-    }
-    #[cfg(not(feature = "stellar"))]
-    {
-        Err(unavailable())
-    }
+pub(crate) fn verify_profile_import(binding: &ProfileBinding, endpoint: &str) -> Result<()> {
+    binding.verify_import(endpoint)
 }
-
-pub(crate) fn verify_server_role(_binding: &ProfileBinding, _server: &str) -> Result<()> {
-    #[cfg(feature = "stellar")]
-    {
-        let ProfileBinding::Stellar(b) = _binding;
-        b.verify_server_role(_server)
-    }
-    #[cfg(not(feature = "stellar"))]
-    {
-        Err(unavailable())
-    }
-}
-
-pub(crate) enum RecoveryBinding {
-    #[cfg(feature = "stellar")]
-    Stellar(crate::vendors::stellar::runtime::client::Retained),
-}
-pub(crate) fn recovery_binding(binding: &RecoveryBinding) -> crate::execution::Binding {
-    match *binding {
-        #[cfg(feature = "stellar")]
-        RecoveryBinding::Stellar(ref r) => crate::execution::Binding {
-            wallet: r.config().wallet.clone(),
-            policy: format!(
-                "{}@{}",
-                r.policy_id(),
-                allowit_stellar_wallet::hex(&r.config().module_digest)
-            ),
-        },
-    }
-}
-pub(crate) fn recovery_signed(binding: &RecoveryBinding) -> bool {
-    match *binding {
-        #[cfg(feature = "stellar")]
-        RecoveryBinding::Stellar(ref r) => r.signed(),
-    }
+pub(crate) fn verify_server_role(binding: &ProfileBinding, server: &str) -> Result<()> {
+    binding.verify_server_role(server)
 }
 pub(crate) fn retained(
     _root: &std::path::Path,
@@ -264,151 +170,25 @@ pub(crate) fn recover(
     _wait: std::time::Duration,
     _request: Option<&crate::execution::Request>,
 ) -> Result<crate::execution::Outcome> {
-    match original.binding {
-        #[cfg(feature = "stellar")]
-        RecoveryBinding::Stellar(r) => {
-            stellar::execution::recover(r, _signer, _backend, _root, _id, _wait, _request)
-        }
+    #[cfg(feature = "stellar")]
+    {
+        stellar::execution::recover(
+            original,
+            std::sync::Arc::new(_signer),
+            _backend,
+            _root,
+            _id,
+            _wait,
+            _request,
+        )
+    }
+    #[cfg(not(feature = "stellar"))]
+    {
+        let _ = original;
+        Err(unavailable())
     }
 }
 
-type Retain<'a, T> = Box<dyn FnOnce(&T) -> Result<()> + 'a>;
-
-pub(crate) trait RuntimeProvider {
-    fn diagnostic_session(
-        &self,
-        _installation: &crate::runtime::Installation,
-    ) -> Result<Option<crate::runtime::DiagnosticSession>> {
-        Ok(None)
-    }
-    fn problem(&self, error: &Error) -> crate::runtime::Problem {
-        crate::runtime::Problem {
-            status: 409,
-            code: "",
-            message: error.to_string(),
-            details: None,
-        }
-    }
-
-    fn discover_snapshot(
-        &self,
-        configuration: &crate::runtime::owner::Configuration,
-        accounting: Option<&crate::runtime::Accounting>,
-    ) -> Result<crate::runtime::Snapshot>;
-    fn current_height(&self) -> Result<u64>;
-    fn observe_hash(&self, hash: &[u8; 32]) -> Result<Option<crate::runtime::Receipt>>;
-    fn import(
-        &self,
-        a: &crate::config::ServerAuthority,
-        b: &[u8],
-    ) -> Result<crate::runtime::Installation>;
-    fn request(
-        &self,
-        i: &crate::runtime::Installation,
-        id: [u8; 32],
-        a: crate::runtime::Action,
-        accounting: Option<&crate::runtime::Accounting>,
-    ) -> Result<crate::runtime::RequestPacket>;
-    fn read_request(
-        &self,
-        i: &crate::runtime::Installation,
-        b: &[u8],
-    ) -> Result<crate::runtime::RequestPacket>;
-    fn snapshot(
-        &self,
-        i: &crate::runtime::Installation,
-        a: Option<&crate::runtime::Accounting>,
-    ) -> Result<crate::runtime::Snapshot>;
-    fn action(
-        &self,
-        i: &crate::runtime::Installation,
-        r: &crate::runtime::RequestPacket,
-    ) -> Result<crate::runtime::Action>;
-    fn resources(&self, i: &crate::runtime::Installation) -> Result<crate::runtime::Resources>;
-    fn redeemable(&self, i: &crate::runtime::Installation, v: &str, shares: i128) -> Result<i128>;
-    fn finish<'a>(
-        &self,
-        i: &crate::runtime::Installation,
-        p: &crate::runtime::Prepared,
-        retain: Retain<'a, crate::runtime::Prepared>,
-    ) -> Result<crate::runtime::Prepared>;
-    fn prepare(
-        &self,
-        i: &crate::runtime::Installation,
-        r: &crate::runtime::RequestPacket,
-        t: &crate::runtime::Terms,
-        a: Option<&crate::runtime::Accounting>,
-        v: crate::runtime::Validity,
-    ) -> Result<crate::runtime::Prepared>;
-    fn authorize_preparation(
-        &self,
-        i: &crate::runtime::Installation,
-        p: &crate::runtime::Prepared,
-        signer: &dyn crate::runtime::Signer,
-        evaluator: Option<crate::runtime::Evaluator<'_>>,
-        now: u64,
-    ) -> Result<crate::runtime::Prepared>;
-    fn finalize<'a>(
-        &self,
-        i: &crate::runtime::Installation,
-        p: &crate::runtime::Prepared,
-        s: &dyn crate::runtime::Signer,
-        e: Option<crate::runtime::Evaluator<'_>>,
-        now: u64,
-        retain: Retain<'a, crate::runtime::Prepared>,
-    ) -> Result<crate::runtime::Prepared>;
-    fn revalidate(
-        &self,
-        i: &crate::runtime::Installation,
-        p: &crate::runtime::Prepared,
-        now: u64,
-    ) -> Result<crate::runtime::Prepared>;
-    fn sign(
-        &self,
-        i: &crate::runtime::Installation,
-        p: &crate::runtime::Prepared,
-        s: &dyn crate::runtime::Signer,
-        now: u64,
-    ) -> Result<crate::runtime::Signature>;
-    fn authorize(
-        &self,
-        i: &crate::runtime::Installation,
-        p: &crate::runtime::Prepared,
-        s: &[crate::runtime::Signature],
-        now: u64,
-    ) -> Result<crate::runtime::Signed>;
-    fn validate_signed(&self, p: &crate::runtime::Signed, now: u64) -> Result<()>;
-    fn broadcast(&self, p: &crate::runtime::Signed, now: u64) -> Result<crate::runtime::Status>;
-    fn status(&self, p: &crate::runtime::Signed) -> Result<crate::runtime::Status>;
-    fn observe(&self, p: &crate::runtime::Signed) -> Result<Option<crate::runtime::Receipt>>;
-    fn observe_authorizations(
-        &self,
-        p: &[crate::runtime::Prepared],
-    ) -> Result<Vec<crate::runtime::ObservedAuthorization>>;
-    fn prepare_owner(
-        &self,
-        i: &crate::runtime::Installation,
-        a: crate::runtime::OwnerAction,
-        fee: u64,
-        now: u64,
-    ) -> Result<crate::runtime::OwnerPacket>;
-    fn read_owner_signed(
-        &self,
-        p: &crate::runtime::OwnerPacket,
-        signed_payload: &[u8],
-    ) -> Result<crate::runtime::OwnerSigned>;
-    fn submit_owner<'a>(
-        &self,
-        p: &crate::runtime::OwnerSigned,
-        retain: Retain<'a, crate::runtime::OwnerSigned>,
-        poll: crate::runtime::Poll,
-        now: u64,
-    ) -> Result<crate::runtime::Receipt>;
-    fn observe_owner(
-        &self,
-        p: &crate::runtime::OwnerSigned,
-    ) -> Result<Option<crate::runtime::Receipt>>;
-}
 pub(crate) fn runtime(network: &str, _endpoint: &str) -> Result<Box<dyn RuntimeProvider>> {
     match routing::family(network)? {
         #[cfg(feature = "stellar")]
@@ -432,7 +212,7 @@ pub(crate) fn runtime_with_transport(
 }
 pub(crate) fn runtime_policy(
     i: crate::runtime::PolicyInstallation,
-) -> Result<crate::runtime::Installation> {
+) -> Result<allowit_sdk::vendor::runtime::Installation> {
     match routing::family(&i.description.network)? {
         #[cfg(feature = "stellar")]
         stellar::FAMILY => stellar::server::policy(i),
@@ -453,52 +233,11 @@ pub(crate) fn runtime_restore(
         Err(unavailable())
     }
 }
-pub(crate) fn runtime_info(
-    p: &crate::runtime::Packet,
-    _k: crate::runtime::Kind,
-) -> Result<crate::runtime::PacketInfo> {
-    match routing::family(&p.network)? {
-        #[cfg(feature = "stellar")]
-        stellar::FAMILY => stellar::server::info(p, _k),
-        _ => Err(unavailable()),
-    }
-}
-
-pub(crate) fn runtime_same_snapshot(
-    a: &crate::runtime::Snapshot,
-    b: &crate::runtime::Snapshot,
-) -> Result<bool> {
-    if a.evidence.network != b.evidence.network {
-        return Ok(false);
-    }
-    match routing::family(&a.evidence.network)? {
-        #[cfg(feature = "stellar")]
-        stellar::FAMILY => stellar::server::same_snapshot(a, b),
-        _ => Err(unavailable()),
-    }
-}
-pub(crate) fn runtime_receipt_info(
-    p: &crate::runtime::Packet,
-) -> Result<crate::runtime::ReceiptInfo> {
-    match routing::family(&p.network)? {
-        #[cfg(feature = "stellar")]
-        stellar::FAMILY => stellar::server::receipt_info(p),
-        _ => Err(unavailable()),
-    }
-}
-
-pub(crate) fn runtime_owner_info(p: &crate::runtime::Packet) -> Result<crate::runtime::OwnerInfo> {
-    match routing::family(&p.network)? {
-        #[cfg(feature = "stellar")]
-        stellar::FAMILY => stellar::server::owner_info(p),
-        _ => Err(unavailable()),
-    }
-}
 
 pub(crate) fn owner_configuration(
     network: &str,
     _document: &[u8],
-) -> Result<crate::runtime::owner::Configuration> {
+) -> Result<allowit_sdk::vendor::runtime::owner::Configuration> {
     match routing::family(network)? {
         #[cfg(feature = "stellar")]
         stellar::FAMILY => stellar::server_owner::configuration(network, _document),
@@ -530,9 +269,9 @@ pub(crate) fn owner_validate_signed(
     }
 }
 pub(crate) fn owner_with_policy(
-    c: &crate::runtime::owner::Configuration,
+    c: &allowit_sdk::vendor::runtime::owner::Configuration,
     _i: crate::runtime::owner::PolicyIdentity,
-) -> Result<crate::runtime::owner::Configuration> {
+) -> Result<allowit_sdk::vendor::runtime::owner::Configuration> {
     match routing::family(&c.network)? {
         #[cfg(feature = "stellar")]
         stellar::FAMILY => stellar::server_owner::with_policy(c, _i),
@@ -540,52 +279,6 @@ pub(crate) fn owner_with_policy(
     }
 }
 
-pub(crate) fn runtime_prepared_metadata(
-    p: &crate::runtime::Packet,
-) -> Result<crate::runtime::PreparedMetadata> {
-    match routing::family(&p.network)? {
-        #[cfg(feature = "stellar")]
-        stellar::FAMILY => stellar::server::prepared_metadata(p),
-        _ => Err(unavailable()),
-    }
-}
-pub(crate) fn runtime_signed_preparation(
-    p: &crate::runtime::Packet,
-) -> Result<crate::runtime::Prepared> {
-    match routing::family(&p.network)? {
-        #[cfg(feature = "stellar")]
-        stellar::FAMILY => stellar::server::signed_preparation(p),
-        _ => Err(unavailable()),
-    }
-}
-
-pub(crate) fn runtime_verify_consent(
-    s: &crate::runtime::Snapshot,
-    _message: &str,
-    _signatures: &[crate::runtime::Signature],
-) -> Result<()> {
-    match routing::family(&s.evidence.network)? {
-        #[cfg(feature = "stellar")]
-        stellar::FAMILY => stellar::server::verify_consent(s, _message, _signatures),
-        _ => Err(unavailable()),
-    }
-}
-pub(crate) fn runtime_signer_weight(s: &crate::runtime::Snapshot, _identity: &str) -> Result<u32> {
-    match routing::family(&s.evidence.network)? {
-        #[cfg(feature = "stellar")]
-        stellar::FAMILY => stellar::server::signer_weight(s, _identity),
-        _ => Err(unavailable()),
-    }
-}
-pub(crate) fn runtime_authority_document(
-    s: &crate::runtime::Snapshot,
-) -> Result<serde_json::Value> {
-    match routing::family(&s.evidence.network)? {
-        #[cfg(feature = "stellar")]
-        stellar::FAMILY => stellar::server::authority_document(s),
-        _ => Err(unavailable()),
-    }
-}
 pub(crate) fn owner_code_hash(network: &str, _wasm: &[u8]) -> Result<[u8; 32]> {
     match routing::family(network)? {
         #[cfg(feature = "stellar")]
@@ -604,26 +297,6 @@ pub(crate) fn owner_connect(
     }
 }
 
-pub(crate) fn runtime_validate_signed(p: &crate::runtime::Packet) -> Result<()> {
-    match routing::family(&p.network)? {
-        #[cfg(feature = "stellar")]
-        stellar::FAMILY => stellar::server::validate_signed(p),
-        _ => Err(unavailable()),
-    }
-}
-pub(crate) fn runtime_verify_receipt(
-    r: &crate::runtime::Packet,
-    p: &crate::runtime::Packet,
-) -> Result<()> {
-    if r.network != p.network {
-        return Err(Error::config("Receipt network differs from operation"));
-    }
-    match routing::family(&p.network)? {
-        #[cfg(feature = "stellar")]
-        stellar::FAMILY => stellar::server::verify_receipt(r, p),
-        _ => Err(unavailable()),
-    }
-}
 pub(crate) fn owner_fee_bounds(network: &str) -> Result<crate::runtime::owner::FeeBounds> {
     match routing::family(network)? {
         #[cfg(feature = "stellar")]
@@ -690,18 +363,11 @@ pub(crate) fn runtime_signer_identity(network: &str, _key: &[u8; 32]) -> Result<
 }
 
 pub(crate) fn runtime_request_id(p: &crate::runtime::Packet) -> Result<[u8; 32]> {
-    match routing::family(&p.network)? {
+    match routing::family(p.network())? {
         #[cfg(feature = "stellar")]
         stellar::FAMILY => stellar::server::request_id(p),
         _ => Err(unavailable()),
     }
-}
-
-/// Mechanical capability registration. Only the owning vendor can create its private value.
-#[derive(Clone, Debug)]
-pub(crate) enum PreparationCapability {
-    #[cfg(feature = "stellar")]
-    Stellar(stellar::server::PreparationCapability),
 }
 
 pub(crate) fn owner_source_consent<P: serde::Serialize>(
@@ -709,7 +375,22 @@ pub(crate) fn owner_source_consent<P: serde::Serialize>(
 ) -> Result<(serde_json::Value, String)> {
     match routing::family(&_input.configuration.network)? {
         #[cfg(feature = "stellar")]
-        stellar::FAMILY => stellar::server_owner::source_consent(_input),
+        stellar::FAMILY => stellar::server_owner::source_consent(
+            &allowit_sdk::vendor::runtime::owner::SourceConsent {
+                configuration: &_input.configuration.0,
+                policy_id: _input.policy_id,
+                revision: _input.revision,
+                source: _input.source,
+                source_hash: _input.source_hash,
+                ir_hash: _input.ir_hash,
+                module_digest: _input.module_digest,
+                language: _input.language,
+                tier: _input.tier,
+                rules: _input.rules,
+                params: _input.params,
+                params_hash: _input.params_hash,
+            },
+        ),
         _ => Err(unavailable()),
     }
 }

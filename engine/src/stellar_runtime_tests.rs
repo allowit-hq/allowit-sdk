@@ -1,7 +1,7 @@
 //! Persistence and recovery contracts of the shared Stellar workflow.
-use super::Runtime as NativeRuntime;
 use crate::error::{Error, Result};
 use crate::runtime::{OperationStore, Runtime, Signed, Status};
+use crate::vendors::stellar::runtime::Runtime as NativeRuntime;
 use allowit_stellar_wallet::{self as native, PreparedOperation, SignedOperation, rpc};
 use serde_json::{Value, json};
 use std::{
@@ -28,15 +28,20 @@ impl rpc::Rpc for ScriptedRpc {
     }
 }
 fn runtime(events: &Events, responses: Vec<native::Result<Value>>) -> Runtime {
-    Runtime {
-        provider: Box::new(super::super::server::Provider::from_rpc(
-            "stellar:testnet",
-            Arc::new(ScriptedRpc {
-                events: events.clone(),
-                responses: Mutex::new(responses.into()),
-            }),
-        )),
+    struct Transport(ScriptedRpc);
+    impl crate::runtime::Transport for Transport {
+        fn call(&self, method: &str, params: Value) -> Result<Value> {
+            rpc::Rpc::call(&self.0, method, params).map_err(Error::config)
+        }
     }
+    Runtime::with_transport(
+        "stellar:testnet",
+        Arc::new(Transport(ScriptedRpc {
+            events: events.clone(),
+            responses: Mutex::new(responses.into()),
+        })),
+    )
+    .unwrap()
 }
 fn packet(s: &SignedOperation) -> Signed {
     serde_json::from_value(serde_json::to_value(s).unwrap()).unwrap()
@@ -71,7 +76,7 @@ impl OperationStore for Store {
 }
 fn native_signed() -> SignedOperation {
     let old: SignedOperation = serde_json::from_str(include_str!(
-        "../../../../../cli/tests/fixtures/canonical-main-9682-native-signed.json"
+        "../../cli/tests/fixtures/canonical-main-9682-native-signed.json"
     ))
     .unwrap();
     let mut config = old.prepared.config;
@@ -93,7 +98,7 @@ fn native_signed() -> SignedOperation {
 }
 fn policy_signed() -> SignedOperation {
     let fixture: Value = serde_json::from_str(include_str!(
-        "../../../../../cli/tests/fixtures/stellar-policy-wallet-revalidation-rpc.json"
+        "../../cli/tests/fixtures/stellar-policy-wallet-revalidation-rpc.json"
     ))
     .unwrap();
     serde_json::from_value(fixture["signed"].clone()).unwrap()
@@ -183,7 +188,10 @@ fn original_identity_and_terminal_state_survive_retries_and_expiry() {
     );
     let mut changed_native = native.clone();
     changed_native.transaction_hash[0] ^= 1;
-    let changed = Signed(crate::runtime::Packet::new("stellar:testnet", &changed_native).unwrap());
+    let changed = Signed(
+        crate::runtime::Packet::new("stellar:testnet", &changed_native, signed.0.provider())
+            .unwrap(),
+    );
     assert!(runtime.submit(&mut store, &changed, 90000).is_err());
     assert_eq!(
         runtime.submit(&mut store, &signed, 90000).unwrap(),

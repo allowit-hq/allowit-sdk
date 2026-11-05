@@ -1,6 +1,7 @@
+#![cfg(feature = "stellar")]
 //! Native adapter cases for common input dispatch.
 mod address {
-    use crate::input::address::*;
+    use allowit_sdk_engine::input::address::*;
     const G: &str = "GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5";
     #[test]
     fn formats_match_their_family_only() {
@@ -8,14 +9,48 @@ mod address {
         let contract = allowit_stellar_wallet::sac_address("stellar:testnet", &native).unwrap();
         #[allow(non_snake_case)]
         let C = contract.as_str();
-        check_account(crate::routing::info("stellar:testnet").unwrap().family, G).unwrap();
-        check_wallet(crate::routing::info("stellar:testnet").unwrap().family, C).unwrap();
-        check_wallet(crate::routing::info("stellar:testnet").unwrap().family, G).unwrap();
-        check_recipient(crate::routing::info("stellar:testnet").unwrap().family, C).unwrap();
-        assert!(check_account(crate::routing::info("stellar:testnet").unwrap().family, C).is_err());
+        check_account(
+            allowit_sdk_engine::routing::info("stellar:testnet")
+                .unwrap()
+                .family,
+            G,
+        )
+        .unwrap();
+        check_wallet(
+            allowit_sdk_engine::routing::info("stellar:testnet")
+                .unwrap()
+                .family,
+            C,
+        )
+        .unwrap();
+        check_wallet(
+            allowit_sdk_engine::routing::info("stellar:testnet")
+                .unwrap()
+                .family,
+            G,
+        )
+        .unwrap();
+        check_recipient(
+            allowit_sdk_engine::routing::info("stellar:testnet")
+                .unwrap()
+                .family,
+            C,
+        )
+        .unwrap();
         assert!(
             check_account(
-                crate::routing::info("stellar:testnet").unwrap().family,
+                allowit_sdk_engine::routing::info("stellar:testnet")
+                    .unwrap()
+                    .family,
+                C
+            )
+            .is_err()
+        );
+        assert!(
+            check_account(
+                allowit_sdk_engine::routing::info("stellar:testnet")
+                    .unwrap()
+                    .family,
                 &G.replace('A', "B")
             )
             .is_err()
@@ -24,12 +59,16 @@ mod address {
     #[test]
     fn stellar_wallets_compare_case_sensitively() {
         assert!(same_wallet(
-            crate::routing::info("stellar:testnet").unwrap().family,
+            allowit_sdk_engine::routing::info("stellar:testnet")
+                .unwrap()
+                .family,
             G,
             G
         ));
         assert!(!same_wallet(
-            crate::routing::info("stellar:testnet").unwrap().family,
+            allowit_sdk_engine::routing::info("stellar:testnet")
+                .unwrap()
+                .family,
             G,
             &G.to_lowercase()
         ));
@@ -37,8 +76,8 @@ mod address {
 }
 
 mod asset {
-    use crate::input::asset::*;
-    use crate::routing::Family;
+    use allowit_sdk_engine::input::asset::*;
+    use allowit_sdk_engine::routing::Family;
     const STELLAR: &[Token] = &[
         Token {
             code: "XLM",
@@ -60,7 +99,9 @@ mod asset {
     fn units_parse_with_stellar_decimals() {
         assert_eq!(
             units(
-                crate::routing::info("stellar:testnet").unwrap().family,
+                allowit_sdk_engine::routing::info("stellar:testnet")
+                    .unwrap()
+                    .family,
                 STELLAR,
                 "XLM:5"
             ),
@@ -68,7 +109,9 @@ mod asset {
         );
         assert_eq!(
             units(
-                crate::routing::info("stellar:testnet").unwrap().family,
+                allowit_sdk_engine::routing::info("stellar:testnet")
+                    .unwrap()
+                    .family,
                 STELLAR,
                 "USDC:0.25"
             ),
@@ -79,14 +122,18 @@ mod asset {
     #[test]
     fn native_and_xlm_name_the_same_asset() {
         let a = parse(
-            crate::routing::info("stellar:testnet").unwrap().family,
+            allowit_sdk_engine::routing::info("stellar:testnet")
+                .unwrap()
+                .family,
             STELLAR,
             "native:1",
             Use::Spend,
         )
         .unwrap();
         let b = parse(
-            crate::routing::info("stellar:testnet").unwrap().family,
+            allowit_sdk_engine::routing::info("stellar:testnet")
+                .unwrap()
+                .family,
             STELLAR,
             "XLM:1",
             Use::Spend,
@@ -99,7 +146,9 @@ mod asset {
     #[test]
     fn issuer_contract_and_installed_forms() {
         let issued = parse(
-            crate::routing::info("stellar:testnet").unwrap().family,
+            allowit_sdk_engine::routing::info("stellar:testnet")
+                .unwrap()
+                .family,
             STELLAR,
             "EURC:GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5:1.5",
             Use::Spend,
@@ -110,7 +159,9 @@ mod asset {
         let native = allowit_stellar_wallet::asset_from_identity("XLM", None).unwrap();
         let sac = allowit_stellar_wallet::sac_address("stellar:testnet", &native).unwrap();
         let contract = parse(
-            crate::routing::info("stellar:testnet").unwrap().family,
+            allowit_sdk_engine::routing::info("stellar:testnet")
+                .unwrap()
+                .family,
             STELLAR,
             &format!("{sac}:2"),
             Use::Spend,
@@ -119,7 +170,9 @@ mod asset {
         assert_eq!(contract.asset, Asset::Contract(sac.clone()));
         assert_eq!(contract.units(), 20_000_000);
         let installed = parse(
-            crate::routing::info("stellar:testnet").unwrap().family,
+            allowit_sdk_engine::routing::info("stellar:testnet")
+                .unwrap()
+                .family,
             STELLAR,
             "100",
             Use::Spend,
@@ -135,7 +188,9 @@ mod asset {
         assert!(huge.message.contains("is too large"), "{}", huge.message);
         assert!(
             parse(
-                crate::routing::info("stellar:testnet").unwrap().family,
+                allowit_sdk_engine::routing::info("stellar:testnet")
+                    .unwrap()
+                    .family,
                 STELLAR,
                 "XLM:max",
                 Use::Spend
@@ -144,7 +199,9 @@ mod asset {
         );
         assert!(
             parse(
-                crate::routing::info("stellar:testnet").unwrap().family,
+                allowit_sdk_engine::routing::info("stellar:testnet")
+                    .unwrap()
+                    .family,
                 STELLAR,
                 "0",
                 Use::Spend
@@ -152,7 +209,9 @@ mod asset {
             .is_err()
         );
         let min = parse(
-            crate::routing::info("stellar:testnet").unwrap().family,
+            allowit_sdk_engine::routing::info("stellar:testnet")
+                .unwrap()
+                .family,
             STELLAR,
             "USDC:0",
             Use::Minimum,
@@ -161,7 +220,9 @@ mod asset {
         assert_eq!(min.units(), 0);
         assert!(
             parse(
-                crate::routing::info("stellar:testnet").unwrap().family,
+                allowit_sdk_engine::routing::info("stellar:testnet")
+                    .unwrap()
+                    .family,
                 STELLAR,
                 "10",
                 Use::Minimum
@@ -185,7 +246,9 @@ mod asset {
         ] {
             assert_eq!(
                 parse(
-                    crate::routing::info("stellar:testnet").unwrap().family,
+                    allowit_sdk_engine::routing::info("stellar:testnet")
+                        .unwrap()
+                        .family,
                     STELLAR,
                     bad,
                     Use::Spend
@@ -201,17 +264,17 @@ mod asset {
 
 #[test]
 fn every_registered_alias_uses_the_canonical_network_asset_defaults() {
-    for network in crate::routing::all() {
-        let expected = crate::execution::tokens(network.id).unwrap();
+    for network in allowit_sdk_engine::routing::all() {
+        let expected = allowit_sdk_engine::execution::tokens(network.id).unwrap();
         for input in std::iter::once(network.id).chain(network.aliases.iter().copied()) {
             assert_eq!(
-                crate::execution::tokens(input).unwrap(),
+                allowit_sdk_engine::execution::tokens(input).unwrap(),
                 expected,
                 "{input}"
             );
             assert_eq!(
-                crate::input::asset::resolve(input, "USDC", None, true).unwrap(),
-                crate::input::asset::resolve(network.id, "USDC", None, true).unwrap(),
+                allowit_sdk_engine::input::asset::resolve(input, "USDC", None, true).unwrap(),
+                allowit_sdk_engine::input::asset::resolve(network.id, "USDC", None, true).unwrap(),
                 "{input}"
             );
         }
@@ -221,7 +284,7 @@ fn every_registered_alias_uses_the_canonical_network_asset_defaults() {
 #[test]
 fn registered_protocol_and_presentation_aliases_preserve_the_existing_inventory() {
     for native in allowit_stellar_wallet::networks::NETWORKS {
-        let registered = crate::routing::info(native.id).unwrap();
+        let registered = allowit_sdk_engine::routing::info(native.id).unwrap();
         let presentation = if native.testnet {
             "stellar-testnet"
         } else {
@@ -235,15 +298,22 @@ fn registered_protocol_and_presentation_aliases_preserve_the_existing_inventory(
             .collect();
         assert_eq!(registered.aliases, expected);
         for alias in expected {
-            assert_eq!(crate::routing::normalize(alias).unwrap(), native.id);
+            assert_eq!(
+                allowit_sdk_engine::routing::normalize(alias).unwrap(),
+                native.id
+            );
         }
     }
     assert_eq!(
-        crate::routing::info("stellar:pubnet").unwrap().aliases,
+        allowit_sdk_engine::routing::info("stellar:pubnet")
+            .unwrap()
+            .aliases,
         &["stellar:mainnet", "stellar-mainnet"]
     );
     assert_eq!(
-        crate::routing::info("stellar:testnet").unwrap().aliases,
+        allowit_sdk_engine::routing::info("stellar:testnet")
+            .unwrap()
+            .aliases,
         &["stellar-testnet"]
     );
 }

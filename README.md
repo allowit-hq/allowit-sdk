@@ -102,6 +102,7 @@ See the [portable policy reference](docs/policy-reference.md) for source restric
 ## Embed SDK engine
 
 [`engine/`](engine/) contains shared workflows without terminal I/O:
+Stellar implementations live in the Stellar wallet crate. The SDK preserves its existing client paths through reexports.
 
 - `runtime::Runtime` composes native preparation, required durable retention, submission and recovery.
 - `vendors::stellar::runtime::owner_client` validates owner sign-in, binds its private session to the backend and Origin, and generates a portable draft with an explicit template or installation selection.

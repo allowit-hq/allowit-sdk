@@ -5,26 +5,7 @@ use crate::error::{Error, Result};
 use std::cell::RefCell;
 thread_local! { static SELECTED: RefCell<Option<String>> = const { RefCell::new(None) }; }
 
-/// Opaque identity of a compiled vendor registration.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct Family(pub(crate) &'static str);
-impl Family {
-    pub fn name(self) -> &'static str {
-        self.0
-    }
-}
-/// One admitted rail.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct RailInfo {
-    /// Canonical CAIP-2 identifier. Output always uses it.
-    pub id: &'static str,
-    /// User-facing name supplied by the native registration.
-    pub label: &'static str,
-    /// Friendly input aliases. The first one is the display name.
-    pub aliases: &'static [&'static str],
-    pub family: Family,
-    pub testnet: bool,
-}
+pub use allowit_sdk::vendor::routing::{Family, RailInfo};
 /// Every network advertised by the compiled vendor registrations, in build order.
 pub fn all() -> &'static [RailInfo] {
     static RAILS: std::sync::OnceLock<Vec<RailInfo>> = std::sync::OnceLock::new();

@@ -1,62 +1,27 @@
 //! Public installation metadata. Decoding describes retained data and grants no signing authority.
 use crate::{error::Result, runtime::Tier};
-use allowit_sdk::policy::PolicyValue;
-use std::collections::BTreeMap;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Custody {
-    Owner,
-    Policy,
-    Retired,
-}
-#[derive(Clone, Debug)]
-pub struct ConfigurationInfo {
-    pub network: String,
-    pub wallet: String,
-    pub owner: String,
-    pub agent: String,
-    pub server: String,
-    pub source: String,
-    pub source_hash: [u8; 32],
-    pub binding_hash: [u8; 32],
-    pub rules: Vec<String>,
-    pub is_retired: bool,
-    pub module_digest: [u8; 32],
-    pub policy_instance: [u8; 32],
-    pub asset: String,
-    pub asset_symbol: String,
-    pub asset_issuer: Option<String>,
-    pub max_fee_units: u64,
-    pub is_native_asset: bool,
-    pub fee_decimals: u8,
-    pub payment_asset_decimals: u32,
-    pub params: BTreeMap<String, PolicyValue>,
-    pub custody: Custody,
-    pub custody_encoding: serde_json::Value,
-    pub tier_encoding: serde_json::Value,
-    pub tier: Option<Tier>,
-}
+pub use allowit_sdk::vendor::runtime::owner::{
+    ConfigurationInfo, Custody, FeeBounds, PolicyIdentity,
+};
 /// Literal retained configuration with read-only common metadata. Serialization keeps original native bytes.
 #[derive(Clone, Debug)]
-pub struct Configuration {
-    pub(crate) info: ConfigurationInfo,
-    pub(crate) document: Box<serde_json::value::RawValue>,
-}
+pub struct Configuration(pub(crate) allowit_sdk::vendor::runtime::owner::Configuration);
 impl std::ops::Deref for Configuration {
     type Target = ConfigurationInfo;
     fn deref(&self) -> &Self::Target {
-        &self.info
+        self.0.info()
     }
 }
 impl PartialEq for Configuration {
     fn eq(&self, other: &Self) -> bool {
-        self.document.get() == other.document.get()
+        self.0.document().get() == other.0.document().get()
     }
 }
 impl Eq for Configuration {}
 impl Configuration {
     pub fn bytes(&self) -> &[u8] {
-        self.document.get().as_bytes()
+        self.0.document().get().as_bytes()
     }
     pub fn policy(input: crate::runtime::PolicyInstallation) -> Result<Self> {
         let installation = crate::runtime::Installation::policy_wallet(input)?;
@@ -68,7 +33,7 @@ impl Configuration {
 }
 impl serde::Serialize for Configuration {
     fn serialize<S: serde::Serializer>(&self, s: S) -> std::result::Result<S::Ok, S::Error> {
-        self.document.serialize(s)
+        self.0.document().serialize(s)
     }
 }
 impl<'de> serde::Deserialize<'de> for Configuration {
@@ -85,7 +50,7 @@ impl<'de> serde::Deserialize<'de> for Configuration {
 }
 /// Describe a literal retained configuration. Source consent and live authority are separate checks.
 pub fn configuration(network: &str, document: &[u8]) -> Result<Configuration> {
-    crate::vendors::owner_configuration(network, document)
+    crate::vendors::owner_configuration(network, document).map(Configuration)
 }
 /// Bind owner packet identity without granting permission to sign or broadcast it.
 pub fn envelope_hash(network: &str, payload: &[u8], require_signature: bool) -> Result<[u8; 32]> {
@@ -96,29 +61,16 @@ pub fn envelope_hash(network: &str, payload: &[u8], require_signature: bool) -> 
 pub fn validate_signed(network: &str, original: &[u8], signed: &[u8]) -> Result<[u8; 32]> {
     crate::vendors::owner_validate_signed(network, original, signed)
 }
-/// Caller-admitted policy identity for a new owner-custody projection. This is not source consent.
-pub struct PolicyIdentity {
-    pub policy_instance: [u8; 32],
-    pub module_digest: [u8; 32],
-    pub source: String,
-    pub params: BTreeMap<String, PolicyValue>,
-    pub asset: String,
-    pub asset_symbol: String,
-    pub asset_issuer: Option<String>,
-    pub agent: String,
-    pub server: String,
-    pub max_fee_units: u64,
-}
 impl Configuration {
     pub fn with_policy(&self, identity: PolicyIdentity) -> Result<Self> {
-        crate::vendors::owner_with_policy(self, identity)
+        crate::vendors::owner_with_policy(&self.0, identity).map(Configuration)
     }
 }
 impl crate::runtime::Installation {
     /// Restore an already admitted opaque configuration for read/owner operations.
     /// Native delegated signing still requires independently pinned source consent through Runtime::import.
     pub fn from_configuration(c: &Configuration) -> Self {
-        Self {
+        Self(allowit_sdk::vendor::runtime::Installation {
             description: crate::profiles::Description {
                 network: c.network.clone(),
                 wallet: c.wallet.clone(),
@@ -133,10 +85,10 @@ impl crate::runtime::Installation {
                 module_digest: c.module_digest.iter().map(|b| format!("{b:02x}")).collect(),
                 params: c.params.clone(),
             },
-            config: c.document.clone(),
+            config: c.0.document().to_owned(),
             export: None,
             authority: None,
-        }
+        })
     }
 }
 /// Check native deployment code before exposing an owner preparation.
@@ -149,15 +101,6 @@ pub fn connect(
     endpoint: &str,
 ) -> Result<std::sync::Arc<dyn crate::runtime::Transport>> {
     crate::vendors::owner_connect(network, endpoint)
-}
-#[derive(Clone, Debug)]
-pub struct FeeBounds {
-    pub minimum: u64,
-    pub maximum_execution: u64,
-    pub default_execution: u64,
-    pub default_deployment: u64,
-    pub decimals: u8,
-    pub native_symbol: String,
 }
 pub fn fee_bounds(network: &str) -> Result<FeeBounds> {
     crate::vendors::owner_fee_bounds(network)

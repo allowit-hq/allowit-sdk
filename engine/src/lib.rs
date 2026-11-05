@@ -39,3 +39,9 @@ pub mod typed_request;
 pub mod vendors;
 pub mod wallet;
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
+
+#[cfg(all(test, feature = "stellar"))]
+mod stellar_runtime_tests;
+
+#[cfg(all(test, feature = "stellar"))]
+mod stellar_request_tests;
