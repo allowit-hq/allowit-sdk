@@ -180,14 +180,16 @@ mod tests {
         .unwrap();
         let (description, binding) =
             crate::vendors::decode_profile("stellar:testnet", descriptor.get().as_bytes()).unwrap();
-        let profile = crate::profiles::Profile(allowit_sdk::vendor::profiles::Profile {
-            description,
-            binding,
-            descriptor,
+        let profile = crate::profiles::Profile {
             version: "build-only".into(),
-            backend: "http://localhost:8080".into(),
-            authority: None,
-        });
+            inner: allowit_sdk::vendor::profiles::Profile {
+                description,
+                binding,
+                descriptor,
+                backend: "http://localhost:8080".into(),
+                authority: None,
+            },
+        };
         let dir = tempfile::tempdir().unwrap();
         let root = dir.path().join("unopened");
         let request = request("transfer", &sdk::account_for_seed(&[6; 32]), "1", None);

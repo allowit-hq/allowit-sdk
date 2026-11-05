@@ -57,7 +57,7 @@ pub(crate) fn generate(
 ) -> Result<crate::generation::GeneratedDraft> {
     match routing::family(&request.network)? {
         #[cfg(feature = "stellar")]
-        stellar::FAMILY => stellar::generate(_backend, _origin, _signer, request, _clock),
+        stellar::FAMILY => stellar::generate(_backend, _origin, _signer, &request.into(), _clock),
         _ => Err(unavailable()),
     }
 }
@@ -109,7 +109,7 @@ pub(crate) fn build_execution(
     match routing::family(&p.description().network)? {
         #[cfg(feature = "stellar")]
         stellar::FAMILY => stellar::execution::build(
-            &p.0,
+            &p.inner,
             &|| open_provider_store(_root, stellar::EXECUTION_STORE_NAMESPACE),
             _rpc,
             _r,
@@ -127,7 +127,7 @@ pub(crate) fn execute(
     match routing::family(&p.description().network)? {
         #[cfg(feature = "stellar")]
         stellar::FAMILY => stellar::execution::execute(
-            p.0,
+            p.inner,
             std::sync::Arc::new(_s),
             &|| open_provider_store(_root, stellar::EXECUTION_STORE_NAMESPACE),
             _rpc,
@@ -147,7 +147,7 @@ pub(crate) fn execution_status(
     match routing::family(&p.description().network)? {
         #[cfg(feature = "stellar")]
         stellar::FAMILY => stellar::execution::status(
-            p.0,
+            p.inner,
             std::sync::Arc::new(_s),
             &|| open_provider_store(_root, stellar::EXECUTION_STORE_NAMESPACE),
             _rpc,

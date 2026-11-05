@@ -18,6 +18,12 @@ impl std::ops::Deref for Installation {
     }
 }
 impl Installation {
+    pub fn description(&self) -> &crate::profiles::Description {
+        self.0.description()
+    }
+    pub fn native_document(&self) -> &[u8] {
+        self.0.native_document()
+    }
     pub fn policy_wallet(input: PolicyInstallation) -> Result<Self> {
         crate::vendors::runtime_policy(input).map(Self)
     }

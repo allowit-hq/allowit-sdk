@@ -19,11 +19,14 @@ pub struct Selector {
     pub policy_id: Option<String>,
     pub version: Option<String>,
 }
-pub struct Profile(pub(crate) allowit_sdk::vendor::profiles::Profile);
+pub struct Profile {
+    pub version: String,
+    pub(crate) inner: allowit_sdk::vendor::profiles::Profile,
+}
 impl std::ops::Deref for Profile {
     type Target = allowit_sdk::vendor::profiles::Profile;
     fn deref(&self) -> &Self::Target {
-        &self.0
+        &self.inner
     }
 }
 #[derive(Serialize, Deserialize)]
@@ -51,8 +54,15 @@ fn canonical(value: &impl Serialize) -> Result<Vec<u8>> {
         .map_err(|_| Error::config("Cannot encode public profile"))
 }
 impl Profile {
-    pub fn with_authority(self, authority: &crate::config::ServerAuthority) -> Result<Self> {
-        self.0.with_authority(&authority.0).map(Self)
+    pub fn with_authority(mut self, authority: &crate::config::ServerAuthority) -> Result<Self> {
+        self.inner = self.inner.with_authority(&authority.0)?;
+        Ok(self)
+    }
+    pub fn description(&self) -> &Description {
+        self.inner.description()
+    }
+    pub fn server_origin(&self) -> &str {
+        self.inner.server_origin()
     }
     fn decode(envelope: Envelope) -> Result<Self> {
         if envelope.schema != 1
@@ -65,14 +75,16 @@ impl Profile {
         let (description, binding) =
             vendors::decode_profile(&envelope.network, envelope.descriptor.get().as_bytes())?;
         let version = allowit_sdk::digest(&canonical(&envelope)?);
-        Ok(Self(allowit_sdk::vendor::profiles::Profile {
-            description,
-            binding,
+        Ok(Self {
             version,
-            backend: envelope.backend,
-            descriptor: envelope.descriptor,
-            authority: None,
-        }))
+            inner: allowit_sdk::vendor::profiles::Profile {
+                description,
+                binding,
+                backend: envelope.backend,
+                descriptor: envelope.descriptor,
+                authority: None,
+            },
+        })
     }
     pub fn document(&self) -> Result<serde_json::Value> {
         serde_json::from_str(self.descriptor.get())

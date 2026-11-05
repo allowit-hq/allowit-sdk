@@ -308,7 +308,7 @@ mod profile_snapshot_tests {
             cache.select(&allowit_sdk_engine::profiles::Selector {
                 network: "stellar:testnet".into(),
                 wallet: Some(selected.config.wallet.clone()),
-                version: Some(second.version.clone()),
+                version: Some(second.version),
                 ..Default::default()
             })?;
             drop(cache);
