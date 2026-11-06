@@ -2,14 +2,14 @@
 
 **Go on. On your terms.**
 
-This repository contains `allowit-sdk-engine`, the shared offchain execution library.
+This repository contains `allowit-sdk`, the shared offchain execution library.
 Both CLI and server callers use SDK engine. Each actor retains its own keys, authorization and durable application state.
 The [Allowit CLI](https://github.com/allowit-hq/allowit-cli) owns terminal commands and local configuration.
 Server enforcement, native authority and verified settlement remain authoritative.
 
 [Allowit core](https://github.com/allowit-hq/allowit-core) contains the portable `allowit` policy library, its shared source gate and feature-gated host primitives.
 Rail libraries own native requests, encoding, signatures, RPC methods, simulation and settlement rules.
-The [workspace manifest](Cargo.toml), [lockfile](Cargo.lock) and [rail table](engine/src/routing.rs) define this build.
+The [workspace manifest](Cargo.toml), [lockfile](Cargo.lock) and [rail table](crates/allowit-sdk/src/routing.rs) define this build.
 SDK engine composes those capabilities into preparation, execution, status and recovery workflows.
 The server adds trusted policy context, admission, server authority, reservations and accounting.
 
@@ -21,7 +21,7 @@ SDK engine owns reusable execution logic for CLI and server callers.
 flowchart TB
     CLI["[allowit-cli]<br/>crate @allowit/cli<br/>DX: policy and agent keypair generation<br/>Policy validation · x402 marketplace"]
     Server["[allowit-engine]<br/>crate @allowit/server<br/>Shared REST API · server enforcement"]
-    Engine["[allowit-sdk]<br/>crate @allowit/sdk/engine<br/>All other shared logic"]
+    Engine["[allowit-sdk]<br/>crate allowit-sdk<br/>All other shared logic"]
     Vendor["crate + npm @allowit/vendor/*<br/>Native contracts · signing · chain semantics<br/>SVG graphics · web components"]
     Core["[allowit-core]<br/>crate + npm @allowit/sdk/core<br/>Common types · policy rules · primitives<br/>TypeScript interfaces"]
 
@@ -57,7 +57,7 @@ See the [portable policy reference](docs/policy-reference.md) for source restric
 
 ## Embed SDK engine
 
-[`engine/`](engine/) contains shared workflows without terminal I/O:
+[`crates/allowit-sdk/`](crates/allowit-sdk/) contains shared workflows without terminal I/O:
 
 - `runtime::Runtime` composes native preparation, required durable retention, submission and recovery.
 - `vendors::stellar::runtime::owner_client` validates owner sign-in, binds its private session to the backend and Origin, and generates a portable draft with an explicit template or installation selection.
@@ -77,20 +77,23 @@ Provider delivery is separate from native chain settlement.
 
 | Path | Purpose |
 | --- | --- |
-| [`engine/`](engine/) | Shared execution library for CLI, server and SDK callers |
+| [`crates/allowit-sdk/`](crates/allowit-sdk/) | Shared execution library for CLI, server and SDK callers |
 | [`docs/policy-reference.md`](docs/policy-reference.md) | Portable source and execution contract |
 
 All packages share one Cargo workspace, lockfile and version. Packages in this repository depend on each other by path.
 Cross-repository dependencies identify immutable release tags or exact source commits. A commit pin does not identify a published release. Core and rail dependencies must resolve the same core release.
 Published tags are immutable.
+The `allowit-core` dependency alias selects the released Core host package `allowit-sdk` at `v0.3.1`.
+SDK exposes the crate as `allowit_sdk`. Core host imports use `allowit_core`.
+Adopting the consolidated Core `allowit-core` package requires matching Core and rail releases.
 
 ## Develop
 
 ```sh
 cargo build --workspace --all-targets --locked
 cargo fmt --all --check
-cargo test --locked -p allowit-sdk-engine
-cargo clippy --locked -p allowit-sdk-engine --all-targets -- -D warnings
+cargo test --locked -p allowit-sdk@0.5.0
+cargo clippy --locked -p allowit-sdk@0.5.0 --all-targets -- -D warnings
 ```
 
 The affected [workflows](.github/workflows/) define the required checks.

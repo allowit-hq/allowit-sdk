@@ -1,10 +1,10 @@
 [workspace]
 resolver = "3"
-members = ["engine"]
+members = ["crates/allowit-sdk"]
 
 # Every package in this repository releases at this version.
 [workspace.package]
-version = "0.4.0"
+version = "0.5.0"
 repository = "https://github.com/allowit-hq/allowit-sdk"
 
 # Dependencies point one way: this SDK depends on Allowit core and on the rail
@@ -12,7 +12,7 @@ repository = "https://github.com/allowit-hq/allowit-sdk"
 # must name the same core release, so Cargo builds one copy of core.
 [workspace.dependencies]
 allowit = { git = "https://github.com/allowit-hq/allowit-core.git", tag = "v0.3.1", version = "0.3", default-features = false, features = ["std"] }
-allowit-sdk = { git = "https://github.com/allowit-hq/allowit-core.git", tag = "v0.3.1", version = "0.3", default-features = false }
+allowit-core = { package = "allowit-sdk", git = "https://github.com/allowit-hq/allowit-core.git", tag = "v0.3.1", version = "0.3", default-features = false }
 allowit-stellar-wallet = { git = "https://github.com/allowit-hq/allowit-contracts-stellar.git", rev = "961ce34a5382b80537c8df7fdfa8bcf976039bde", version = "0.3" }
 
 # Every Allowit workspace uses this profile block, so a shared target directory
