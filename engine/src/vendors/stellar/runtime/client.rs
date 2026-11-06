@@ -831,7 +831,7 @@ mod public_bundle_tests {
     use crate::typed_request::decode_bytes;
     fn fixture() -> serde_json::Value {
         let f: serde_json::Value = serde_json::from_str(include_str!(
-            "../../../../../cli/tests/fixtures/stellar-approval.json"
+            "../../../../tests/fixtures/stellar-approval.json"
         ))
         .unwrap();
         let policy = &f["policy"];
@@ -1116,7 +1116,7 @@ mod native_revalidation_tests {
     };
     fn fixture() -> serde_json::Value {
         serde_json::from_str(include_str!(
-            "../../../../../cli/tests/fixtures/stellar-policy-wallet-revalidation-rpc.json"
+            "../../../../tests/fixtures/stellar-policy-wallet-revalidation-rpc.json"
         ))
         .unwrap()
     }
@@ -1304,7 +1304,7 @@ mod native_revalidation_tests {
         changed.request.operation.nonce[0] ^= 1;
         assert!(revalidate_with_rpc_url(&changed, 86402, "http://127.0.0.1:1").is_err());
         let old: SignedOperation = serde_json::from_str(include_str!(
-            "../../../../../cli/tests/fixtures/canonical-main-9682-native-signed.json"
+            "../../../../tests/fixtures/canonical-main-9682-native-signed.json"
         ))
         .unwrap();
         assert!(revalidate_with_rpc_url(&old.prepared, 86402, "").is_err());

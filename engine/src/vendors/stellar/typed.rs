@@ -55,10 +55,8 @@ impl TypedRequest {
 mod tests {
     use super::*;
     use serde_json::Value;
-    const ENVELOPE: &str =
-        include_str!("../../../../cli/tests/fixtures/typed/execution-envelope-v1.json");
-    const VECTOR: &str =
-        include_str!("../../../../cli/tests/fixtures/typed/operation-vector-v1.json");
+    const ENVELOPE: &str = include_str!("../../../tests/fixtures/typed/execution-envelope-v1.json");
+    const VECTOR: &str = include_str!("../../../tests/fixtures/typed/operation-vector-v1.json");
     const POLICY: &str = "owner-policy_Example-A";
     const ID: &str = "cli-native-transfer-01";
 
