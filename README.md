@@ -58,6 +58,7 @@ See the [portable policy reference](docs/policy-reference.md) for source restric
 ## Embed SDK engine
 
 [`crates/allowit-sdk/`](crates/allowit-sdk/) contains shared workflows without terminal I/O:
+Stellar implementations live in the Stellar wallet crate. The SDK preserves its existing client paths through reexports.
 
 - `runtime::Runtime` composes native preparation, required durable retention, submission and recovery.
 - `vendors::stellar::runtime::owner_client` validates owner sign-in, binds its private session to the backend and Origin, and generates a portable draft with an explicit template or installation selection.
@@ -83,9 +84,8 @@ Provider delivery is separate from native chain settlement.
 All packages share one Cargo workspace, lockfile and version. Packages in this repository depend on each other by path.
 Cross-repository dependencies identify immutable release tags or exact source commits. A commit pin does not identify a published release. Core and rail dependencies must resolve the same core release.
 Published tags are immutable.
-The `allowit-core` dependency alias selects the released Core host package `allowit-sdk` at `v0.3.1`.
+The `allowit-core` dependency alias selects Core's released host package `allowit-sdk` at `v0.3.2`.
 SDK exposes the crate as `allowit_sdk`. Core host imports use `allowit_core`.
-Adopting the consolidated Core `allowit-core` package requires matching Core and rail releases.
 
 ## Develop
 

@@ -4,27 +4,12 @@ use crate::{
     error::{Error, Result},
     routing, vendors,
 };
-use allowit_core::{client::store::Store, policy::PolicyValue};
+use allowit_core::client::store::Store;
 use serde::{Deserialize, Serialize};
 use serde_json::value::RawValue;
-use std::{collections::BTreeMap, path::Path};
+use std::path::Path;
 
-#[derive(Clone, Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct Description {
-    pub network: String,
-    pub wallet: String,
-    pub agent: String,
-    pub policy_id: String,
-    pub owner: String,
-    pub server: String,
-    pub asset: String,
-    pub asset_symbol: String,
-    pub source: String,
-    pub source_hash: String,
-    pub module_digest: String,
-    pub params: BTreeMap<String, PolicyValue>,
-}
+pub use allowit_core::vendor::profiles::Description;
 /// Select one exact public installation. Multiple versions require explicit selection.
 #[derive(Clone, Debug, Default)]
 pub struct Selector {
@@ -35,14 +20,14 @@ pub struct Selector {
     pub version: Option<String>,
 }
 pub struct Profile {
-    description: Description,
     pub version: String,
-    #[cfg_attr(not(feature = "stellar"), allow(dead_code))]
-    pub(crate) backend: String,
-    #[cfg_attr(not(feature = "stellar"), allow(dead_code))]
-    pub(crate) binding: vendors::ProfileBinding,
-    descriptor: Box<RawValue>,
-    authority: Option<crate::config::ServerAuthority>,
+    pub(crate) inner: allowit_core::vendor::profiles::Profile,
+}
+impl std::ops::Deref for Profile {
+    type Target = allowit_core::vendor::profiles::Profile;
+    fn deref(&self) -> &Self::Target {
+        &self.inner
+    }
 }
 #[derive(Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -70,27 +55,15 @@ fn canonical(value: &impl Serialize) -> Result<Vec<u8>> {
 }
 impl Profile {
     pub fn with_authority(mut self, authority: &crate::config::ServerAuthority) -> Result<Self> {
-        if self.description.network != authority.network() || self.backend != authority.origin() {
-            return Err(Error::config(
-                "Configured server authority belongs to another backend or rail",
-            ));
-        }
-        vendors::verify_server_role(&self.binding, authority.public_key())?;
-        self.authority = Some(authority.clone());
+        self.inner = self.inner.with_authority(&authority.0)?;
         Ok(self)
     }
-    pub fn server_origin(&self) -> &str {
-        &self.backend
-    }
-    pub(crate) fn require_authority(&self) -> Result<&crate::config::ServerAuthority> {
-        self.authority.as_ref().ok_or_else(|| {
-            Error::config("Fresh execution requires independently configured server authority")
-        })
-    }
     pub fn description(&self) -> &Description {
-        &self.description
+        self.inner.description()
     }
-
+    pub fn server_origin(&self) -> &str {
+        self.inner.server_origin()
+    }
     fn decode(envelope: Envelope) -> Result<Self> {
         if envelope.schema != 1
             || routing::normalize(&envelope.network)? != envelope.network
@@ -103,12 +76,14 @@ impl Profile {
             vendors::decode_profile(&envelope.network, envelope.descriptor.get().as_bytes())?;
         let version = allowit_core::digest(&canonical(&envelope)?);
         Ok(Self {
-            description,
-            binding,
             version,
-            backend: envelope.backend,
-            descriptor: envelope.descriptor,
-            authority: None,
+            inner: allowit_core::vendor::profiles::Profile {
+                description,
+                binding,
+                backend: envelope.backend,
+                descriptor: envelope.descriptor,
+                authority: None,
+            },
         })
     }
     pub fn document(&self) -> Result<serde_json::Value> {

@@ -1,148 +1,31 @@
-//! Local rail communication for server callers. Private admission and key authority remain with the caller.
+//! Shared runtime orchestration over vendor-owned packets and native implementations.
 pub mod owner;
-use crate::{config::ServerAuthority, error::Result, profiles::Description};
-use allowit_core::policy::PolicyValue;
+use crate::{config::ServerAuthority, error::Result};
+use allowit_core::vendor::runtime as native;
+pub use native::{
+    Accounting, Action, Debit, Evaluator, Expense, Lifetime, OwnerAction, OwnerInfo, PacketInfo,
+    PolicyInstallation, Poll, Problem, ReceiptInfo, Resources, Signature, Signer, Snapshot, Status,
+    Terms, Tier, Transport, Validity,
+};
+pub(crate) use native::{Kind, Packet};
 use serde::{Deserialize, Serialize};
 use serde_json::value::RawValue;
-use std::{collections::BTreeMap, time::Duration};
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub enum Tier {
-    Simple,
-    #[serde(rename = "common")]
-    Standard,
-    Custom,
-}
-pub struct PolicyInstallation {
-    pub description: Description,
-    pub policy_instance: [u8; 32],
-    pub tier: Tier,
-    pub asset: crate::input::asset::Asset,
-    pub max_fee_units: u64,
-}
-/// Immutable common identity with private native encoding. Construction grants no signing authority.
-pub struct Installation {
-    pub(crate) description: Description,
-    pub(crate) config: Box<RawValue>,
-    #[cfg_attr(not(feature = "stellar"), allow(dead_code))]
-    pub(crate) export: Option<Box<RawValue>>,
-    #[cfg_attr(not(feature = "stellar"), allow(dead_code))]
-    pub(crate) authority: Option<ServerAuthority>,
+pub struct Installation(pub(crate) native::Installation);
+impl std::ops::Deref for Installation {
+    type Target = native::Installation;
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
 }
 impl Installation {
-    pub fn policy_wallet(input: PolicyInstallation) -> Result<Self> {
-        crate::vendors::runtime_policy(input)
+    pub fn description(&self) -> &crate::profiles::Description {
+        self.0.description()
     }
-    pub fn description(&self) -> &Description {
-        &self.description
-    }
-    /// Preserve the existing native installation record when the caller persists its own state.
     pub fn native_document(&self) -> &[u8] {
-        self.config.get().as_bytes()
+        self.0.native_document()
     }
-}
-#[derive(Clone, Debug)]
-pub enum Action {
-    Transfer {
-        recipient: String,
-        units: i128,
-    },
-    Deposit {
-        vault: String,
-        assets: i128,
-        min_shares: i128,
-    },
-    Redeem {
-        vault: String,
-        shares: i128,
-        min_assets: i128,
-    },
-}
-#[derive(Clone, Debug, Default)]
-pub struct Terms {
-    pub args: BTreeMap<String, PolicyValue>,
-    pub expense: Option<Expense>,
-}
-#[derive(Clone, Debug)]
-pub struct Expense {
-    pub gas_units: i128,
-    pub conversion_units: i128,
-    pub spent_units: i128,
-    pub max_fee_units: u64,
-    pub observed_height: u64,
-    pub day: u64,
-}
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct Accounting {
-    pub nonce: u64,
-    #[serde(alias = "revision")]
-    pub deployment_version: u64,
-    pub spent_daily: i128,
-    pub spent_total: i128,
-    pub spent_day: u64,
-    pub calls: u64,
-}
-#[derive(Clone, Copy, Debug)]
-pub struct Validity {
-    pub now: u64,
-    pub expires_at: u64,
-}
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub enum Status {
-    Prepared,
-    Submitted,
-    SubmissionUnknown,
-    Confirmed,
-    Failed,
-}
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct Signature {
-    #[serde(rename = "signer")]
-    pub identity: String,
-    #[serde(rename = "signature")]
-    pub bytes: Vec<u8>,
-}
-/// The caller owns the private key and decides when this capability is available.
-pub trait Signer {
-    fn identity(&self) -> &str;
-    fn sign_hash(&self, digest: &[u8; 32]) -> Result<Vec<u8>>;
-}
-/// Existing portable Core evaluator. The server supplies only its admitted compiled policy.
-pub type Evaluator<'a> = &'a dyn Fn(&allowit::AllowitContext) -> allowit::Result;
-
-#[derive(Clone, Copy)]
-pub(crate) enum Kind {
-    Prepared,
-    Signed,
-    Receipt,
-    Owner,
-    OwnerSigned,
-    Request,
-}
-#[derive(Clone, Debug)]
-pub(crate) struct Packet {
-    pub network: String,
-    pub document: Box<RawValue>,
-    #[cfg_attr(not(feature = "stellar"), allow(dead_code))]
-    pub capability: Option<crate::vendors::PreparationCapability>,
-}
-impl Packet {
-    #[cfg_attr(not(feature = "stellar"), allow(dead_code))]
-    pub(crate) fn new(network: &str, value: &impl Serialize) -> Result<Self> {
-        let document = RawValue::from_string(
-            serde_json::to_string(value)
-                .map_err(|_| crate::error::Error::config("Cannot encode native packet"))?,
-        )
-        .map_err(|_| crate::error::Error::config("Cannot retain native packet"))?;
-        Ok(Self {
-            network: crate::routing::normalize(network)?.into(),
-            document,
-            capability: None,
-        })
+    pub fn policy_wallet(input: PolicyInstallation) -> Result<Self> {
+        crate::vendors::runtime_policy(input).map(Self)
     }
 }
 macro_rules! carrier {
@@ -151,10 +34,10 @@ macro_rules! carrier {
         pub struct $name(pub(crate) Packet);
         impl $name {
             pub fn bytes(&self) -> &[u8] {
-                self.0.document.get().as_bytes()
+                self.0.document().get().as_bytes()
             }
             pub fn network(&self) -> &str {
-                &self.0.network
+                self.0.network()
             }
         }
         impl Serialize for $name {
@@ -162,7 +45,7 @@ macro_rules! carrier {
                 &self,
                 s: S,
             ) -> std::result::Result<S::Ok, S::Error> {
-                self.0.document.serialize(s)
+                self.0.document().serialize(s)
             }
         }
         impl<'de> Deserialize<'de> for $name {
@@ -190,33 +73,10 @@ impl RequestPacket {
 }
 impl PartialEq for RequestPacket {
     fn eq(&self, other: &Self) -> bool {
-        self.network() == other.network()
-            && serde_json::from_slice::<serde_json::Value>(self.bytes()).ok()
-                == serde_json::from_slice::<serde_json::Value>(other.bytes()).ok()
+        native::RequestPacket(self.0.clone()) == native::RequestPacket(other.0.clone())
     }
 }
 
-/// Native owner-signing input and common immutable transaction identity.
-#[derive(Clone, Debug)]
-pub struct OwnerInfo {
-    pub action: String,
-    pub signing_payload: Vec<u8>,
-    pub transaction_hash: [u8; 32],
-    pub expires_at: u64,
-}
-impl OwnerPacket {
-    pub fn info(&self) -> Result<OwnerInfo> {
-        crate::vendors::runtime_owner_info(&self.0)
-    }
-}
-#[derive(Clone, Debug)]
-pub struct PacketInfo {
-    pub operation_id: [u8; 32],
-    pub transaction_hash: [u8; 32],
-    pub wallet: String,
-    pub expires_at: u64,
-}
-/// Read-only common projection of a validated retained operation.
 pub struct PreparedMetadata {
     pub configuration: owner::Configuration,
     pub request: RequestPacket,
@@ -228,88 +88,52 @@ pub struct PreparedMetadata {
     pub request_hash: [u8; 32],
     pub debit: Debit,
 }
-#[derive(Clone, Debug)]
-pub struct Debit {
-    pub units: i128,
-    pub token: String,
-    pub recipient: String,
-    pub kind: String,
-    pub display_amount: String,
-    pub display_token: String,
+impl OwnerPacket {
+    pub fn info(&self) -> Result<OwnerInfo> {
+        self.0.provider().owner_info(&self.0)
+    }
 }
 impl Prepared {
-    pub fn metadata(&self) -> Result<PreparedMetadata> {
-        crate::vendors::runtime_prepared_metadata(&self.0)
-    }
     pub fn info(&self) -> Result<PacketInfo> {
-        crate::vendors::runtime_info(&self.0, Kind::Prepared)
+        self.0.provider().info(&self.0, Kind::Prepared)
+    }
+    pub fn metadata(&self) -> Result<PreparedMetadata> {
+        let m = self.0.provider().prepared_metadata(&self.0)?;
+        Ok(PreparedMetadata {
+            configuration: owner::Configuration(m.configuration),
+            request: RequestPacket(m.request.0),
+            operation_id: m.operation_id,
+            created_at: m.created_at,
+            expires_at: m.expires_at,
+            transaction_hash: m.transaction_hash,
+            debit_units: m.debit_units,
+            request_hash: m.request_hash,
+            debit: m.debit,
+        })
     }
 }
 impl Signed {
     pub fn validate_signatures(&self) -> Result<()> {
-        crate::vendors::runtime_validate_signed(&self.0)
+        self.0.provider().validate_signed(&self.0)
     }
     pub fn preparation(&self) -> Result<Prepared> {
-        crate::vendors::runtime_signed_preparation(&self.0)
+        self.0
+            .provider()
+            .signed_preparation(&self.0)
+            .map(|p| Prepared(p.0))
     }
     pub fn info(&self) -> Result<PacketInfo> {
-        crate::vendors::runtime_info(&self.0, Kind::Signed)
+        self.0.provider().info(&self.0, Kind::Signed)
     }
-}
-/// Values observed by the selected native implementation. This is not a complete economic-state commitment.
-#[derive(Clone)]
-pub struct Snapshot {
-    pub accounting: Accounting,
-    pub observed_height: u64,
-    pub paused: bool,
-    pub params: BTreeMap<String, PolicyValue>,
-    pub state: BTreeMap<String, PolicyValue>,
-    pub(crate) evidence: Packet,
-}
-impl Snapshot {
-    pub fn verify_consent(&self, message: &str, signatures: &[Signature]) -> Result<()> {
-        crate::vendors::runtime_verify_consent(self, message, signatures)
-    }
-    pub fn signer_weight(&self, identity: &str) -> Result<u32> {
-        crate::vendors::runtime_signer_weight(self, identity)
-    }
-    pub fn authority_document(&self) -> Result<serde_json::Value> {
-        crate::vendors::runtime_authority_document(self)
-    }
-    /// Compare only native known-state evidence. Current balance, lifetime and validity checks stay separate.
-    pub fn same_known_state(&self, other: &Self) -> Result<bool> {
-        crate::vendors::runtime_same_snapshot(self, other)
-    }
-}
-#[derive(Clone, Debug)]
-pub struct Lifetime {
-    pub observed_height: u64,
-    pub instance_until: u64,
-    pub code_until: u64,
-    pub extension_target: u64,
-    pub needs_renewal: bool,
-}
-#[derive(Clone, Debug)]
-pub struct Resources {
-    pub code_present: bool,
-    pub wallet_present: bool,
-    pub lifetime: Option<Lifetime>,
-}
-#[derive(Clone, Debug)]
-pub struct ReceiptInfo {
-    pub transaction_hash: [u8; 32],
-    pub status: Status,
-    pub observed_height: u64,
 }
 impl Receipt {
     pub fn verify_operation(&self, signed: &Signed) -> Result<()> {
-        crate::vendors::runtime_verify_receipt(&self.0, &signed.0)
+        self.0.provider().verify_receipt(&self.0, &signed.0)
     }
     pub fn info(&self) -> Result<ReceiptInfo> {
-        crate::vendors::runtime_receipt_info(&self.0)
+        self.0.provider().receipt_info(&self.0)
     }
 }
-/// Atomically reject a different signed packet under an existing operation ID.
 pub trait OperationStore {
     fn load(&self, id: [u8; 32]) -> Result<Option<(Signed, Status)>>;
     fn record(&mut self, id: [u8; 32], signed: &Signed, status: Status) -> Result<()>;
@@ -319,50 +143,6 @@ pub struct ObservedAuthorization {
     pub receipt: Receipt,
     pub status: Status,
 }
-#[derive(Clone, Debug)]
-pub enum OwnerAction {
-    Upload {
-        wasm: Vec<u8>,
-    },
-    Create {
-        wasm: Vec<u8>,
-    },
-    Fund {
-        units: i128,
-    },
-    Extend,
-    SetPause {
-        paused: bool,
-    },
-    Recover {
-        units: Option<i128>,
-        recipient: Option<String>,
-    },
-}
-#[derive(Clone, Copy, Debug)]
-pub struct Poll {
-    pub attempts: u32,
-    pub interval: Duration,
-}
-impl Default for Poll {
-    fn default() -> Self {
-        Self {
-            attempts: 30,
-            interval: Duration::from_secs(2),
-        }
-    }
-}
-
-/// Caller-owned bounded RPC transport. Native methods and packet interpretation stay in the vendor.
-pub trait Transport: Send + Sync {
-    fn call(&self, method: &str, params: serde_json::Value) -> Result<serde_json::Value>;
-}
-
-pub(crate) struct DiagnosticSession {
-    pub runtime: Runtime,
-    pub classify: Box<dyn FnOnce(&crate::error::Error) -> Problem>,
-}
-
 pub struct Runtime {
     pub(crate) provider: Box<dyn crate::vendors::RuntimeProvider>,
 }
@@ -372,13 +152,16 @@ impl Runtime {
         configuration: &owner::Configuration,
         accounting: Option<&Accounting>,
     ) -> Result<Snapshot> {
-        self.provider.discover_snapshot(configuration, accounting)
+        self.provider
+            .discover_snapshot(&configuration.0, accounting)
     }
     pub fn current_height(&self) -> Result<u64> {
         self.provider.current_height()
     }
     pub fn observe_hash(&self, hash: &[u8; 32]) -> Result<Option<Receipt>> {
-        self.provider.observe_hash(hash)
+        self.provider
+            .observe_hash(hash)
+            .map(|p| p.map(|p| Receipt(p.0)))
     }
 
     pub fn with_transport(network: &str, transport: std::sync::Arc<dyn Transport>) -> Result<Self> {
@@ -388,7 +171,7 @@ impl Runtime {
         crate::vendors::runtime(network, endpoint).map(|provider| Self { provider })
     }
     pub fn import(&self, authority: &ServerAuthority, bytes: &[u8]) -> Result<Installation> {
-        self.provider.import(authority, bytes)
+        self.provider.import(&authority.0, bytes).map(Installation)
     }
     pub fn request(
         &self,
@@ -397,22 +180,27 @@ impl Runtime {
         action: Action,
         accounting: Option<&Accounting>,
     ) -> Result<RequestPacket> {
-        self.provider.request(i, id, action, accounting)
+        self.provider
+            .request(&i.0, id, action, accounting)
+            .map(|p| RequestPacket(p.0))
     }
     pub fn read_request(&self, i: &Installation, bytes: &[u8]) -> Result<RequestPacket> {
-        self.provider.read_request(i, bytes)
+        self.provider
+            .read_request(&i.0, bytes)
+            .map(|p| RequestPacket(p.0))
     }
     pub fn snapshot(&self, i: &Installation, a: Option<&Accounting>) -> Result<Snapshot> {
-        self.provider.snapshot(i, a)
+        self.provider.snapshot(&i.0, a)
     }
     pub fn action(&self, i: &Installation, r: &RequestPacket) -> Result<Action> {
-        self.provider.action(i, r)
+        self.provider
+            .action(&i.0, &native::RequestPacket(r.0.clone()))
     }
     pub fn resources(&self, i: &Installation) -> Result<Resources> {
-        self.provider.resources(i)
+        self.provider.resources(&i.0)
     }
     pub fn redeemable(&self, i: &Installation, vault: &str, shares: i128) -> Result<i128> {
-        self.provider.redeemable(i, vault, shares)
+        self.provider.redeemable(&i.0, vault, shares)
     }
     pub fn prepare(
         &self,
@@ -422,7 +210,15 @@ impl Runtime {
         accounting: Option<&Accounting>,
         validity: Validity,
     ) -> Result<Prepared> {
-        self.provider.prepare(i, r, terms, accounting, validity)
+        self.provider
+            .prepare(
+                &i.0,
+                &native::RequestPacket(r.0.clone()),
+                terms,
+                accounting,
+                validity,
+            )
+            .map(|p| Prepared(p.0))
     }
     /// Obtain service authorization without exposing it to RPC. Caller must retain it before finish_authorization.
     pub fn authorize_preparation(
@@ -434,7 +230,8 @@ impl Runtime {
         now: u64,
     ) -> Result<Prepared> {
         self.provider
-            .authorize_preparation(i, p, signer, evaluator, now)
+            .authorize_preparation(&i.0, &native::Prepared(p.0.clone()), signer, evaluator, now)
+            .map(|p| Prepared(p.0))
     }
     pub fn finalize_authorization(
         &self,
@@ -446,7 +243,15 @@ impl Runtime {
         retain: impl FnOnce(&Prepared) -> Result<()>,
     ) -> Result<Prepared> {
         self.provider
-            .finalize(i, p, signer, evaluator, now, Box::new(retain))
+            .finalize(
+                &i.0,
+                &native::Prepared(p.0.clone()),
+                signer,
+                evaluator,
+                now,
+                Box::new(|p| retain(&Prepared(p.0.clone()))),
+            )
+            .map(|p| Prepared(p.0))
     }
     pub fn finish_authorization(
         &self,
@@ -454,10 +259,18 @@ impl Runtime {
         p: &Prepared,
         retain: impl FnOnce(&Prepared) -> Result<()>,
     ) -> Result<Prepared> {
-        self.provider.finish(i, p, Box::new(retain))
+        self.provider
+            .finish(
+                &i.0,
+                &native::Prepared(p.0.clone()),
+                Box::new(|p| retain(&Prepared(p.0.clone()))),
+            )
+            .map(|p| Prepared(p.0))
     }
     pub fn revalidate(&self, i: &Installation, p: &Prepared, now: u64) -> Result<Prepared> {
-        self.provider.revalidate(i, p, now)
+        self.provider
+            .revalidate(&i.0, &native::Prepared(p.0.clone()), now)
+            .map(|p| Prepared(p.0))
     }
     pub fn sign(
         &self,
@@ -466,7 +279,8 @@ impl Runtime {
         s: &dyn Signer,
         now: u64,
     ) -> Result<Signature> {
-        self.provider.sign(i, p, s, now)
+        self.provider
+            .sign(&i.0, &native::Prepared(p.0.clone()), s, now)
     }
     pub fn authorize(
         &self,
@@ -475,7 +289,9 @@ impl Runtime {
         s: &[Signature],
         now: u64,
     ) -> Result<Signed> {
-        self.provider.authorize(i, p, s, now)
+        self.provider
+            .authorize(&i.0, &native::Prepared(p.0.clone()), s, now)
+            .map(|p| Signed(p.0))
     }
     /// Retain the original packet before broadcast. Retries observe that identity first.
     pub fn submit(&self, store: &mut dyn OperationStore, p: &Signed, now: u64) -> Result<Status> {
@@ -487,18 +303,22 @@ impl Runtime {
                 ));
             }
             if previous != Status::Prepared {
-                let observed = self.provider.status(&original)?;
+                let observed = self.provider.status(&native::Signed(original.0.clone()))?;
                 if observed != Status::SubmissionUnknown
-                    || self.provider.validate_signed(p, now).is_err()
+                    || self
+                        .provider
+                        .validate_signed(&native::Signed(p.0.clone()), now)
+                        .is_err()
                 {
                     store.record(id, &original, observed.clone())?;
                     return Ok(observed);
                 }
             }
         }
-        self.provider.validate_signed(p, now)?;
+        self.provider
+            .validate_signed(&native::Signed(p.0.clone()), now)?;
         store.record(id, p, Status::SubmissionUnknown)?;
-        let status = self.provider.broadcast(p, now)?;
+        let status = self.provider.broadcast(&native::Signed(p.0.clone()), now)?;
         if status != Status::SubmissionUnknown {
             store.record(id, p, status.clone())?;
         }
@@ -514,18 +334,36 @@ impl Runtime {
                 "Retained operation identity differs",
             ));
         }
-        let status = self.provider.status(&original)?;
+        let status = self.provider.status(&native::Signed(original.0.clone()))?;
         store.record(id, &original, status.clone())?;
         Ok(status)
     }
     pub fn observe(&self, p: &Signed) -> Result<Option<Receipt>> {
-        self.provider.observe(p)
+        self.provider
+            .observe(&native::Signed(p.0.clone()))
+            .map(|p| p.map(|p| Receipt(p.0)))
     }
     pub fn observe_authorizations(
         &self,
         packets: &[Prepared],
     ) -> Result<Vec<ObservedAuthorization>> {
-        self.provider.observe_authorizations(packets)
+        self.provider
+            .observe_authorizations(
+                &packets
+                    .iter()
+                    .map(|p| native::Prepared(p.0.clone()))
+                    .collect::<Vec<_>>(),
+            )
+            .map(|packets| {
+                packets
+                    .into_iter()
+                    .map(|p| ObservedAuthorization {
+                        signed: Signed(p.signed.0),
+                        receipt: Receipt(p.receipt.0),
+                        status: p.status,
+                    })
+                    .collect()
+            })
     }
     pub fn prepare_owner(
         &self,
@@ -534,10 +372,14 @@ impl Runtime {
         fee_limit: u64,
         now: u64,
     ) -> Result<OwnerPacket> {
-        self.provider.prepare_owner(i, action, fee_limit, now)
+        self.provider
+            .prepare_owner(&i.0, action, fee_limit, now)
+            .map(|p| OwnerPacket(p.0))
     }
     pub fn read_owner_signed(&self, p: &OwnerPacket, signed_payload: &[u8]) -> Result<OwnerSigned> {
-        self.provider.read_owner_signed(p, signed_payload)
+        self.provider
+            .read_owner_signed(&native::OwnerPacket(p.0.clone()), signed_payload)
+            .map(|p| OwnerSigned(p.0))
     }
     pub fn submit_owner(
         &self,
@@ -546,10 +388,19 @@ impl Runtime {
         poll: Poll,
         now: u64,
     ) -> Result<Receipt> {
-        self.provider.submit_owner(p, Box::new(retain), poll, now)
+        self.provider
+            .submit_owner(
+                &native::OwnerSigned(p.0.clone()),
+                Box::new(|p| retain(&OwnerSigned(p.0.clone()))),
+                poll,
+                now,
+            )
+            .map(|p| Receipt(p.0))
     }
     pub fn observe_owner(&self, p: &OwnerSigned) -> Result<Option<Receipt>> {
-        self.provider.observe_owner(p)
+        self.provider
+            .observe_owner(&native::OwnerSigned(p.0.clone()))
+            .map(|p| p.map(|p| Receipt(p.0)))
     }
 }
 
@@ -575,14 +426,6 @@ pub fn signer_identity(network: &str, public_key: &[u8; 32]) -> Result<String> {
     crate::vendors::runtime_signer_identity(network, public_key)
 }
 
-/// Public failure information. It grants no execution or settlement authority.
-#[derive(Clone, Debug)]
-pub struct Problem {
-    pub status: u16,
-    pub code: &'static str,
-    pub message: String,
-    pub details: Option<serde_json::Value>,
-}
 impl Runtime {
     /// Return diagnostics with one operation, without retaining evidence for a later call.
     /// The installation selects the expected wallet; it does not prove a fault's origin.
@@ -593,12 +436,13 @@ impl Runtime {
     ) -> std::result::Result<T, Problem> {
         let session = self
             .provider
-            .diagnostic_session(installation)
+            .diagnostic_session(&installation.0)
             .map_err(|error| self.provider.problem(&error))?;
         match session {
-            Some(session) => {
-                operation(&session.runtime).map_err(|error| (session.classify)(&error))
-            }
+            Some(session) => operation(&Runtime {
+                provider: session.provider,
+            })
+            .map_err(|error| (session.classify)(&error)),
             None => operation(self).map_err(|error| self.provider.problem(&error)),
         }
     }

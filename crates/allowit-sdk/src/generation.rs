@@ -3,13 +3,8 @@ use crate::{
     error::{Error, Result},
     wallet::LocalSigner,
 };
-use serde_json::Value;
 
-#[derive(Clone, Debug)]
-pub enum Target {
-    NewWallet,
-    Installation(String),
-}
+pub use allowit_core::vendor::generation::{GeneratedDraft, Target};
 #[derive(Clone, Debug)]
 pub struct GenerateRequest {
     pub prompt: String,
@@ -19,36 +14,31 @@ pub struct GenerateRequest {
 }
 impl GenerateRequest {
     pub fn validate(&self) -> Result<()> {
-        if !(5..=3000).contains(&self.prompt.len()) {
-            return Err(Error::usage("Describe the policy in 5–3000 UTF-8 bytes"));
-        }
-        crate::routing::info(&self.network)?;
-        if self.profile.is_empty()
-            || self.profile.len() > 128
-            || !self
-                .profile
-                .bytes()
-                .all(|b| b.is_ascii_alphanumeric() || b"._:-".contains(&b))
-        {
-            return Err(Error::usage("Select an advertised wallet profile"));
-        }
-        if let Target::Installation(id) = &self.target
-            && (id.len() != 64
-                || !id
-                    .bytes()
-                    .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b)))
-        {
-            return Err(Error::config("Invalid lowercase installation identity"));
-        }
-        Ok(())
+        allowit_core::vendor::generation::validate_fields(
+            &self.prompt,
+            &self.network,
+            &self.profile,
+            &self.target,
+            |network| crate::routing::info(network).map(|_| ()),
+        )
     }
 }
-
-/// A fully checked backend document and its remaining required values.
-/// The selected capability validates its native binding before returning this document.
-pub struct GeneratedDraft {
-    pub document: Value,
-    pub unresolved: Vec<String>,
+impl From<&GenerateRequest> for allowit_core::vendor::generation::GenerateRequest {
+    fn from(request: &GenerateRequest) -> Self {
+        Self {
+            prompt: request.prompt.clone(),
+            network: request.network.clone(),
+            profile: request.profile.clone(),
+            target: request.target.clone(),
+        }
+    }
+}
+impl<'a> From<&'a GenerateRequest>
+    for std::borrow::Cow<'a, allowit_core::vendor::generation::GenerateRequest>
+{
+    fn from(request: &'a GenerateRequest) -> Self {
+        Self::Owned(request.into())
+    }
 }
 
 pub fn generate(

@@ -12,7 +12,6 @@ use std::{
     time::{Duration, Instant},
 };
 
-const MAX_SOURCE_BYTES: usize = 65_536;
 const MAX_OUTPUT_BYTES: u64 = 1_048_576;
 
 /// Caller-owned host tool bindings. The result is a local type-check, never publication authority.
@@ -30,32 +29,7 @@ impl Default for HostTools {
         }
     }
 }
-/// Hash canonical common data with Core's digest. This grants no source admission.
-pub fn canonical_digest(value: &impl serde::Serialize) -> Result<String> {
-    serde_json_canonicalizer::to_vec(value)
-        .map(|bytes| allowit_core::digest(&bytes))
-        .map_err(|_| Error::config("Cannot encode canonical policy data"))
-}
-/// Exact portable source/parameter identity shared by authoring and imported profiles.
-pub fn portable_identity(
-    language: &str,
-    tier: &str,
-    rules: &[String],
-    source_hash: &str,
-    params_hash: &str,
-) -> Result<String> {
-    canonical_digest(
-        &serde_json::json!({"language":language,"tier":tier,"rules":rules,
-        "sourceHash":source_hash,"paramsHash":params_hash}),
-    )
-}
-
-pub fn check(source: &str) -> Result<policy_source::SourceShape> {
-    if source.len() > MAX_SOURCE_BYTES {
-        return Err(Error::usage("Portable policy source exceeds 65536 bytes"));
-    }
-    policy_source::source_shape(source).map_err(Error::usage)
-}
+pub use allowit_core::vendor::authoring::{canonical_digest, check, portable_identity};
 
 /// Compile structurally admitted source against the exact embedded portable Std library.
 /// Missing tools, time/output limits and compilation failures fail closed. Nothing is published.

@@ -6,22 +6,8 @@ use crate::{
     vendors,
     wallet::LocalSigner,
 };
+pub use allowit_core::vendor::execution::{Binding, Capabilities, Outcome, Recovery, Request};
 use std::{path::Path, time::Duration};
-pub struct Request {
-    pub op: String,
-    pub to: String,
-    pub amount: Amount,
-    pub token_out: Option<Amount>,
-    pub args: Option<serde_json::Value>,
-    pub request_id: String,
-    pub wait: Duration,
-    pub build_only: bool,
-    pub wallet: Option<String>,
-}
-pub struct Outcome {
-    pub document: serde_json::Value,
-    pub status: crate::runtime::Status,
-}
 pub fn tokens(network: &str) -> Result<&'static [Token]> {
     vendors::execution_tokens(network)
 }
@@ -63,13 +49,6 @@ pub fn status(
     vendors::execution_status(profile, signer, root, rpc, id, wait)
 }
 
-pub struct Capabilities {
-    pub curve: &'static str,
-    pub address_is_key: bool,
-    pub operations: &'static [&'static str],
-    pub build_only: bool,
-    pub verbs: &'static [&'static str],
-}
 pub fn capabilities(network: &str) -> Result<Capabilities> {
     vendors::capabilities(network)
 }
@@ -77,21 +56,6 @@ pub fn fund_key(network: &str, address: &str, endpoint: Option<&str>) -> Result<
     vendors::fund_key(network, address, endpoint)
 }
 
-pub struct Binding {
-    pub wallet: String,
-    pub policy: String,
-}
-pub struct Recovery {
-    pub(crate) binding: crate::vendors::RecoveryBinding,
-}
-impl Recovery {
-    pub fn binding(&self) -> Binding {
-        crate::vendors::recovery_binding(&self.binding)
-    }
-    pub fn signed(&self) -> bool {
-        crate::vendors::recovery_signed(&self.binding)
-    }
-}
 pub fn retained(
     root: &Path,
     network: &str,

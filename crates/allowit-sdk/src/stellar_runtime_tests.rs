@@ -1,15 +1,12 @@
 //! Persistence and recovery contracts of the shared Stellar workflow.
-use super::Runtime as NativeRuntime;
 use crate::error::{Error, Result};
 use crate::runtime::{OperationStore, Runtime, Signed, Status};
+use crate::vendors::stellar::runtime::Runtime as NativeRuntime;
 use allowit_stellar_wallet::{self as native, PreparedOperation, SignedOperation, rpc};
 use serde_json::{Value, json};
 use std::{
     collections::VecDeque,
     sync::{Arc, Mutex},
-};
-use stellar_xdr::{
-    Limits, TransactionResult, TransactionResultExt, TransactionResultResult, WriteXdr,
 };
 
 type Events = Arc<Mutex<Vec<String>>>;
@@ -28,15 +25,20 @@ impl rpc::Rpc for ScriptedRpc {
     }
 }
 fn runtime(events: &Events, responses: Vec<native::Result<Value>>) -> Runtime {
-    Runtime {
-        provider: Box::new(super::super::server::Provider::from_rpc(
-            "stellar:testnet",
-            Arc::new(ScriptedRpc {
-                events: events.clone(),
-                responses: Mutex::new(responses.into()),
-            }),
-        )),
+    struct Transport(ScriptedRpc);
+    impl crate::runtime::Transport for Transport {
+        fn call(&self, method: &str, params: Value) -> Result<Value> {
+            rpc::Rpc::call(&self.0, method, params).map_err(Error::config)
+        }
     }
+    Runtime::with_transport(
+        "stellar:testnet",
+        Arc::new(Transport(ScriptedRpc {
+            events: events.clone(),
+            responses: Mutex::new(responses.into()),
+        })),
+    )
+    .unwrap()
 }
 fn packet(s: &SignedOperation) -> Signed {
     serde_json::from_value(serde_json::to_value(s).unwrap()).unwrap()
@@ -70,45 +72,13 @@ impl OperationStore for Store {
     }
 }
 fn native_signed() -> SignedOperation {
-    let old: SignedOperation = serde_json::from_str(include_str!(
-        "../../../../tests/fixtures/canonical-main-9682-native-signed.json"
-    ))
-    .unwrap();
-    let mut config = old.prepared.config;
-    config.language = native::PolicyLanguage::Portable;
-    config.policy_source = "use allowit::prelude::*; pub fn execute(ctx: &AllowitContext) -> allowit::Result { Ok(()) }".into();
-    config.source_hash = native::hash(&config.policy_source);
-    let mut state = old.prepared.state;
-    state.source_hash = config.source_hash;
-    let prepared = native::prepare(&config, &old.prepared.request, &state, 86401, 86700).unwrap();
-    native::authorize(
-        &prepared,
-        &[
-            native::sign(&prepared, &[2; 32], 86401).unwrap(),
-            native::sign(&prepared, &[3; 32], 86401).unwrap(),
-        ],
-        86401,
-    )
-    .unwrap()
+    native::test_support::native_signed()
 }
 fn policy_signed() -> SignedOperation {
-    let fixture: Value = serde_json::from_str(include_str!(
-        "../../../../tests/fixtures/stellar-policy-wallet-revalidation-rpc.json"
-    ))
-    .unwrap();
-    serde_json::from_value(fixture["signed"].clone()).unwrap()
+    native::test_support::policy_signed()
 }
 fn tx_status(signed: &SignedOperation, success: bool) -> Value {
-    let result = TransactionResult {
-        fee_charged: 100,
-        result: if success {
-            TransactionResultResult::TxSuccess(Default::default())
-        } else {
-            TransactionResultResult::TxFailed(Default::default())
-        },
-        ext: TransactionResultExt::V0,
-    };
-    json!({"status":if success{"SUCCESS"}else{"FAILED"},"ledger":777,"envelopeXdr":signed.transaction_xdr,"resultXdr":result.to_xdr_base64(Limits::none()).unwrap()})
+    native::test_support::transaction_status(signed, success, 777, 100)
 }
 
 #[test]
@@ -183,7 +153,10 @@ fn original_identity_and_terminal_state_survive_retries_and_expiry() {
     );
     let mut changed_native = native.clone();
     changed_native.transaction_hash[0] ^= 1;
-    let changed = Signed(crate::runtime::Packet::new("stellar:testnet", &changed_native).unwrap());
+    let changed = Signed(
+        crate::runtime::Packet::new("stellar:testnet", &changed_native, signed.0.provider())
+            .unwrap(),
+    );
     assert!(runtime.submit(&mut store, &changed, 90000).is_err());
     assert_eq!(
         runtime.submit(&mut store, &signed, 90000).unwrap(),

@@ -16,7 +16,7 @@ CLI and server callers use the same library and retain their own keys and author
 flowchart TB
     CLI["[allowit-cli]<br/>crate @allowit/cli<br/>DX: policy and agent keypair generation<br/>Policy validation · x402 marketplace"]
     Server["[allowit-engine]<br/>crate @allowit/server<br/>Shared REST API · server enforcement"]
-    Engine["[allowit-sdk]<br/>crate allowit-sdk<br/>All other shared logic"]
+    Engine["[allowit-sdk]<br/>crate @allowit/sdk/engine<br/>All other shared logic"]
     Vendor["crate + npm @allowit/vendor/*<br/>Native contracts · signing · chain semantics<br/>SVG graphics · web components"]
     Core["[allowit-core]<br/>crate + npm @allowit/sdk/core<br/>Common types · policy rules · primitives<br/>TypeScript interfaces"]
 
@@ -26,7 +26,7 @@ flowchart TB
     Engine -->|crate| Core
 ```
 
-[Architecture](../../README.md#architecture).
+[Architecture](../README.md#architecture).
 
 ## Responsibilities
 
@@ -39,7 +39,7 @@ flowchart TB
 | CLI | Developer workflows, policy and agent keypair generation, client validation and x402 marketplace interaction |
 | Vendor adapter | Provider request/response protocols and typed facts, using common transport and workflow capabilities |
 
-Placement follows responsibility. A reusable rail workflow belongs in SDK engine even when its first caller is the server.
+Placement follows responsibility. Generic orchestration belongs in SDK engine. Stellar execution, owner workflows, runtime clients, request validation, profiles, formatting, diagnostics and signing belong in `allowit-stellar-wallet` at `allowit-contracts-stellar/stellar/core`.
 Rail packages can use common core primitives directly. Core has no dependency on SDK engine or a rail package.
 
 ## Modules
@@ -52,7 +52,7 @@ Rail packages can use common core primitives directly. Core has no dependency on
 | `profiles` | Verified public exports, portable imports, immutable versions and explicit selection |
 | `execution`, `input` | Shared request orchestration, amount parsing and selected native format checks |
 | `runtime` | Common local execution, caller-owned OperationStore and original-packet recovery |
-| `vendors::stellar` | Native request, owner-signing, simulation and receipt bindings |
+| `vendors::stellar` | Registration and reexports of the Stellar crate provider API |
 | `vendors::stellar::runtime::owner_client` | Owner sign-in and server-backed portable generation with explicit template or installation selection |
 | `vendors::stellar::runtime::client` | Authenticated server requests, signer capabilities and exact-intent client resumption |
 | `request`, `typed_request` | Bounded request identifiers, input documents and operation identities |
@@ -78,9 +78,9 @@ SDK engine retains secure files, configuration, sessions and workflow sequencing
 `generation::generate` requires a matching signer network before selecting its registered backend capability.
 
 `vendors::stellar::runtime::owner_client` takes a distinct caller-owned owner signer. Native helpers check the exact
-sign-in message, account, Origin and nonce. SDK engine checks freshness and requires a rotated owner session.
+sign-in message, account, Origin and nonce. The Stellar client uses Core session helpers to check freshness and require a rotated owner session.
 It checks advertised generation profiles, networks and terms before sending one creation request.
-The SDK checks returned source, params and native bindings as a draft. This draft grants no publication or spending authority.
+The Stellar client checks returned source, params and native bindings as a draft. This draft grants no publication or spending authority.
 An uncertain generation is not repeated automatically.
 
 `vendors::stellar::runtime::client` takes a caller-owned signer capability and private core `Store`.
@@ -107,7 +107,7 @@ cargo clippy --locked -p allowit-sdk@0.5.0 --all-targets -- -D warnings
 
 ## Compiled capabilities and public profiles
 
-The vendor library defines native network identities and protocol aliases. SDK adapters register friendly aliases, display labels, asset defaults and explorer links for common routing and presentation.
+The vendor library defines network identities, protocol and presentation aliases, display labels, asset defaults and explorer links. The SDK registers those values for common routing and presentation.
 A build without vendor features exposes an empty rail inventory.
 
 Owner export installs only the exact independently checked activation result.
@@ -135,3 +135,20 @@ A resolved execution profile and its authority remain owned by one caller across
 The receipt-only recovery capability instead reads the original private record, without importing an obsolete public profile.
 It accepts no fresh preparation or operation-signing path. Recovery queries the configured settlement service for the original packet.
 A final success requires a verified receipt.
+
+## Coordinated producer releases
+
+The host crate in Core exposes provider contracts behind its optional `vendor` feature.
+The SDK retains generic orchestration, storage, routing and consumer integration tests.
+It opens private journal namespaces declared by each provider. A caller-owned store opener preserves
+native validation before filesystem changes.
+Its existing Stellar client paths reexport the implementation from the Stellar crate.
+SDK packet deserialization delegates to that crate before exposing retained state.
+
+Release the reviewed Core API first, then the Stellar crate on that same Core release, then the SDK.
+The SDK dependency graph must use one Core release tag. Update downstream release tags and the lockfile
+after those approved producer releases. Keep local validation overrides outside committed manifests.
+
+Stellar protocol fixtures and codec construction belong to the Stellar crate. Its optional
+`test-support` feature supplies semantic fixtures for SDK consumer tests. The SDK keeps command,
+HTTP, storage and orchestration assertions without depending directly on native codecs or signature libraries.

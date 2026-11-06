@@ -40,6 +40,18 @@ impl LocalSigner {
         self.key.sign_hash(digest)
     }
 }
+impl allowit_core::vendor::wallet::Signer for LocalSigner {
+    fn network(&self) -> &str {
+        self.network()
+    }
+    fn address(&self) -> &str {
+        self.address()
+    }
+    fn sign_hash(&self, digest: &[u8]) -> Result<Vec<u8>> {
+        self.sign_hash(digest)
+    }
+}
+
 #[cfg(test)]
 fn public(network: &str, entropy: &[u8]) -> Result<PublicWallet> {
     let network = routing::normalize(network)?;

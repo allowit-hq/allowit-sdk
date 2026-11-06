@@ -7,7 +7,6 @@ use allowit_sdk::vendors::stellar::runtime::owner_client::{
     GenerateRequest, OwnerClient, OwnerSigner, Target,
 };
 use allowit_stellar_wallet as native;
-use ed25519_dalek::{Signer, SigningKey};
 use serde_json::{Value, json};
 use std::sync::atomic::{AtomicUsize, Ordering};
 
@@ -34,7 +33,7 @@ impl OwnerSigner for Key {
         Ok(if self.bad {
             [0; 64]
         } else {
-            SigningKey::from_bytes(&[11; 32]).sign(value).to_bytes()
+            allowit_stellar_wallet::test_support::sign_digest([11; 32], value)
         })
     }
 }
@@ -234,41 +233,9 @@ fn returned_source_and_portable_identity_are_verified_without_claiming_deploymen
 }
 
 fn existing(plan: &mut wire::Plan, owner: &str) -> native::WalletConfig {
-    let fixture: Vec<Value> =
-        serde_json::from_str(include_str!("fixtures/stellar-portable-descriptors.json")).unwrap();
-    let mut config: native::WalletConfig =
-        serde_json::from_value(fixture[2]["bundle"]["config"].clone()).unwrap();
-    let d = &plan.policy["runtime"]["instanceBinding"]["portable"];
-    config.owner = owner.into();
-    config.agent = native::account_for_seed(&[12; 32]);
-    config.server = native::account_for_seed(&[13; 32]);
-    config.wallet = stellar_strkey::Contract([3; 32]).to_string();
-    config.policy_instance = [7; 32];
-    config.module_digest = [44; 32];
-    config.asset = d["asset"]["address"].as_str().unwrap().into();
-    config.asset_symbol = "USDC".into();
-    config.asset_issuer = Some("GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5".into());
-    config.policy_source = plan.policy["code"].as_str().unwrap().into();
-    config.source_hash = native::hash(config.policy_source.as_bytes());
-    config.params = serde_json::from_value(d["params"].clone()).unwrap();
-    config.rules = serde_json::from_value(d["rules"].clone()).unwrap();
-    config.tier = Some(native::PolicyTier::Common);
-    config.max_fee_stroops = 5_000_000;
-    config.source_digest = native::policy::standard_prefix_digest(
-        native::PolicyTier::Common,
-        &config.module_digest,
-        &config.asset,
-        &config.rules,
-    )
-    .unwrap();
-    native::validate_config(&config).unwrap();
-    plan.installations = json!({"installations":[{"policyId":"07".repeat(32),"profile":"allowit-stellar-policy-wallet-v1","config":config}]});
-    let b = &mut plan.policy["runtime"]["instanceBinding"];
-    b["template"] = json!(false);
-    b["wallet"] = json!(config.wallet);
-    b["moduleDigest"] = json!(native::hex(&config.module_digest));
-    config
+    plan.install_existing(owner)
 }
+
 #[test]
 fn explicit_existing_installation_is_forwarded_and_never_becomes_a_template_request() {
     for wrong_owner in [false, true] {
@@ -304,26 +271,7 @@ fn explicit_existing_installation_is_forwarded_and_never_becomes_a_template_requ
 fn mainnet_alias_uses_the_exact_advertised_network_and_never_testnet_terms() {
     let key = Key::new();
     let mut plan = wire::Plan::new(&key.account);
-    let issuer = "GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN";
-    let asset = native::sac_address(
-        "stellar:mainnet",
-        &native::asset_from_identity("USDC", Some(issuer)).unwrap(),
-    )
-    .unwrap();
-    plan.discovery["wallets"][0]["networks"] = json!(["stellar:mainnet"]);
-    plan.templates["templates"][0]["network"] = json!("stellar:mainnet");
-    plan.templates["templates"][0]["asset"] = json!(asset);
-    plan.templates["templates"][0]["assetIssuer"] = json!(issuer);
-    plan.policy["network"] = json!("stellar:mainnet");
-    plan.policy["mint"] = json!(asset);
-    let b = &mut plan.policy["runtime"]["instanceBinding"];
-    b["asset"] = json!(asset);
-    b["assetIssuer"] = json!(issuer);
-    b["portable"]["asset"]["address"] = json!(asset);
-    b["portable"]["params"]["tokens"]["List"][0]["Addr"] = json!(asset);
-    b["portable"]["paramsHash"] = json!(allowit_core::digest(
-        &serde_json_canonicalizer::to_vec(&b["portable"]["params"]).unwrap()
-    ));
+    plan.use_mainnet();
     let server = wire::Server::new(plan);
     let mut client = OwnerClient::new(&server.url, "http://localhost:5173", &key.account).unwrap();
     client.authenticate(&key, wire::now()).unwrap();
@@ -340,9 +288,7 @@ fn mainnet_alias_uses_the_exact_advertised_network_and_never_testnet_terms() {
     {
         use std::io::Write;
         use std::os::unix::fs::OpenOptionsExt;
-        let secret = native::signing::LocalSigner::from_entropy(&[11; 32])
-            .unwrap()
-            .encoded_secret();
+        let secret = native::test_support::secret_seed([11; 32]);
         let mut f = std::fs::OpenOptions::new()
             .write(true)
             .create_new(true)
@@ -400,35 +346,7 @@ fn existing_native_generation_binds_the_new_canonical_source_identity() {
     for tampered in [false, true] {
         let key = Key::new();
         let mut plan = wire::Plan::new(&key.account);
-        let mut config = existing(&mut plan, &key.account);
-        config.route = native::WalletRoute::Native;
-        config.wallet = native::account_for_seed(&[14; 32]);
-        config.tier = None;
-        config.max_fee_stroops = 100_000;
-        native::validate_config(&config).unwrap();
-        plan.installations = json!({"installations":[{"policyId":"07".repeat(32),"profile":"allowit-stellar-native-v1","config":config}]});
-        plan.discovery["wallets"][0]["profile"] = json!("allowit-stellar-native-v1");
-        plan.discovery["wallets"][0]["kind"] = json!("owner-wallet");
-        plan.policy["runtime"]["wallet"] =
-            json!({"kind":"owner-wallet","profile":"allowit-stellar-native-v1"});
-        let b = plan.policy["runtime"]["instanceBinding"]
-            .as_object_mut()
-            .unwrap();
-        b.remove("tier");
-        b.remove("template");
-        b.insert("route".into(), json!("native"));
-        b.insert("wallet".into(), json!(config.wallet));
-        b.insert("maxFeeStroops".into(), json!(config.max_fee_stroops));
-        let d = &b["portable"];
-        let identity = json!({"language":d["language"],"tier":d["tier"],"rules":d["rules"],"sourceHash":d["sourceHash"],"paramsHash":d["paramsHash"]});
-        b.insert(
-            "moduleDigest".into(),
-            json!(if tampered {
-                "44".repeat(32)
-            } else {
-                allowit_core::digest(&serde_json_canonicalizer::to_vec(&identity).unwrap())
-            }),
-        );
+        plan.install_native_existing(&key.account, tampered);
         let server = wire::Server::new(plan);
         let mut client =
             OwnerClient::new(&server.url, "http://localhost:5173", &key.account).unwrap();
@@ -448,15 +366,7 @@ fn an_empty_standard_prefix_can_use_either_advertised_standard_wallet_tier() {
     for tier in ["simple", "common"] {
         let key = Key::new();
         let mut plan = wire::Plan::new(&key.account);
-        let source = "use allowit::prelude::*;\npub fn execute(ctx: &AllowitContext) -> allowit::Result { Ok(()) }\n";
-        let digest = allowit_core::digest(source.as_bytes());
-        plan.policy["code"] = json!(source);
-        plan.policy["sourceHash"] = json!(digest);
-        let b = &mut plan.policy["runtime"]["instanceBinding"];
-        b["tier"] = json!(tier);
-        b["portable"]["sourceHash"] = json!(digest);
-        b["portable"]["rules"] = json!([]);
-        b["portable"]["build"]["prefix"] = json!([]);
+        plan.use_empty_standard_prefix(tier);
         let server = wire::Server::new(plan);
         let mut client =
             OwnerClient::new(&server.url, "http://localhost:5173", &key.account).unwrap();
