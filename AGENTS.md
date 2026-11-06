@@ -13,7 +13,8 @@ pushing. Preserve existing reviews and deployment restrictions.
 
 All packages share one Cargo workspace, one `Cargo.lock` and one version
 (`[workspace.package]`). Packages in this repository depend on each other by
-path and are never pinned. Select the shared engine with `-p allowit-sdk-engine`.
+path and are never pinned. Select the SDK with `-p allowit-sdk@0.5.0`. The `allowit-core` dependency alias selects
+Core's released `allowit-sdk` package.
 
 Dependencies point one way. This SDK depends on Allowit core (repository
 allowit-core, packages `allowit-sdk` and portable `allowit`) and on the Stellar

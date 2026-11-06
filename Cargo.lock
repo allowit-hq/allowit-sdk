@@ -22,11 +22,11 @@ dependencies = [
 ]
 
 [[package]]
-name = "allowit-sdk-engine"
-version = "0.4.0"
+name = "allowit-sdk"
+version = "0.5.0"
 dependencies = [
  "allowit",
- "allowit-sdk",
+ "allowit-sdk 0.3.1",
  "allowit-stellar-wallet",
  "base64 0.22.1",
  "chrono",
@@ -52,7 +52,7 @@ version = "0.3.0"
 source = "git+https://github.com/allowit-hq/allowit-contracts-stellar.git?rev=5e34f65099dcfc7ccaa760848ebac23b61cab5ad#5e34f65099dcfc7ccaa760848ebac23b61cab5ad"
 dependencies = [
  "allowit",
- "allowit-sdk",
+ "allowit-sdk 0.3.1",
  "base64 0.22.1",
  "ed25519-dalek",
  "serde",
