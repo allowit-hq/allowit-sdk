@@ -1,7 +1,10 @@
 //! Explicit policy capabilities. The host alone provides trusted facts and grants authority.
 
 use serde_json::Value;
-use std::{collections::BTreeMap, error, fmt};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    error, fmt,
+};
 
 /// Arguments come from the policy guest. Facts come from the authenticated host workflow.
 pub type Invoke = fn(args: &Value, facts: &Value) -> Result<Value, String>;
@@ -9,8 +12,6 @@ pub type Test = fn() -> Result<(), String>;
 
 /// A vendor can export this shape without depending on the SDK that composes it.
 pub type Bindings<const N: usize> = (&'static str, [(&'static str, Invoke); N], Test);
-
-const RAILS: &[&str] = &["solana", "stellar", "tempo"];
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum Error {
@@ -44,13 +45,29 @@ struct Package {
 #[derive(Default)]
 pub struct Registry {
     packages: BTreeMap<&'static str, Package>,
+    rails: BTreeSet<&'static str>,
 }
 
 impl Registry {
+    /// Reserve rail families from the host's compiled rail inventory.
+    pub fn with_rails(rails: impl IntoIterator<Item = &'static str>) -> Result<Self, Error> {
+        let rails: BTreeSet<_> = rails.into_iter().collect();
+        if rails
+            .iter()
+            .any(|name| *name == "allowit" || !identifier(name))
+        {
+            return Err(Error::Namespace);
+        }
+        Ok(Self {
+            packages: BTreeMap::new(),
+            rails,
+        })
+    }
+
     /// Register a vendor package. Core and rail namespaces belong to the trusted host.
     pub fn register<const N: usize>(&mut self, bindings: Bindings<N>) -> Result<(), Error> {
         let (namespace, _, _) = &bindings;
-        if *namespace == "allowit" || RAILS.contains(namespace) {
+        if *namespace == "allowit" || self.rails.contains(namespace) {
             return Err(Error::Namespace);
         }
         self.insert(bindings)
@@ -58,7 +75,7 @@ impl Registry {
 
     /// Register a rail supplied by the host's compiled-in rail composition.
     pub fn register_rail<const N: usize>(&mut self, bindings: Bindings<N>) -> Result<(), Error> {
-        if !RAILS.contains(&bindings.0) {
+        if !self.rails.contains(bindings.0) {
             return Err(Error::Namespace);
         }
         self.insert(bindings)
@@ -172,9 +189,9 @@ mod tests {
 
     #[test]
     fn reject_reserved_and_duplicate_registrations_without_partial_insert() {
-        let mut registry = Registry::default();
+        let mut registry = Registry::with_rails(["rail_a", "rail_b"]).unwrap();
         let op = [("echo", echo as Invoke)];
-        for namespace in ["allowit", "stellar", "solana", "tempo", "x::y"] {
+        for namespace in ["allowit", "rail_a", "rail_b", "x::y"] {
             assert_eq!(
                 registry.register((namespace, op, passes)),
                 Err(Error::Namespace)
@@ -185,7 +202,7 @@ mod tests {
             Err(Error::Duplicate)
         );
         assert_eq!(registry.operations().count(), 0);
-        registry.register_rail(("stellar", op, passes)).unwrap();
+        registry.register_rail(("rail_a", op, passes)).unwrap();
         registry.register(("sample", op, passes)).unwrap();
         assert_eq!(
             registry.register(("sample", op, passes)),
