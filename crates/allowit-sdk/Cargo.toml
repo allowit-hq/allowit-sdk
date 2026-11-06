@@ -13,6 +13,7 @@ default = ["stellar"]
 stellar = ["dep:allowit-stellar-wallet"]
 
 [dependencies]
+allowit-vendor-bindings = { path = "../allowit-vendor-bindings", version = "0.5" }
 allowit = { workspace = true }
 allowit-core = { workspace = true, features = ["std", "policy-source", "client", "transport", "vendor"] }
 allowit-stellar-wallet = { workspace = true, optional = true }

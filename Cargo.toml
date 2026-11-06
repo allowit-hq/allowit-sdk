@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["crates/allowit-sdk"]
+members = ["crates/allowit-sdk", "crates/allowit-vendor-bindings"]
 
 # Every package in this repository releases at this version.
 [workspace.package]
