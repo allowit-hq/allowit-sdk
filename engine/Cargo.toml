@@ -29,7 +29,6 @@ syn = { version = "2", features = ["full", "visit"] }
 proc-macro2 = "1"
 
 [dev-dependencies]
-time = { version = "0.3.55", features = ["parsing", "formatting"] }
 allowit-stellar-wallet = { workspace = true, features = ["test-support"] }
 
 [[test]]

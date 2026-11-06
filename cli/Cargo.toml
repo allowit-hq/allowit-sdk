@@ -35,6 +35,5 @@ zeroize = "1.8.2"
 [dev-dependencies]
 allowit-sdk = { workspace = true, features = ["std", "client"] }
 allowit-stellar-wallet = { workspace = true, features = ["test-support"] }
-time = { version = "0.3.55", features = ["formatting"] }
 sha2 = "0.10.9"
 base64 = "0.22.1"

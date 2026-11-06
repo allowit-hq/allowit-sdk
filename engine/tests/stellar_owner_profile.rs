@@ -6,8 +6,7 @@ mod chain;
 mod wire;
 use allowit_sdk::client::store::Store;
 use allowit_sdk_engine::vendors::stellar::runtime::owner_client::{
-    OwnerClient,
-    workflow::{self, OwnerCapabilities},
+    OwnerClient, workflow::OwnerCapabilities,
 };
 use chain::*;
 fn authority(origin: &str) -> allowit_sdk_engine::config::ServerAuthority {
@@ -112,9 +111,7 @@ fn source_consent_checks_exact_payload_and_current_native_authority_before_owner
             {
                 use std::io::Write;
                 use std::os::unix::fs::OpenOptionsExt;
-                let secret = allowit_stellar_wallet::signing::LocalSigner::from_entropy(&[11; 32])
-                    .unwrap()
-                    .encoded_secret();
+                let secret = allowit_stellar_wallet::test_support::secret_seed([11; 32]);
                 let mut file = std::fs::OpenOptions::new()
                     .write(true)
                     .create_new(true)
@@ -126,13 +123,12 @@ fn source_consent_checks_exact_payload_and_current_native_authority_before_owner
             let signer =
                 allowit_sdk_engine::wallet::local_signer(&selected.config.network, &key_path)
                     .unwrap();
-            let document = serde_json::to_vec(&workflow::Outcome {
-                request_id: "approve-native-001".into(),
-                state: "active".into(),
-                selection: selected.clone(),
-                transactions: vec![],
-            })
-            .unwrap();
+            let document =
+                serde_json::to_vec(&allowit_stellar_wallet::test_support::active_owner_outcome(
+                    &selected,
+                    "approve-native-001",
+                ))
+                .unwrap();
             let clock = || Ok(now);
             let cx = allowit_sdk_engine::owner::Context {
                 network: &selected.config.network,
@@ -184,12 +180,9 @@ fn source_consent_checks_exact_payload_and_current_native_authority_before_owner
 fn portable_native_import_checks_source_consent_current_authority_and_exact_profile_selection() {
     use allowit_sdk_engine::profiles::{Cache, Selector};
     let selected = native_selection();
-    let mut profile = descriptor(&selected);
-    let digest = allowit_stellar_wallet::signing::signed_message_digest(
-        consent(&selected)["message"].as_str().unwrap(),
-    );
-    let signature = allowit_stellar_wallet::test_support::sign_digest([11; 32], &digest);
-    profile["sourceApproval"] = json!({"revision":selected.policy.revision,"signatures":[{"signer":selected.config.owner,"signature":signature.to_vec()}]});
+    let mut profile = approved_descriptor(&selected);
+    let signature =
+        allowit_stellar_wallet::test_support::source_consent_signature(&selected, [11; 32]);
     let chain = Chain::new(selected.config.clone());
     *chain.source.lock().unwrap() = configured_source(&selected.config);
     let rpc = RpcServer::new(chain);
@@ -229,7 +222,9 @@ fn portable_native_import_checks_source_consent_current_authority_and_exact_prof
                 bad["config"]["server"] = json!(selected.config.agent);
             }
             12 => {
-                let extra = allowit_stellar_wallet::test_support::sign_digest([14; 32], &digest);
+                let extra = allowit_stellar_wallet::test_support::source_consent_signature(
+                    &selected, [14; 32],
+                );
                 bad["sourceApproval"]["signatures"]
                     .as_array_mut()
                     .unwrap()

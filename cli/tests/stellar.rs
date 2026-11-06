@@ -35,7 +35,7 @@ fn fixture() -> (WalletConfig, ExecutionRequest, TrustedState, u64) {
     sdk::test_support::agent_fixture(POLICY, ID, now)
 }
 fn expires(now: u64) -> u64 {
-    (now + 120).min((now / 86400 + 1) * 86400 - 1)
+    sdk::test_support::request_expiry(now)
 }
 
 /// The public wallet profile: no signing material.
@@ -99,10 +99,10 @@ fn status(sandbox: &Sandbox) -> std::process::Output {
 }
 
 fn journal_file(sandbox: &Sandbox, request: &ExecutionRequest) -> PathBuf {
-    sandbox.config().join("stellar-journal").join(format!(
-        "request-{}.json",
-        sdk::hex(&sdk::hash(sdk::hex(&request.operation.nonce)))
-    ))
+    sandbox
+        .config()
+        .join(sdk::provider::EXECUTION_STORE_NAMESPACE)
+        .join(sdk::test_support::execution_record_filename(request))
 }
 /// Retains an unsigned prepared packet in the journal, as an interrupted
 /// exec leaves it.
@@ -114,16 +114,13 @@ fn retain_unsigned(
     now: u64,
 ) {
     use std::os::unix::fs::PermissionsExt;
-    let prepared = sdk::prepare(c, r, state, now, expires(now)).unwrap();
     let file = journal_file(sandbox, r);
     let dir = file.parent().unwrap();
     std::fs::create_dir_all(dir).unwrap();
     std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o700)).unwrap();
     common::private_write(
         &file,
-        &json!({"policyId":POLICY,"requestId":ID,"config":c,"request":r,"prepared":prepared,
-            "agentSignature":null,"status":"prepared"})
-        .to_string(),
+        &sdk::test_support::unsigned_execution_record(POLICY, ID, c, r, state, now).to_string(),
     );
 }
 
@@ -160,12 +157,7 @@ fn reply_error(stream: &mut TcpStream, status: u16) {
     );
 }
 fn response(p: &PreparedOperation, s: Option<&SignedOperation>, status: &str) -> Value {
-    let receipt = if status == "confirmed" {
-        s.map(|signed| sdk::test_support::confirmed_payment_receipt(signed, 777, 100))
-    } else {
-        None
-    };
-    json!({"prepared":p,"operation":{"id":ID,"status":status,"transactionHash":sdk::hex(&p.transaction_hash)},"signedOperation":s,"receipt":receipt})
+    sdk::test_support::execution_response(p, s, status, ID)
 }
 fn signed_from_submit(
     stream: &mut TcpStream,

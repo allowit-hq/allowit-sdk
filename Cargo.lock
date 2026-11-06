@@ -39,7 +39,6 @@ dependencies = [
  "serde_json_canonicalizer",
  "sha2",
  "syntect",
- "time",
  "toml",
  "zeroize",
 ]
@@ -81,7 +80,6 @@ dependencies = [
  "serde_json_canonicalizer",
  "syn 2.0.119",
  "tempfile",
- "time",
  "zeroize",
 ]
 
