@@ -2,7 +2,7 @@
 //! The public authoring path must execute the pinned real compiler and bound its subprocess tree.
 use allowit_sdk_engine::authoring::{HostTools, check, compile};
 use std::{os::unix::fs::PermissionsExt, time::Duration};
-const VALID: &str = include_str!("../../cli/templates/policy/src/policy.rs");
+const VALID: &str = include_str!("fixtures/portable-policy.rs");
 
 #[test]
 fn actual_embedded_core_compile_accepts_portable_rust_and_rejects_type_errors() {

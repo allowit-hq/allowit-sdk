@@ -40,18 +40,6 @@ The shared library checks state and performs accounting around policy evaluation
 Custom policies use the admitted `get_state` and `set_state` interfaces for bespoke state.
 Trusted hosts supply enrichment and application accounting; request JSON cannot replace those bindings.
 
-## Source commands
-
-```sh
-allowit policy check policy.rs
-allowit policy build policy.rs -o wallet.rs
-allowit policy show --source
-```
-
-`check` validates the source structure and prints its SHA-256 digest, leading canonical rule calls, whether the source is canonical-only and whether it writes state.
-`build` type-checks the source through the embedded Core Python helper and exact portable Std library, then emits it. Python and rustc are required. Compilation has wall-time and output limits. Neither command authorizes a transaction or establishes settlement.
-The [policy template](../cli/templates/policy/) type-checks authored source as an ordinary Rust crate.
-
 ## Native binding
 
 The Stellar rail derives the exact native request, effect and fee bounds, authorizers, simulation and settlement rules.
