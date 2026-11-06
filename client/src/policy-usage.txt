@@ -32,7 +32,9 @@ Commands:
   allowit policy fund AMOUNT              fund the policy; prints the
                                           transaction's explorer link
   allowit policy execute RECIPIENT AMOUNT pay AMOUNT to RECIPIENT, a Solana
-                                          token account, under the policy
+                                          token account or a wallet whose
+                                          USDC account receives it, under
+                                          the policy
   allowit policy status                   show the deployed policy's state
   allowit policy revoke                   revoke the deployed policy
   allowit policy withdraw AMOUNT          withdraw unspent funds
@@ -54,4 +56,6 @@ requires it. Keep it and the exact action, merchant, context, recipient and
 amount unchanged for retries; exit 6 is an earlier receipt, not a new payment.
 
 Exit status: 0 settled/generated/status, 2 usage, 3 configuration, 5 uncertain,
-6 replay of an earlier settled operation, 20 denied or finalized failure.
+6 replay of an earlier settled operation, 11 waiting for the owner's answer
+(nothing signed; rerun with the same ALLOWIT_REQUEST_ID after the answer),
+20 denied or finalized failure.

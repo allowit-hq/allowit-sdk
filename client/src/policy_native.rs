@@ -438,7 +438,16 @@ pub(crate) fn run(
                 "Import an owner-issued native executor bundle with its scoped approval capability",
             )
         })?;
-        let recipient = native(Key::parse(&pos[0]))?;
+        let requested = native(Key::parse(&pos[0]))?;
+        // A classic SPL token account is paid as named. Any other address must be
+        // an ordinary wallet: the vault pays its canonical token account for the
+        // configured mint, which is what any-wallet policies approve.
+        let sdk = lifecycle.sdk.client();
+        let recipient = if sdk.token(requested).is_ok() {
+            requested
+        } else {
+            native(sdk.recipient_token_account(requested, true))?
+        };
         let action = configured("ALLOWIT_EXECUTION_ACTION", "transfer");
         let merchant = env_value("ALLOWIT_EXECUTION_MERCHANT");
         let context = execution_context()?;
@@ -456,7 +465,7 @@ pub(crate) fn run(
             &policy,
             owner,
             &identity,
-            || reporter.authorize(&identity, &context),
+            || reporter.authorize(&identity, &context, requested),
             |transaction| {
                 if transaction.payer != executor.public_key() {
                     return Err(allowit_native::error::Error::config(
