@@ -13,14 +13,12 @@ pushing. Preserve existing reviews and deployment restrictions.
 
 All packages share one Cargo workspace, one `Cargo.lock` and one version
 (`[workspace.package]`). Packages in this repository depend on each other by
-path and are never pinned. Select them with `-p allowit-sdk-engine`,
-`-p allowit-cli` or `-p allowit-policy-template`.
+path and are never pinned. Select the shared engine with `-p allowit-sdk-engine`.
 
 Dependencies point one way. This SDK depends on Allowit core (repository
 allowit-core, packages `allowit-sdk` and portable `allowit`) and on the Stellar
 rail package from allowit-contracts-stellar.
 The rail crates depend on Allowit core. Never move core or rail code into this
 repository, and never add a `[patch]` section. Each git dependency names a
-release tag `vX.Y.Z` in the root `[workspace.dependencies]` (the policy template
-repeats the core tag). Every crate in the build must name the same core tag:
+release tag `vX.Y.Z` in the root `[workspace.dependencies]`. Every crate in the build must name the same core tag:
 release the rail repositories on a new core tag before this SDK moves to it.

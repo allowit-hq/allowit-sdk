@@ -1,6 +1,5 @@
 //! Public continuation for an existing owner-configured Native Stellar policy.
-//! Backs the hidden `allowit wallet approve`: prints a source approval link
-//! and moves no funds.
+//! Builds a public source-approval link without moving funds.
 use crate::error::{Error, Result};
 use allowit_sdk::client::store::Store;
 use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
@@ -340,7 +339,7 @@ mod tests {
     use super::*;
     fn fixture() -> serde_json::Value {
         serde_json::from_str(include_str!(
-            "../../../../../cli/tests/fixtures/stellar-approval.json"
+            "../../../../tests/fixtures/stellar-approval.json"
         ))
         .unwrap()
     }

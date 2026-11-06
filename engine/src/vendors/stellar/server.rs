@@ -1230,7 +1230,7 @@ mod capability_tests {
     #[test]
     fn genuine_preflight_survives_carrier_but_not_serialization_or_document_changes() {
         let fixture: serde_json::Value = serde_json::from_str(include_str!(
-            "../../../../cli/tests/fixtures/stellar-policy-wallet-revalidation-rpc.json"
+            "../../../tests/fixtures/stellar-policy-wallet-revalidation-rpc.json"
         ))
         .unwrap();
         let original: PreparedOperation =
@@ -1309,7 +1309,7 @@ mod diagnostic_regressions {
             }
         }
         let fixture: serde_json::Value = serde_json::from_str(include_str!(
-            "../../../../cli/tests/fixtures/stellar-policy-wallet-revalidation-rpc.json"
+            "../../../tests/fixtures/stellar-policy-wallet-revalidation-rpc.json"
         ))
         .unwrap();
         let original: PreparedOperation =

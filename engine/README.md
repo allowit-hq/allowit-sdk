@@ -14,7 +14,7 @@ CLI and server callers use the same library and retain their own keys and author
 
 ```mermaid
 flowchart TB
-    CLI["[allowit-sdk]<br/>crate @allowit/cli<br/>DX: policy and agent keypair generation<br/>Policy validation · x402 marketplace"]
+    CLI["[allowit-cli]<br/>crate @allowit/cli<br/>DX: policy and agent keypair generation<br/>Policy validation · x402 marketplace"]
     Server["[allowit-engine]<br/>crate @allowit/server<br/>Shared REST API · server enforcement"]
     Engine["[allowit-sdk]<br/>crate @allowit/sdk/engine<br/>All other shared logic"]
     Vendor["crate + npm @allowit/vendor/*<br/>Native contracts · signing · chain semantics<br/>SVG graphics · web components"]
@@ -109,7 +109,6 @@ cargo clippy --locked -p allowit-sdk-engine --all-targets -- -D warnings
 
 The vendor library defines native network identities and protocol aliases. SDK adapters register friendly aliases, display labels, asset defaults and explorer links for common routing and presentation.
 A build without vendor features exposes an empty rail inventory.
-CLI examples use the selected rail, then the first network supported by the build.
 
 Owner export installs only the exact independently checked activation result.
 Explicit public import checks current native authority before saving a profile.
@@ -127,13 +126,12 @@ That status path cannot prepare or sign a replacement operation.
 `config::ServerAuthority::new(network, origin, public_key)` binds an independently configured public identity to a canonical rail and backend origin.
 `profiles::Cache::import` takes that authority and an independent RPC endpoint.
 `owner::Context` carries the same authority. The selected vendor checks the exact native role and current administrator quorum.
-The common CLI records the pin with `rail trust ORIGIN PUBLIC_KEY` in the selected rail’s `server_authorities` map.
 
 A public descriptor and an unauthenticated server response cannot supply their own trusted identity.
 Fresh Native signing verifies actual source consent and current roles through independent RPC.
 The compiler receives an explicit allowlist of public toolchain paths. Provider credentials, signer values and authoring overrides do not enter Python or rustc.
 
-A resolved execution profile and its authority remain owned by one command across its journal check and dispatch.
+A resolved execution profile and its authority remain owned by one caller across its journal check and dispatch.
 The receipt-only recovery capability instead reads the original private record, without importing an obsolete public profile.
 It accepts no fresh preparation or operation-signing path. Recovery queries the configured settlement service for the original packet.
 A final success requires a verified receipt.

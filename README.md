@@ -2,26 +2,24 @@
 
 **Go on. On your terms.**
 
-This repository contains `allowit-sdk-engine`, the shared offchain execution library, and the `allowit` CLI.
+This repository contains `allowit-sdk-engine`, the shared offchain execution library.
 Both CLI and server callers use SDK engine. Each actor retains its own keys, authorization and durable application state.
-The CLI owns command UX and client-side validation of selected bindings and requests.
-It uses shared Core and SDK logic for checks that also run at server or rail boundaries.
+The [Allowit CLI](https://github.com/allowit-hq/allowit-cli) owns terminal commands and local configuration.
 Server enforcement, native authority and verified settlement remain authoritative.
 
 [Allowit core](https://github.com/allowit-hq/allowit-core) contains the portable `allowit` policy library, its shared source gate and feature-gated host primitives.
 Rail libraries own native requests, encoding, signatures, RPC methods, simulation and settlement rules.
-The [workspace manifest](Cargo.toml), [lockfile](Cargo.lock), [rail table](engine/src/routing.rs) and [adapter wiring](cli/src/vendors/mod.rs) define this build.
+The [workspace manifest](Cargo.toml), [lockfile](Cargo.lock) and [rail table](engine/src/routing.rs) define this build.
 SDK engine composes those capabilities into preparation, execution, status and recovery workflows.
 The server adds trusted policy context, admission, server authority, reservations and accounting.
 
 ## Architecture
 
-This repository owns the CLI and SDK engine. The CLI owns developer workflows and client validation.
-SDK engine owns other shared logic for CLI and server callers. The CLI also calls the server through REST.
+SDK engine owns reusable execution logic for CLI and server callers.
 
 ```mermaid
 flowchart TB
-    CLI["[allowit-sdk]<br/>crate @allowit/cli<br/>DX: policy and agent keypair generation<br/>Policy validation · x402 marketplace"]
+    CLI["[allowit-cli]<br/>crate @allowit/cli<br/>DX: policy and agent keypair generation<br/>Policy validation · x402 marketplace"]
     Server["[allowit-engine]<br/>crate @allowit/server<br/>Shared REST API · server enforcement"]
     Engine["[allowit-sdk]<br/>crate @allowit/sdk/engine<br/>All other shared logic"]
     Vendor["crate + npm @allowit/vendor/*<br/>Native contracts · signing · chain semantics<br/>SVG graphics · web components"]
@@ -34,38 +32,6 @@ flowchart TB
 ```
 
 [Full architecture][responsibility-model].
-
-## Run the CLI
-
-Install [Rust](https://rustup.rs) 1.98 or later, then:
-
-```sh
-git clone https://github.com/allowit-hq/allowit-sdk.git
-cd allowit-sdk
-cargo run --locked --bin allowit -- --help
-cargo build --locked --release --bin allowit
-```
-
-The [CLI reference](cli/README.md) describes owner-authenticated draft generation, local keys, public wallet profiles and agent execution.
-
-```sh
-allowit rail ls --json
-allowit rail show RAIL --json
-allowit rail use RAIL
-allowit keys import agent agent.key
-allowit keys use agent
-allowit wallet use WALLET
-allowit exec --op transfer --to DESTINATION --amount ASSET:5 --request-id pay-0001
-allowit status pay-0001 --wait 60s
-```
-
-Replace `RAIL`, `WALLET`, `DESTINATION` and `ASSET:5` with values from the selected adapter.
-`rail ls` and `rail show` report the installed executable's registered rails and capabilities.
-Follow that [adapter's configuration](cli/src/vendors/) for the owner's public wallet profile.
-[Known issues](known_issues.md) records profile and native-binding workarounds.
-`ALLOWIT_URL` selects the server origin. A public profile contains no signing material.
-The selected key must match its agent before any request or signature.
-An uncertain operation retains its original request ID and signed bytes. Read its status before authorizing another operation.
 
 ## Write a portable policy
 
@@ -86,17 +52,7 @@ The host and Soroban contract use the same source. Owner-approved params supply 
 Request amounts, native identity, accounting and enrichment come from the executing host and rail.
 Policy source cannot provide its own trusted spending state.
 
-The [template](cli/templates/policy/) is an ordinary Cargo crate with this policy:
-
-```sh
-cargo test --locked -p allowit-policy-template
-allowit policy check cli/templates/policy/src/policy.rs
-allowit policy build cli/templates/policy/src/policy.rs -o wallet.rs
-```
-
-`policy check` validates portable source structure and prints its exact source digest, canonical prefix and state-write shape.
-`policy build` type-checks the source through the embedded Core host compiler before emitting it. Cargo also type-checks the policy crate.
-The shared host build gate compiles the same source against the exact portable library before an installation can authorize it.
+The shared host build gate compiles source against the exact portable library before installation authorization.
 See the [portable policy reference](docs/policy-reference.md) for source restrictions and wallet tiers.
 
 ## Embed SDK engine
@@ -122,9 +78,6 @@ Provider delivery is separate from native chain settlement.
 | Path | Purpose |
 | --- | --- |
 | [`engine/`](engine/) | Shared execution library for CLI, server and SDK callers |
-| [`cli/`](cli/) | Commands, input/output, local key custody and configuration |
-| [`cli/templates/policy/`](cli/templates/policy/) | Portable policy crate |
-| [`cli/skills/allowit/`](cli/skills/allowit/SKILL.md) | Policy authoring instructions |
 | [`docs/policy-reference.md`](docs/policy-reference.md) | Portable source and execution contract |
 
 All packages share one Cargo workspace, lockfile and version. Packages in this repository depend on each other by path.
@@ -136,8 +89,8 @@ Published tags are immutable.
 ```sh
 cargo build --workspace --all-targets --locked
 cargo fmt --all --check
-cargo test --locked -p allowit-sdk-engine -p allowit-cli -p allowit-policy-template
-cargo clippy --locked -p allowit-sdk-engine -p allowit-cli --all-targets -- -D warnings
+cargo test --locked -p allowit-sdk-engine
+cargo clippy --locked -p allowit-sdk-engine --all-targets -- -D warnings
 ```
 
 The affected [workflows](.github/workflows/) define the required checks.
