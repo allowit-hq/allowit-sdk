@@ -36,6 +36,7 @@ mod request_proof;
 pub mod routing;
 pub mod runtime;
 pub mod typed_request;
+pub use allowit_vendor_bindings as vendor_bindings;
 pub mod vendors;
 pub mod wallet;
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
