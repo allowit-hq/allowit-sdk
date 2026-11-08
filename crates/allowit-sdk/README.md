@@ -39,7 +39,7 @@ flowchart TB
 | CLI | Developer workflows, policy and agent keypair generation, client validation and x402 marketplace interaction |
 | Vendor adapter | Provider request/response protocols and typed facts, using common transport and workflow capabilities |
 
-Placement follows responsibility. Generic orchestration belongs in SDK engine. Stellar execution, owner workflows, runtime clients, request validation, profiles, formatting, diagnostics and signing belong in `allowit-stellar-wallet` at `allowit-contracts-stellar/stellar/core`.
+Placement follows responsibility. Generic orchestration belongs in SDK engine. Stellar execution, owner workflows, runtime clients, request validation, profiles, formatting, diagnostics and signing belong in the `allowit-stellar` package (library `allowit_stellar_wallet`) at `allowit-contracts-stellar/crates/allowit-stellar`.
 Rail packages can use common core primitives directly. Core has no dependency on SDK engine or a rail package.
 
 ## Modules

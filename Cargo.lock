@@ -30,7 +30,7 @@ version = "0.5.0"
 dependencies = [
  "allowit",
  "allowit-sdk 0.3.2",
- "allowit-stellar-wallet",
+ "allowit-stellar",
  "chrono",
  "getrandom 0.3.4",
  "libc",
@@ -44,9 +44,9 @@ dependencies = [
 ]
 
 [[package]]
-name = "allowit-stellar-wallet"
+name = "allowit-stellar"
 version = "0.3.0"
-source = "git+https://github.com/allowit-hq/allowit-contracts-stellar.git?tag=v0.3.0#930ccd34ef42f1ac5cc54017c357b2efaf696402"
+source = "git+https://github.com/allowit-hq/allowit-contracts-stellar.git?rev=82787fa4e19089206072257cab6a39f121e67c4a#82787fa4e19089206072257cab6a39f121e67c4a"
 dependencies = [
  "allowit",
  "allowit-sdk 0.3.2",
