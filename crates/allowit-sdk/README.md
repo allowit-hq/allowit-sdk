@@ -24,7 +24,7 @@ The [repository README](../../README.md#architecture) holds the architecture dia
 | CLI | Developer workflows, policy and agent keypair generation, client validation and x402 marketplace interaction |
 | Vendor adapter | Provider request/response protocols and typed facts, using common transport and workflow capabilities |
 
-Placement follows responsibility. Generic orchestration belongs in SDK engine. Stellar execution, owner workflows, runtime clients, request validation, profiles, formatting, diagnostics and signing belong in `allowit-stellar-wallet` at `allowit-contracts-stellar/stellar/core`.
+Placement follows responsibility. Generic orchestration belongs in SDK engine. Each rail's execution, owner workflows, runtime clients, request validation, profiles, formatting, diagnostics and signing belong in its vendor repository, behind the `RailPlugin` trait from `allowit_core::vendor::plugin`.
 Rail packages can use common core primitives directly. Core has no dependency on SDK engine or a rail package.
 
 ## Modules
@@ -37,9 +37,8 @@ Rail packages can use common core primitives directly. Core has no dependency on
 | `profiles` | Verified public exports, portable imports, immutable versions and explicit selection |
 | `execution`, `input` | Shared request orchestration, amount parsing and selected native format checks |
 | `runtime` | Common local execution, caller-owned OperationStore and original-packet recovery |
-| `vendors::stellar` | Registration and reexports of the Stellar crate provider API |
-| `vendors::stellar::runtime::owner_client` | Owner sign-in and server-backed portable generation with explicit template or installation selection |
-| `vendors::stellar::runtime::client` | Authenticated server requests, signer capabilities and exact-intent client resumption |
+| `plugins` | Rail plugin registry: `rails`, `for_network`, `by_id`, `networks`; one registration line per vendor in `plugins/registered.rs` |
+| `plugins::testkit` | Feature `testkit`: runs shared tests on every registered rail and applies declared skips |
 | `request`, `typed_request` | Bounded request identifiers, input documents and operation identities |
 | `config`, `routing`, `wallet` | Configuration, registered network selection and caller-owned opaque signers |
 | `output` | Shared printable values |
@@ -62,13 +61,13 @@ Native key formats, cryptography and message domains live in the vendor library.
 SDK engine retains secure files, configuration, sessions and workflow sequencing.
 `generation::generate` requires a matching signer network before selecting its registered backend capability.
 
-`vendors::stellar::runtime::owner_client` takes a distinct caller-owned owner signer. Native helpers check the exact
-sign-in message, account, Origin and nonce. The Stellar client uses Core session helpers to check freshness and require a rotated owner session.
+`RailPlugin::generate` takes a distinct caller-owned owner signer. The plugin checks the exact
+sign-in message, account, Origin and nonce, uses Core session helpers to check freshness and requires a rotated owner session.
 It checks advertised generation profiles, networks and terms before sending one creation request.
-The Stellar client checks returned source, params and native bindings as a draft. This draft grants no publication or spending authority.
+It checks returned source, params and native bindings as a draft. This draft grants no publication or spending authority.
 An uncertain generation is not repeated automatically.
 
-`vendors::stellar::runtime::client` takes a caller-owned signer capability and private core `Store`.
+`RailPlugin::execution` takes a caller-owned signer capability and a private core `Store` opener.
 It saves the original intent before preparation and the exact signed proof before transmission.
 It preserves packet bytes, hashes and request IDs through status and recovery.
 CLI exit codes and terminal rendering stay in the CLI.
@@ -84,7 +83,7 @@ An adapter exposes an explicit provider recovery contract instead of duplicating
 ## Compiled capabilities and public profiles
 
 The vendor library defines network identities, protocol and presentation aliases, display labels, asset defaults and explorer links. The SDK registers those values for common routing and presentation.
-A build without vendor features exposes an empty rail inventory.
+The registered plugins define the rail inventory.
 
 Owner export installs only the exact independently checked activation result.
 Explicit public import checks current native authority before saving a profile.
@@ -116,6 +115,6 @@ A final success requires a verified receipt.
 
 The host crate in Core exposes provider contracts behind its optional `vendor` feature.
 The SDK retains generic orchestration, storage, routing and consumer integration tests.
-It opens private journal namespaces declared by each provider. A caller-owned store opener preserves
+It opens the private namespaces `<id>-journal` and `<id>-owner-workflows` for each plugin. A caller-owned store opener preserves
 native validation before filesystem changes.
-SDK packet deserialization delegates to the Stellar crate before exposing retained state.
+A retained packet serializes as `{"rail": <plugin id>, "packet": <native document>}`. Deserialization restores it through that plugin before exposing retained state.

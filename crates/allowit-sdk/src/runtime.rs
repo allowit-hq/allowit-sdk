@@ -25,8 +25,22 @@ impl Installation {
         self.0.native_document()
     }
     pub fn policy_wallet(input: PolicyInstallation) -> Result<Self> {
-        crate::vendors::runtime_policy(input).map(Self)
+        crate::plugins::for_network(&input.description.network)?
+            .install(input)
+            .map(Self)
     }
+}
+/// A retained packet names the rail plugin that restores it.
+#[derive(Serialize)]
+struct Stored<'a> {
+    rail: &'static str,
+    packet: &'a RawValue,
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Restored {
+    rail: String,
+    packet: Box<RawValue>,
 }
 macro_rules! carrier {
     ($name:ident,$kind:ident) => {
@@ -45,15 +59,22 @@ macro_rules! carrier {
                 &self,
                 s: S,
             ) -> std::result::Result<S::Ok, S::Error> {
-                self.0.document().serialize(s)
+                let rail = crate::plugins::for_network(self.0.network())
+                    .map_err(serde::ser::Error::custom)?;
+                Stored {
+                    rail: rail.id(),
+                    packet: self.0.document(),
+                }
+                .serialize(s)
             }
         }
         impl<'de> Deserialize<'de> for $name {
             fn deserialize<D: serde::Deserializer<'de>>(
                 d: D,
             ) -> std::result::Result<Self, D::Error> {
-                let raw = Box::<RawValue>::deserialize(d)?;
-                crate::vendors::runtime_restore(Kind::$kind, raw)
+                let stored = Restored::deserialize(d)?;
+                crate::plugins::by_id(&stored.rail)
+                    .and_then(|rail| rail.restore(Kind::$kind, stored.packet))
                     .map(Self)
                     .map_err(serde::de::Error::custom)
             }
@@ -68,7 +89,7 @@ carrier!(OwnerSigned, OwnerSigned);
 carrier!(RequestPacket, Request);
 impl RequestPacket {
     pub fn operation_id(&self) -> Result<[u8; 32]> {
-        crate::vendors::runtime_request_id(&self.0)
+        crate::plugins::for_network(self.0.network())?.request_id(&self.0)
     }
 }
 impl PartialEq for RequestPacket {
@@ -144,7 +165,7 @@ pub struct ObservedAuthorization {
     pub status: Status,
 }
 pub struct Runtime {
-    pub(crate) provider: Box<dyn crate::vendors::RuntimeProvider>,
+    pub(crate) provider: Box<dyn crate::plugins::RuntimeProvider>,
 }
 impl Runtime {
     pub fn discover_snapshot(
@@ -165,10 +186,16 @@ impl Runtime {
     }
 
     pub fn with_transport(network: &str, transport: std::sync::Arc<dyn Transport>) -> Result<Self> {
-        crate::vendors::runtime_with_transport(network, transport).map(|provider| Self { provider })
+        let network = crate::routing::normalize(network)?;
+        crate::plugins::for_network(network)?
+            .runtime(network, transport)
+            .map(|provider| Self { provider })
     }
     pub fn new(network: &str, endpoint: &str) -> Result<Self> {
-        crate::vendors::runtime(network, endpoint).map(|provider| Self { provider })
+        let network = crate::routing::normalize(network)?;
+        let rail = crate::plugins::for_network(network)?;
+        rail.runtime(network, rail.connect(network, endpoint)?)
+            .map(|provider| Self { provider })
     }
     pub fn import(&self, authority: &ServerAuthority, bytes: &[u8]) -> Result<Installation> {
         self.provider.import(&authority.0, bytes).map(Installation)
@@ -413,7 +440,7 @@ pub fn verify_request_proof(
     canonical_body: &[u8],
 ) -> Result<String> {
     crate::request_proof::verify(
-        crate::vendors::runtime_request_proof_protocol(network)?,
+        crate::plugins::for_network(network)?.request_proof_protocol(),
         proof,
         now,
         path,
@@ -423,7 +450,7 @@ pub fn verify_request_proof(
 
 /// Encode the public part of a caller-owned signing key for the selected vendor.
 pub fn signer_identity(network: &str, public_key: &[u8; 32]) -> Result<String> {
-    crate::vendors::runtime_signer_identity(network, public_key)
+    crate::plugins::for_network(network)?.signer_identity(public_key)
 }
 
 impl Runtime {

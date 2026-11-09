@@ -46,7 +46,7 @@ pub fn generate(
     origin: &str,
     signer: &LocalSigner,
     request: &GenerateRequest,
-    mut clock: impl FnMut() -> Result<u64>,
+    clock: impl FnMut() -> Result<u64>,
 ) -> Result<GeneratedDraft> {
     request.validate()?;
     if signer.network() != crate::routing::normalize(&request.network)? {
@@ -54,5 +54,12 @@ pub fn generate(
             "Owner signer belongs to another selected rail",
         ));
     }
-    crate::vendors::generate(backend, origin, signer, request, &mut clock)
+    let clock = std::cell::RefCell::new(clock);
+    let cx = allowit_core::vendor::plugin::GenerateContext {
+        backend,
+        origin,
+        signer,
+        clock: &|| (clock.borrow_mut())(),
+    };
+    crate::plugins::for_network(&request.network)?.generate(&cx, &request.into())
 }

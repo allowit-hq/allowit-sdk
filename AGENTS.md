@@ -17,18 +17,23 @@ path and are never pinned. Select the SDK with `-p allowit-sdk@0.5.0`. The `allo
 Core's released `allowit-sdk` package.
 
 Dependencies point one way. This SDK depends on Allowit core (repository
-allowit-core, packages `allowit-sdk` and portable `allowit`) and on the Stellar
-rail package from allowit-contracts-stellar.
-The rail crates depend on Allowit core. Never move core or rail code into this
-repository, and never add a `[patch]` section. Each git dependency names a
-release tag `vX.Y.Z` in the root `[workspace.dependencies]`. Every crate in the build must name the same core tag:
-release the rail repositories on a new core tag before this SDK moves to it.
+allowit-core, package `allowit-core`) and on each registered rail package. The rail
+crates depend on Allowit core. Never move core or rail code into this repository, and
+never commit a `[patch]` section. Each git dependency names a release tag `vX.Y.Z` or an
+exact reviewed commit in the root `[workspace.dependencies]`. Every crate in the build
+must name the same core revision, so the plugin trait objects match.
 
-Release the reviewed Core API first, then the Stellar crate on that Core release, then the SDK.
-After those approved releases, update the SDK's release tags and lockfile. Keep local validation
-overrides out of committed manifests.
+## Vendor boundary
 
-Stellar protocol fixtures and codec construction belong to the Stellar crate. Its optional
-`test-support` feature supplies fixtures for SDK consumer tests. SDK tests keep command, HTTP,
-storage and orchestration assertions and do not depend directly on native codecs or signature
-libraries.
+Only five files may name a vendor, and only on import or dependency lines:
+`Cargo.toml`, `crates/allowit-sdk/Cargo.toml`, `crates/allowit-sdk/src/plugins/registered.rs`,
+`npm/package.json` and `npm/src/registered.js`. Everything else reaches vendors through
+`plugins` (Rust) or `@allowit/sdk` (JavaScript). `scripts/vendor-boundary.mjs` enforces this.
+It runs in `cargo test` (`tests/vendor_boundary.rs`); run it directly with
+`node scripts/vendor-boundary.mjs --self-test && node scripts/vendor-boundary.mjs`. The
+scanner file is byte-identical in every Allowit repository; do not edit it here.
+
+SDK tests are vendor neutral. They run on every registered rail through
+`plugins::testkit::each` (Rust) or `for (const rail of rails())` (JavaScript) and take values
+from each rail's fixtures. A rail declares the features it skips, with a reason. Vendor
+protocol, codec and RPC tests live in the vendor repository.

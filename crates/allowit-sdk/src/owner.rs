@@ -1,7 +1,8 @@
 //! Owner orchestration through the selected compiled capability. No terminal I/O or native DTOs.
 use crate::{
     error::{Error, Result},
-    routing, vendors,
+    plugins::{for_network, owner_store},
+    routing,
     wallet::LocalSigner,
 };
 use std::path::Path;
@@ -51,8 +52,8 @@ impl Context<'_> {
 pub use allowit_core::vendor::owner::{Activate, Deploy, Setup};
 pub fn deploy(cx: &Context<'_>, request: Deploy<'_>) -> Result<serde_json::Value> {
     cx.check()?;
-    let store = || vendors::owner_store(cx.root, cx.network);
-    vendors::owner(cx.network)?.deploy(&cx.provider_context(&store), request)
+    let store = || owner_store(cx.root, cx.network);
+    for_network(cx.network)?.owner().deploy(&cx.provider_context(&store), request)
 }
 pub fn fund(
     cx: &Context<'_>,
@@ -62,8 +63,8 @@ pub fn fund(
     fee_limit: &str,
 ) -> Result<serde_json::Value> {
     cx.check()?;
-    let store = || vendors::owner_store(cx.root, cx.network);
-    vendors::owner(cx.network)?.fund(
+    let store = || owner_store(cx.root, cx.network);
+    for_network(cx.network)?.owner().fund(
         &cx.provider_context(&store),
         document,
         id,
@@ -73,8 +74,8 @@ pub fn fund(
 }
 pub fn activate(cx: &Context<'_>, request: Activate<'_>) -> Result<serde_json::Value> {
     cx.check()?;
-    let store = || vendors::owner_store(cx.root, cx.network);
-    vendors::owner(cx.network)?.activate(&cx.provider_context(&store), request)
+    let store = || owner_store(cx.root, cx.network);
+    for_network(cx.network)?.owner().activate(&cx.provider_context(&store), request)
 }
 pub fn export(
     cx: &Context<'_>,
@@ -82,8 +83,8 @@ pub fn export(
     activation_id: &str,
 ) -> Result<crate::profiles::Profile> {
     cx.check()?;
-    let store = || vendors::owner_store(cx.root, cx.network);
-    let raw = vendors::owner(cx.network)?.export(
+    let store = || owner_store(cx.root, cx.network);
+    let raw = for_network(cx.network)?.owner().export(
         &cx.provider_context(&store),
         document,
         activation_id,
@@ -94,10 +95,12 @@ pub fn export(
 }
 pub fn setup(cx: &Context<'_>, request: Setup<'_>) -> Result<serde_json::Value> {
     cx.check()?;
-    let store = || vendors::owner_store(cx.root, cx.network);
-    vendors::owner(cx.network)?.setup(&cx.provider_context(&store), request)
+    let store = || owner_store(cx.root, cx.network);
+    for_network(cx.network)?.owner().setup(&cx.provider_context(&store), request)
 }
 pub fn status(root: &Path, network: &str, rpc_url: &str, id: &str) -> Result<serde_json::Value> {
-    let store = vendors::owner_store(root, network)?;
-    vendors::owner(network)?.status(&store, network, rpc_url, id)
+    let store = owner_store(root, network)?;
+    for_network(network)?
+        .owner()
+        .status(&store, network, rpc_url, id)
 }

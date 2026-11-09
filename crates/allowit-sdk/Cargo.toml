@@ -9,13 +9,12 @@ publish = false
 description = "Shared rail execution and owner workflows, with no terminal I/O"
 
 [features]
-default = ["stellar"]
-stellar = ["dep:allowit-stellar-wallet"]
+# Vendor-neutral test harness for shared tests here and in downstream repositories.
+testkit = []
 
 [dependencies]
-allowit = { workspace = true }
 allowit-core = { workspace = true, features = ["std", "policy-source", "client", "transport", "vendor"] }
-allowit-stellar-wallet = { workspace = true, optional = true }
+allowit-stellar = { workspace = true, features = ["test-support"] }
 getrandom = "0.3"
 libc = "0.2.190"
 serde = { version = "1.0.219", features = ["derive"] }
@@ -28,13 +27,6 @@ chrono = { version = "0.4", default-features = false, features = ["std"] }
 syn = { version = "2", features = ["full", "visit"] }
 proc-macro2 = "1"
 
-[dev-dependencies]
-allowit-stellar-wallet = { workspace = true, features = ["test-support"] }
-
 [[test]]
-name = "stellar_owner_generation"
-required-features = ["stellar"]
-
-[[test]]
-name = "generation_capabilities"
-required-features = ["stellar"]
+name = "rails"
+required-features = ["testkit"]

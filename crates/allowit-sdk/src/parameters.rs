@@ -28,7 +28,7 @@ pub struct Parameters {
 /// The assets that the vendor of `network` knows by code, each resolved to its address on that
 /// network. The vendor owns this list; the SDK names no asset.
 pub fn known_assets(network: &str) -> crate::error::Result<Vec<Asset>> {
-    crate::vendors::execution_tokens(network)?
+    crate::execution::tokens(network)?
         .iter()
         .map(|token| {
             crate::input::asset::resolve(network, token.code, token.issuer, true).map(|asset| {
@@ -773,8 +773,8 @@ mod tests {
             bounded_range("custom_minimum", Some(&reads)),
             Some((0, u32::MAX.into()))
         );
-        assert!(blocks_all_at_zero(allowit::CALL_LIMIT));
-        assert!(!blocks_all_at_zero(allowit::EXPIRES_AT));
+        assert!(blocks_all_at_zero(allowit_core::CALL_LIMIT));
+        assert!(!blocks_all_at_zero(allowit_core::EXPIRES_AT));
     }
 
     /// A vendor-neutral fixture vendor: the asset table that a vendor adapter resolves.
