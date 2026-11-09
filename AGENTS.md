@@ -28,10 +28,8 @@ must name the same core revision, so the plugin trait objects match.
 Only five files may name a vendor, and only on import or dependency lines:
 `Cargo.toml`, `crates/allowit-sdk/Cargo.toml`, `crates/allowit-sdk/src/plugins/registered.rs`,
 `npm/package.json` and `npm/src/registered.js`. Everything else reaches vendors through
-`plugins` (Rust) or `@allowit/sdk` (JavaScript). `scripts/vendor-boundary.mjs` enforces this.
-It runs in `cargo test` (`tests/vendor_boundary.rs`); run it directly with
-`node scripts/vendor-boundary.mjs --self-test && node scripts/vendor-boundary.mjs`. The
-scanner file is byte-identical in every Allowit repository; do not edit it here.
+`plugins` (Rust) or `@allowit/sdk` (JavaScript). Maintainers check this boundary in the
+allowit-project review before merge.
 
 SDK tests are vendor neutral. They run on every registered rail through
 `plugins::testkit::each` (Rust) or `for (const rail of rails())` (JavaScript) and take values

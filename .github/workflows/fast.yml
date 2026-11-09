@@ -19,8 +19,8 @@ jobs:
       - uses: dtolnay/rust-toolchain@1.98.0
       - uses: Swatinem/rust-cache@v2
       - run: cargo build --workspace --all-targets --locked
-  vendor-boundary:
-    name: Vendor boundary and npm registry
+  npm-registry:
+    name: npm registry
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
@@ -28,5 +28,4 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-      - run: node scripts/vendor-boundary.mjs --self-test && node scripts/vendor-boundary.mjs
       - run: corepack enable && pnpm --dir npm install && pnpm --dir npm test

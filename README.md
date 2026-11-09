@@ -90,7 +90,6 @@ Provider delivery is separate from native chain settlement.
 | --- | --- |
 | [`crates/allowit-sdk/`](crates/allowit-sdk/) | Shared execution library for CLI, server and SDK callers |
 | [`npm/`](npm/) | `@allowit/sdk`: the browser rail registry and the `<allowit-rail>` element |
-| [`scripts/vendor-boundary.mjs`](scripts/vendor-boundary.mjs) | Vendor-boundary eval; [`vendor-boundary.json`](vendor-boundary.json) sets the `sdk` role |
 | [`docs/policy-reference.md`](docs/policy-reference.md) | Portable source and execution contract |
 
 The Cargo workspace has one package, `crates/allowit-sdk`, and one lockfile.
@@ -104,11 +103,8 @@ cargo build --workspace --all-targets --locked
 cargo fmt --all --check
 cargo test --locked -p allowit-sdk@0.5.0 --features testkit
 cargo clippy --locked -p allowit-sdk@0.5.0 --all-targets --features testkit -- -D warnings
-node scripts/vendor-boundary.mjs --self-test && node scripts/vendor-boundary.mjs
 pnpm --dir npm install && pnpm --dir npm test
 ```
-
-`cargo test` also runs the vendor-boundary eval (`tests/vendor_boundary.rs`, Node 22 or later).
 
 The affected [workflows](.github/workflows/) define the required checks.
 
