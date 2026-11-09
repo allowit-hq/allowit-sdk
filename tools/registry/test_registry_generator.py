@@ -201,6 +201,15 @@ class CoreTest(unittest.TestCase):
         _, errors = ws.build()
         self.assertEqual(errors, ["captures/b.txt: duplicate id 'fake/same'"])
 
+    def test_nested_objects_are_written_in_canonical_key_order(self):
+        self.workspace().config()  # loads the fake source module
+        rec = sys.modules["registry_plugin_plugins_fake_source_py"].record("a", "k")
+        rec["latest_check"] = dict(reversed(list(rec["latest_check"].items())))
+        rec["parameters"] = [{"required": True, "type": None, "in": "query", "name": "q"}]
+        out = rg.ordered(rec)
+        self.assertEqual(list(out["latest_check"]), list(rg.LATEST_CHECK_KEYS))
+        self.assertEqual(list(out["parameters"][0]), list(rg.PARAMETER_KEYS))
+
     def test_configuration_errors(self):
         cases = {
             "unknown entry": CONFIG + "plugin x.py\n",
@@ -252,6 +261,24 @@ class CoreTest(unittest.TestCase):
         ws.write("registry.conf", CONFIG + f"registry {url} sha256={'0' * 64}\n")
         with self.assertRaises(rg.ConfigError):
             ws.build()
+
+    def test_published_registry_key_order_does_not_matter(self):
+        ws = self.workspace()
+        own, _ = ws.build()
+        ws.write("vendor-registry.json", json.dumps(own, sort_keys=True))
+        ws.write("registry.conf", CONFIG.replace("source     plugins/fake_source.py\n", "registry vendor-registry.json\n"))
+        registry, errors = ws.build()
+        self.assertEqual(errors, [])
+        self.assertEqual(registry["resources"], own["resources"])
+
+    def test_published_skips_cannot_collide_with_other_entries(self):
+        ws = self.workspace()
+        own, _ = ws.build()
+        ws.write("vendor-registry.json", json.dumps(dict(own, resources=[], skipped=[
+            {"reason": "upstream", "source_path": "captures/a.txt"}])))
+        ws.write("registry.conf", CONFIG + "registry vendor-registry.json\n")
+        _, errors = ws.build()
+        self.assertEqual(errors, ["captures/a.txt: claimed by fake-captures and registry:vendor-registry.json"])
 
     def test_published_registry_defaults_to_every_registered_rail(self):
         ws = self.workspace(config="registry vendor.json\n" + CONFIG)

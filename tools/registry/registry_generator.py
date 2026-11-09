@@ -38,6 +38,10 @@ from pathlib import Path
 SCHEMA_VERSION = 1
 PARAM_LOCATIONS = ("query", "body", "path", "header")
 PAYMENT_REQUIRED = ("scheme", "amount", "pay_to")
+# Key order of nested objects in the output. Input key order does not matter.
+PARAMETER_KEYS = ("name", "in", "type", "required")
+LATEST_CHECK_KEYS = ("method", "http_status", "at")
+SKIP_KEYS = ("source_path", "reason")
 
 
 class ParseError(Exception):
@@ -189,14 +193,14 @@ def _bool(v) -> bool:
 
 def _parameters(v) -> bool:
     return v is None or (isinstance(v, list) and all(
-        isinstance(p, dict) and list(p) == ["name", "in", "type", "required"]
+        isinstance(p, dict) and set(p) == set(PARAMETER_KEYS)
         and _str(p["name"]) and p["in"] in PARAM_LOCATIONS and _opt_str(p["type"]) and _bool(p["required"])
         for p in v
     ))
 
 
 def _latest_check(v) -> bool:
-    return (isinstance(v, dict) and list(v) == ["method", "http_status", "at"] and _str(v["method"])
+    return (isinstance(v, dict) and set(v) == set(LATEST_CHECK_KEYS) and _str(v["method"])
             and isinstance(v["http_status"], int) and not _bool(v["http_status"]) and _str(v["at"]))
 
 
@@ -237,6 +241,15 @@ SCHEMA = {
     "provider_reference": _opt_str,
     "source_path": _str,
 }
+
+
+def ordered(rec: dict) -> dict:
+    """Return a valid record with schema field order and canonical nested key order."""
+    out = {name: rec[name] for name in SCHEMA}
+    out["latest_check"] = {k: rec["latest_check"][k] for k in LATEST_CHECK_KEYS}
+    if rec["parameters"] is not None:
+        out["parameters"] = [{k: p[k] for k in PARAMETER_KEYS} for p in rec["parameters"]]
+    return out
 
 
 def validate(rec: dict, key: str, source: Source, ctx: Context) -> list[str]:
@@ -406,21 +419,26 @@ def build(config: Config) -> tuple[dict, list[str]]:
     skips = load_skips(config)
     skip_name = config.skips.name if config.skips else "skips"
     ctx = Context(config.root, {r.id: r for r in config.rails})
-    entries: list[tuple[str, Source]] = []
     skipped: list[dict] = []
     errors: list[str] = []
+    owners: dict[str, Source] = {}  # entry keys to parse
+    claimed: dict[str, Source] = {}  # every key: entries and the sources' own skipped entries
+
+    def claim(key: str, source: Source) -> None:
+        if key in claimed:
+            errors.append(f"{key}: claimed by {claimed[key].id} and {source.id}")
+        claimed[key] = source
+
     for source in config.sources:
-        entries.extend((key, source) for key in source.discover(ctx))
+        for key in source.discover(ctx):
+            claim(key, source)
+            owners.setdefault(key, source)
         for skip in getattr(source, "skipped", ()):
-            if not (isinstance(skip, dict) and list(skip) == ["source_path", "reason"]
+            if not (isinstance(skip, dict) and set(skip) == set(SKIP_KEYS)
                     and _str(skip["source_path"]) and _str(skip["reason"]) and skip["reason"].strip()):
                 raise ConfigError(f"source {source.id}: invalid skipped entry {skip!r}")
-            skipped.append(skip)
-    owners: dict[str, Source] = {}
-    for key, source in entries:
-        if key in owners:
-            errors.append(f"{key}: discovered by {owners[key].id} and {source.id}")
-        owners[key] = source
+            claim(skip["source_path"], source)
+            skipped.append({k: skip[k] for k in SKIP_KEYS})
     for stale in sorted(set(skips) - set(owners)):
         errors.append(f"{stale}: listed in {skip_name} but does not exist")
     resources: list[dict] = []
@@ -444,7 +462,7 @@ def build(config: Config) -> tuple[dict, list[str]]:
             errors.extend(f"{key}: {p}" for p in problems)
             continue
         ids.add(rec["id"])
-        resources.append({name: rec[name] for name in SCHEMA})
+        resources.append(ordered(rec))
     registry = {
         "schema_version": SCHEMA_VERSION,
         "source": "; ".join(s.location for s in config.sources),
