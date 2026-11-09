@@ -105,19 +105,44 @@ mod tests {
         assert_eq!(classify(&Error::api(409, "x")), Failure::Other);
     }
 
-    /// Every registered plugin reports a call that got no answer with the shared code.
+    /// Every registered plugin reports a call that got no answer with the shared code, and an
+    /// answer with an unknown outcome as unknown.
     #[test]
-    fn every_plugin_reports_an_unreachable_rpc_as_network_unavailable() {
-        let closed = TcpListener::bind("127.0.0.1:0").unwrap();
-        let url = format!("http://{}", closed.local_addr().unwrap());
-        drop(closed);
+    fn every_plugin_keeps_the_class_of_a_failed_rpc() {
+        use std::io::Read;
         for plugin in crate::plugins::rails() {
             let network = plugin.test_support().network;
-            let transport = plugin.connect(network, &url).unwrap();
-            let error = transport.call("getLatestLedger", json!({})).unwrap_err();
+            let closed = TcpListener::bind("127.0.0.1:0").unwrap();
+            let url = format!("http://{}", closed.local_addr().unwrap());
+            drop(closed);
+            let error = plugin
+                .connect(network, &url)
+                .unwrap()
+                .call("getLatestLedger", json!({}))
+                .unwrap_err();
             assert_eq!(
                 classify(&error),
                 Failure::NetworkUnavailable,
+                "{}: {}",
+                plugin.id(),
+                error.message
+            );
+            // The server reads the request, then closes the connection without a reply.
+            let dropping = TcpListener::bind("127.0.0.1:0").unwrap();
+            let url = format!("http://{}", dropping.local_addr().unwrap());
+            let server = thread::spawn(move || {
+                let (mut stream, _) = dropping.accept().unwrap();
+                let _ = stream.read(&mut [0; 4096]);
+            });
+            let error = plugin
+                .connect(network, &url)
+                .unwrap()
+                .call("getLatestLedger", json!({}))
+                .unwrap_err();
+            server.join().unwrap();
+            assert_eq!(
+                classify(&error),
+                Failure::Unknown,
                 "{}: {}",
                 plugin.id(),
                 error.message
