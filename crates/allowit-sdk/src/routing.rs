@@ -9,7 +9,7 @@ pub use allowit_core::vendor::routing::{Family, RailInfo};
 /// Every network advertised by the compiled vendor registrations, in build order.
 pub fn all() -> &'static [RailInfo] {
     static RAILS: std::sync::OnceLock<Vec<RailInfo>> = std::sync::OnceLock::new();
-    RAILS.get_or_init(crate::vendors::networks)
+    RAILS.get_or_init(|| crate::plugins::networks().copied().collect())
 }
 /// Looks up a rail by canonical identifier or alias.
 pub fn info(network: &str) -> Result<&'static RailInfo> {
@@ -48,37 +48,26 @@ mod tests {
     use super::*;
     #[test]
     fn selection_is_scoped() {
-        with_network(Some("stellar:testnet".into()), || {
-            assert_eq!(selected().as_deref(), Some("stellar:testnet"));
+        let network = all()[0].id;
+        with_network(Some(network.into()), || {
+            assert_eq!(selected().as_deref(), Some(network));
             Ok(())
         })
         .unwrap();
         assert!(selected().is_none());
     }
-    #[cfg(feature = "stellar")]
     #[test]
-    fn aliases_normalize_to_canonical_caip2() {
-        for (input, canonical) in [
-            ("stellar:mainnet", "stellar:pubnet"),
-            ("stellar:pubnet", "stellar:pubnet"),
-            ("stellar:testnet", "stellar:testnet"),
-        ] {
-            assert_eq!(normalize(input).unwrap(), canonical, "{input}");
-            // Normalization is idempotent: the output is valid input.
-            assert_eq!(normalize(canonical).unwrap(), canonical);
+    fn every_alias_normalizes_to_its_canonical_caip2() {
+        assert!(!all().is_empty(), "no registered rail");
+        for rail in all() {
+            assert_eq!(normalize(rail.id).unwrap(), rail.id);
+            assert_eq!(family(rail.id).unwrap(), rail.family);
+            for alias in rail.aliases {
+                assert_eq!(normalize(alias).unwrap(), rail.id, "{alias}");
+            }
         }
-        for bad in ["eip155:1", "solana", "", "stellar:futurenet"] {
+        for bad in ["", "unknown:none", "eip155"] {
             assert_eq!(normalize(bad).unwrap_err().code, 2, "{bad}");
         }
-    }
-}
-
-#[cfg(all(test, not(feature = "stellar")))]
-mod empty_build {
-    #[test]
-    fn no_compiled_vendor_exposes_no_network() {
-        assert!(super::all().is_empty());
-        assert!(super::info("stellar:testnet").is_err());
-        assert!(super::family("stellar:testnet").is_err());
     }
 }

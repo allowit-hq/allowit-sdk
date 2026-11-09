@@ -9,7 +9,7 @@ Server enforcement, native authority and verified settlement remain authoritativ
 
 [Allowit core](https://github.com/allowit-hq/allowit-core) contains the portable `allowit` policy library, its shared source gate and feature-gated host primitives.
 Rail libraries own native requests, encoding, signatures, RPC methods, simulation and settlement rules.
-The [workspace manifest](Cargo.toml), [lockfile](Cargo.lock) and [rail table](crates/allowit-sdk/src/routing.rs) define this build.
+The [workspace manifest](Cargo.toml), [lockfile](Cargo.lock) and [plugin registration](crates/allowit-sdk/src/plugins/registered.rs) define this build.
 SDK engine composes those capabilities into preparation, execution, status and recovery workflows.
 The server adds trusted policy context, admission, server authority, reservations and accounting.
 
@@ -46,7 +46,7 @@ pub fn execute(ctx: &AllowitContext) -> allowit::Result {
 }
 ```
 
-The host and Soroban contract use the same source. Owner-approved params supply the exact limits in base units.
+The host and the rail's policy contract use the same source. Owner-approved params supply the exact limits in base units.
 Request amounts, native identity, accounting and enrichment come from the executing host and rail.
 Policy source cannot provide its own trusted spending state.
 
@@ -58,12 +58,23 @@ See the [portable policy reference](docs/policy-reference.md) for source restric
 [`crates/allowit-sdk/`](crates/allowit-sdk/) contains shared workflows without terminal I/O:
 
 - `runtime::Runtime` composes native preparation, required durable retention, submission and recovery.
-- `vendors::stellar::runtime::owner_client` validates owner sign-in, binds its private session to the backend and Origin, and generates a portable draft with an explicit template or installation selection.
-- `vendors::stellar::runtime::client` implements the authenticated server protocol, exact-intent resumption and receipt validation. Callers pass their signer capability and a private core `Store`.
+- `plugins` holds the rail plugin registry. `plugins::for_network(network)` returns the registered `RailPlugin` (trait in `allowit_core::vendor::plugin`) for a CAIP-2 id or alias. Engine, CLI and app code reach vendor behavior only through it.
+- `generation`, `owner` and `execution` dispatch owner sign-in, policy generation, owner workflows, execution, status and recovery to the selected plugin. Callers pass their signer capability and a private core `Store`.
 - `typed_request` bounds document ingress and derives the versioned operation identity.
 - `wallet`, `routing` and `config` supply explicit caller bindings and registered network selection.
 
-The `vendors::stellar` paths reexport the Stellar wallet crate.
+## Rail plugins
+
+A vendor implements `allowit_core::vendor::plugin::RailPlugin` in its own repository. It integrates with one entry line per language and one dependency line per manifest:
+
+- Rust: `crates/allowit-sdk/src/plugins/registered.rs`, plus the dependency in `Cargo.toml` and `crates/allowit-sdk/Cargo.toml`.
+- JavaScript: `npm/src/registered.js`, plus the dependency in `npm/package.json`.
+
+These five files are the only SDK files that may name a vendor. No other code branches on a vendor. Dispatch is by the CAIP-2 network id that each plugin declares.
+
+The npm package `@allowit/sdk` ([`npm/`](npm/)) is the browser registry. It exposes `rails()`, `railFor(network)`, `networks()`, `validateAddress`, `explorerUrl`, `assets` and one generic element, `<allowit-rail kind network>`. A host sets `element.data` and listens for `allowit-signed`, `allowit-signed-in`, `allowit-verified`, `allowit-cancel` and `allowit-error`. The element renders the registered vendor element for that kind (`address`, `explorer-link`, `amount`, `wallet-sign-in`, `owner-sign`, `receipt` or `binding-review`). [`npm/src/registry.d.ts`](npm/src/registry.d.ts) defines the data and events.
+
+Shared tests run on every registered rail. `plugins::testkit::each(feature, f)` (feature `testkit`) runs `f` with each rail's fixtures and skips a rail that declares the feature unsupported. Vendor-specific tests live in the vendor repository.
 
 Authorization is retained before post-authorization RPC simulation. Signed proof is retained before transmission.
 A failed policy-wallet envelope does not prove that its reusable address authorization cannot execute in another envelope.
@@ -78,21 +89,21 @@ Provider delivery is separate from native chain settlement.
 | Path | Purpose |
 | --- | --- |
 | [`crates/allowit-sdk/`](crates/allowit-sdk/) | Shared execution library for CLI, server and SDK callers |
+| [`npm/`](npm/) | `@allowit/sdk`: the browser rail registry and the `<allowit-rail>` element |
 | [`docs/policy-reference.md`](docs/policy-reference.md) | Portable source and execution contract |
 
 The Cargo workspace has one package, `crates/allowit-sdk`, and one lockfile.
-Cross-repository dependencies identify immutable release tags or exact source commits. A commit pin does not identify a published release. Core and rail dependencies must resolve the same core release.
-Published tags are immutable.
-The `allowit-core` dependency alias selects Core's released host package `allowit-sdk` at `v0.3.2`.
-SDK exposes the crate as `allowit_sdk`. Core host imports use `allowit_core`.
+Cross-repository dependencies identify immutable release tags or exact source commits. A commit pin does not identify a published release. Core and rail dependencies must resolve the same core revision, so the plugin trait objects match.
+SDK exposes the crate as `allowit_sdk`. Core imports use `allowit_core`; `allowit_sdk::portable` reexports it.
 
 ## Develop
 
 ```sh
 cargo build --workspace --all-targets --locked
 cargo fmt --all --check
-cargo test --locked -p allowit-sdk@0.5.0
-cargo clippy --locked -p allowit-sdk@0.5.0 --all-targets -- -D warnings
+cargo test --locked -p allowit-sdk@0.5.0 --features testkit
+cargo clippy --locked -p allowit-sdk@0.5.0 --all-targets --features testkit -- -D warnings
+pnpm --dir npm install && pnpm --dir npm test
 ```
 
 The affected [workflows](.github/workflows/) define the required checks.

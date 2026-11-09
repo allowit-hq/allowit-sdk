@@ -2,14 +2,15 @@
 use crate::{
     error::Result,
     input::asset::{Amount, Token},
+    plugins::{self, execution_store, for_network},
     profiles::Profile,
-    vendors,
     wallet::LocalSigner,
 };
 pub use allowit_core::vendor::execution::{Binding, Capabilities, Outcome, Recovery, Request};
-use std::{path::Path, time::Duration};
+use std::{path::Path, sync::Arc, time::Duration};
 pub fn tokens(network: &str) -> Result<&'static [Token]> {
-    vendors::execution_tokens(network)
+    let network = crate::routing::normalize(network)?;
+    Ok(for_network(network)?.tokens(network))
 }
 pub fn check(
     network: &str,
@@ -18,7 +19,10 @@ pub fn check(
     minimum: Option<&Amount>,
     args: bool,
 ) -> Result<()> {
-    vendors::check_execution(network, op, to, minimum, args)
+    let network = crate::routing::normalize(network)?;
+    for_network(network)?
+        .execution()
+        .check(network, op, to, minimum, args)
 }
 pub fn build(
     profile: &Profile,
@@ -26,7 +30,9 @@ pub fn build(
     rpc: Option<&str>,
     r: &Request,
 ) -> Result<serde_json::Value> {
-    vendors::build_execution(profile, root, rpc, r)
+    let rail = for_network(&profile.description().network)?;
+    rail.execution()
+        .build(&profile.inner, &|| execution_store(root, rail), rpc, r)
 }
 pub fn execute(
     profile: Profile,
@@ -36,7 +42,14 @@ pub fn execute(
     r: &Request,
 ) -> Result<Outcome> {
     profile.require_authority()?;
-    vendors::execute(profile, signer, root, rpc, r)
+    let rail = for_network(&profile.description().network)?;
+    rail.execution().execute(
+        profile.inner,
+        Arc::new(signer),
+        &|| execution_store(root, rail),
+        rpc,
+        r,
+    )
 }
 pub fn status(
     profile: Profile,
@@ -46,14 +59,24 @@ pub fn status(
     id: &str,
     wait: Duration,
 ) -> Result<Outcome> {
-    vendors::execution_status(profile, signer, root, rpc, id, wait)
+    let rail = for_network(&profile.description().network)?;
+    rail.execution().status(
+        profile.inner,
+        Arc::new(signer),
+        &|| execution_store(root, rail),
+        rpc,
+        id,
+        wait,
+    )
 }
 
 pub fn capabilities(network: &str) -> Result<Capabilities> {
-    vendors::capabilities(network)
+    let network = crate::routing::normalize(network)?;
+    Ok(for_network(network)?.capabilities(network))
 }
 pub fn fund_key(network: &str, address: &str, endpoint: Option<&str>) -> Result<String> {
-    vendors::fund_key(network, address, endpoint)
+    let network = crate::routing::normalize(network)?;
+    for_network(network)?.fund_key(network, address, endpoint)
 }
 
 pub fn retained(
@@ -62,8 +85,12 @@ pub fn retained(
     wallet: Option<&str>,
     id: &str,
 ) -> Result<Option<Recovery>> {
-    vendors::retained(root, network, wallet, id)
+    let network = crate::routing::normalize(network)?;
+    let rail = for_network(network)?;
+    rail.execution()
+        .retained(&|| execution_store(root, rail), network, wallet, id)
 }
+/// Recover a retained operation on the rail of the signer's network.
 pub fn recover(
     original: Recovery,
     signer: LocalSigner,
@@ -73,5 +100,14 @@ pub fn recover(
     wait: Duration,
     request: Option<&Request>,
 ) -> Result<Outcome> {
-    vendors::recover(original, signer, backend, root, id, wait, request)
+    let rail = plugins::for_network(signer.network())?;
+    rail.execution().recover(
+        original,
+        Arc::new(signer),
+        backend,
+        &|| execution_store(root, rail),
+        id,
+        wait,
+        request,
+    )
 }

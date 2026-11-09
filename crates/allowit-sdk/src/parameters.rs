@@ -4,7 +4,7 @@ use chrono::{DateTime, NaiveDate, NaiveDateTime, SecondsFormat};
 use serde_json::{Value, json};
 use std::collections::BTreeMap;
 
-/// Shared display asset metadata, resolved by the selected vendor adapter.
+/// Display metadata of one asset, resolved by a vendor adapter.
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct Asset {
@@ -17,8 +17,29 @@ pub struct Asset {
 pub struct Parameters {
     pub params: serde_json::Map<String, Value>,
     pub kinds: BTreeMap<String, String>,
+    /// The installed asset. Amounts are in its units.
     pub asset: Asset,
+    /// The assets that the active vendor names by symbol, from [`known_assets`]. An assets list
+    /// shows any other asset as its address.
+    pub known: Vec<Asset>,
     pub unresolved: Vec<String>,
+}
+
+/// The assets that the vendor of `network` knows by code, each resolved to its address on that
+/// network. The vendor owns this list; the SDK names no asset.
+pub fn known_assets(network: &str) -> crate::error::Result<Vec<Asset>> {
+    crate::execution::tokens(network)?
+        .iter()
+        .map(|token| {
+            crate::input::asset::resolve(network, token.code, token.issuer, true).map(|asset| {
+                Asset {
+                    symbol: asset.symbol,
+                    address: asset.address,
+                    decimals: asset.decimals,
+                }
+            })
+        })
+        .collect()
 }
 
 /// Longest value that one edit may carry, in bytes.
@@ -48,21 +69,21 @@ const NOT_SET: &str = "Not set yet";
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct Field {
     pub key: String,
-    /// Plain label, such as "Per day".
+    /// Plain label, such as "Daily volume".
     pub label: String,
     /// Asset symbol of an amount.
     pub unit: Option<String>,
     /// The text that an edit field starts with, or `None` when the owner cannot edit the param
-    /// here, such as the token, which is always the installed asset.
+    /// here, such as the assets.
     pub input: Option<String>,
-    /// The value in human units, such as "5 USDC".
+    /// The value in human units. An amount shows the asset symbol after the number.
     pub shown: String,
 }
 /// One changed param.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Change {
     pub key: String,
-    /// The param in a sentence, such as "the daily limit".
+    /// The label in a sentence, such as "daily volume".
     pub noun: String,
     pub before: String,
     pub after: String,
@@ -97,33 +118,9 @@ fn humanize(key: &str) -> String {
     }
 }
 
-fn label(key: &str, value: &Value) -> String {
-    match key {
-        "payment_limit" => "Per payment".into(),
-        "daily_volume_limit" => "Per day".into(),
-        "daily_spending_limit" => "Fees per day".into(),
-        "lifetime_spending_limit" => "In total".into(),
-        "call_limit" => "Payments allowed".into(),
-        "destinations" if list(value).is_some_and(|l| l.len() > 1) => "Recipients".into(),
-        "destinations" => "Recipient".into(),
-        "tokens" => "Token".into(),
-        "expires_at" => "Expires".into(),
-        "operations" => "Operations".into(),
-        other => humanize(other),
-    }
-}
-
-fn noun(key: &str) -> String {
-    match key {
-        "payment_limit" => "the limit per payment".into(),
-        "daily_volume_limit" => "the daily limit".into(),
-        "daily_spending_limit" => "the daily fee limit".into(),
-        "lifetime_spending_limit" => "the total limit".into(),
-        "call_limit" => "the number of payments".into(),
-        "destinations" => "the recipients".into(),
-        "expires_at" => "the expiry".into(),
-        other => humanize(other).to_lowercase(),
-    }
+/// The Core registry label of a canonical key, such as "Daily volume", or a custom key in words.
+fn label(key: &str) -> String {
+    canonical(key).map_or_else(|| humanize(key), |function| function.label.clone())
 }
 
 fn list(value: &Value) -> Option<&Vec<Value>> {
@@ -138,6 +135,20 @@ fn addresses(value: &Value) -> Option<Vec<String>> {
     list(value)?
         .iter()
         .map(|item| item.get("Addr").and_then(Value::as_str).map(str::to_owned))
+        .collect()
+}
+
+/// The names of an assets list: the installed asset or a known asset as its symbol, any other
+/// asset as its address.
+fn asset_names<'a>(items: &'a [String], draft: &'a Parameters) -> Vec<&'a str> {
+    items
+        .iter()
+        .map(|item| {
+            std::iter::once(&draft.asset)
+                .chain(&draft.known)
+                .find(|asset| asset.address == *item)
+                .map_or(item.as_str(), |asset| asset.symbol.as_str())
+        })
         .collect()
 }
 
@@ -204,7 +215,8 @@ fn parse_time(text: &str) -> Option<i64> {
 
 /// The edit text and the display text of one stored value. The edit text is `None` when the
 /// owner cannot edit the value here.
-fn render(kind: &str, value: &Value, asset: &Asset) -> (Option<String>, String) {
+fn render(kind: &str, value: &Value, draft: &Parameters) -> (Option<String>, String) {
+    let asset = &draft.asset;
     let rendered = match kind {
         "amount" => int(value).map(|n| {
             let amount = decimal(n, asset.decimals);
@@ -220,19 +232,7 @@ fn render(kind: &str, value: &Value, asset: &Asset) -> (Option<String>, String) 
             };
             (Some(text), shown)
         }),
-        "assets" => addresses(value).map(|items| {
-            let names: Vec<&str> = items
-                .iter()
-                .map(|a| {
-                    if *a == asset.address {
-                        asset.symbol.as_str()
-                    } else {
-                        a.as_str()
-                    }
-                })
-                .collect();
-            (None, names.join(", "))
-        }),
+        "assets" => addresses(value).map(|items| (None, asset_names(&items, draft).join(", "))),
         "time" | "duration" => int(value)
             .and_then(|at| i64::try_from(at).ok())
             .and_then(|at| Some((time_input(at), time_text(at)?))),
@@ -315,21 +315,32 @@ fn integer(kind: &str) -> bool {
 }
 
 /// The params of a portable draft in the order in which its source `code` reads them. An
-/// integer param whose reads the source analysis cannot bound is shown but not editable here.
+/// integer param is shown but not editable here when the source analysis fails or cannot bound
+/// its reads.
 pub fn fields(draft: &Parameters, code: &str) -> Vec<Field> {
-    let reads = param_reads(code).unwrap_or_default();
+    fields_with(draft, code, param_reads(code).ok().as_ref())
+}
+
+/// [`fields`] with the source's param reads, or `None` when the source analysis fails.
+fn fields_with(
+    draft: &Parameters,
+    code: &str,
+    reads: Option<&BTreeMap<String, Vec<ParamRead>>>,
+) -> Vec<Field> {
     let mut keys: Vec<&String> = draft.params.keys().collect();
     keys.sort_by_key(|key| (position(code, key), key.as_str()));
     keys.into_iter()
         .map(|key| {
             let value = &draft.params[key];
             let kind = kind(draft, key);
-            let (input, shown) = render(&kind, value, &draft.asset);
-            let input =
-                input.filter(|_| !integer(&kind) || bounded_range(key, reads.get(key)).is_some());
+            let (input, shown) = render(&kind, value, draft);
+            let input = input.filter(|_| {
+                !integer(&kind)
+                    || reads.is_some_and(|reads| bounded_range(key, reads.get(key)).is_some())
+            });
             Field {
                 key: key.clone(),
-                label: label(key, value),
+                label: label(key),
                 unit: (kind == "amount").then(|| draft.asset.symbol.clone()),
                 input,
                 shown,
@@ -338,7 +349,7 @@ pub fn fields(draft: &Parameters, code: &str) -> Vec<Field> {
         .collect()
 }
 
-/// One line per param, such as "Per day: 5 USDC".
+/// One line per param, such as "Operation count: 3".
 pub fn lines(draft: &Parameters, code: &str) -> String {
     fields(draft, code)
         .iter()
@@ -356,9 +367,9 @@ fn clip(text: &str) -> String {
     out
 }
 
-/// The number of an amount, with an optional asset symbol after it: "3", "3 USDC" or "3usdc".
-/// An asset symbol can start with a digit; then a space must separate the
-/// number from the symbol, because "32XLM" could also mean 32 of another asset.
+/// The number of an amount, with an optional asset symbol after it: "3", "3 ABC" or "3abc".
+/// An asset symbol can start with a digit; then a space must separate the number from the
+/// symbol, because with the symbol "2ABC", "32ABC" could also mean 32 of the asset "ABC".
 pub fn amount_number<'a>(text: &'a str, symbol: &str) -> Option<&'a str> {
     let split = text.len().checked_sub(symbol.len()).filter(|&at| {
         !symbol.is_empty() && text.is_char_boundary(at) && text[at..].eq_ignore_ascii_case(symbol)
@@ -487,11 +498,11 @@ pub fn set_all(
     edits: &BTreeMap<String, String>,
     now: i64,
 ) -> Result<(Parameters, Vec<Change>), String> {
-    let fields = fields(draft, code);
+    let reads = param_reads(code).ok();
+    let fields = fields_with(draft, code, reads.as_ref());
     if let Some(key) = edits.keys().find(|k| !fields.iter().any(|f| &f.key == *k)) {
         return Err(format!("\"{}\" is not a value of this policy.", clip(key)));
     }
-    let reads = param_reads(code).unwrap_or_default();
     let mut params = draft.params.clone();
     let mut changed = Vec::new();
     for field in &fields {
@@ -503,7 +514,8 @@ pub fn set_all(
             continue;
         }
         let kind = kind(draft, &field.key);
-        if let Some(value) = edited(draft, field, &kind, input, reads.get(&field.key), now)? {
+        let field_reads = reads.as_ref().and_then(|reads| reads.get(&field.key));
+        if let Some(value) = edited(draft, field, &kind, input, field_reads, now)? {
             params.insert(field.key.clone(), value);
             changed.push((field, kind));
         }
@@ -526,15 +538,14 @@ pub fn set_all(
             .iter()
             .any(|(f, _)| f.key == "payment_limit" || f.key == "daily_volume_limit")
     {
-        let name = |key: &str| label(key, &params[key]);
         return Err(format!(
             "{} ({} {symbol}) is more than {} ({} {symbol}). Lower {} or raise {}.",
-            name("payment_limit"),
+            label("payment_limit"),
             decimal(per_payment, draft.asset.decimals),
-            name("daily_volume_limit"),
+            label("daily_volume_limit"),
             decimal(per_day, draft.asset.decimals),
-            name("payment_limit"),
-            name("daily_volume_limit"),
+            label("payment_limit"),
+            label("daily_volume_limit"),
             symbol = draft.asset.symbol,
         ));
     }
@@ -627,13 +638,13 @@ fn edited(
 /// The change of `field` to the stored `value`, as a revision request names it.
 fn change(draft: &Parameters, field: &Field, kind: &str, value: &Value) -> Change {
     // A revision replays the request, so a time keeps its seconds there.
-    let after = match render(kind, value, &draft.asset) {
+    let after = match render(kind, value, draft) {
         (Some(input), _) if matches!(kind, "time" | "duration") => input,
         (_, shown) => shown,
     };
     Change {
         key: field.key.clone(),
-        noun: noun(&field.key),
+        noun: field.label.to_lowercase(),
         before: field.shown.clone(),
         after,
     }
@@ -651,10 +662,13 @@ pub fn entries(draft: &Parameters) -> Vec<Value> {
                 "amount" => int(value).map(|n| {
                     json!({"key":key,"kind":"amount","amount":decimal(n, asset.decimals),"asset":asset.symbol})
                 }),
-                "count" => int(value).map(|n| json!({"key":key,"kind":"count","count":n.to_string().parse::<u64>().unwrap_or_default()})),
+                "count" => int(value).map(|n| {
+                    let count = u64::try_from(n).map_or_else(|_| json!(n.to_string()), |count| json!(count));
+                    json!({"key":key,"kind":"count","count":count})
+                }),
                 "int" => int(value).map(|n| json!({"key":key,"kind":"int","int":n.to_string()})),
                 "addresses" => addresses(value).map(|a| json!({"key":key,"kind":"addresses","addresses":a})),
-                "assets" => Some(json!({"key":key,"kind":"assets","assets":[asset.symbol]})),
+                "assets" => addresses(value).map(|items| json!({"key":key,"kind":"assets","assets":asset_names(&items, draft)})),
                 "time" | "duration" => int(value)
                     .and_then(|at| i64::try_from(at).ok())
                     .and_then(|at| DateTime::from_timestamp(at, 0))
@@ -731,6 +745,7 @@ mod tests {
                 address: "opaque".into(),
                 decimals: 3,
             },
+            known: vec![],
             unresolved: vec![],
         };
         for f in allowit_core::policy::canonical_function_registry()
@@ -758,7 +773,83 @@ mod tests {
             bounded_range("custom_minimum", Some(&reads)),
             Some((0, u32::MAX.into()))
         );
-        assert!(blocks_all_at_zero(allowit::CALL_LIMIT));
-        assert!(!blocks_all_at_zero(allowit::EXPIRES_AT));
+        assert!(blocks_all_at_zero(allowit_core::CALL_LIMIT));
+        assert!(!blocks_all_at_zero(allowit_core::EXPIRES_AT));
+    }
+
+    /// A vendor-neutral fixture vendor: the asset table that a vendor adapter resolves.
+    fn fixture_asset(symbol: &str, decimals: u32) -> Asset {
+        Asset {
+            symbol: symbol.into(),
+            address: format!("fixture-asset-{}", symbol.to_lowercase()),
+            decimals,
+        }
+    }
+
+    fn draft(params: Value) -> Parameters {
+        Parameters {
+            params: params.as_object().unwrap().clone(),
+            kinds: BTreeMap::new(),
+            asset: fixture_asset("ASTA", 7),
+            known: vec![fixture_asset("ASTA", 7), fixture_asset("ASTB", 6)],
+            unresolved: vec![],
+        }
+    }
+
+    #[test]
+    fn owner_views_show_core_labels_and_every_known_asset() {
+        let draft = draft(json!({
+            "call_limit": {"Int": "3"},
+            "daily_spending_limit": {"Int": "50000000"},
+            "tokens": {"List": [
+                {"Addr": "fixture-asset-asta"},
+                {"Addr": "fixture-asset-astb"},
+                {"Addr": "fixture-asset-other"},
+            ]},
+        }));
+        let code = "pub fn execute(ctx: &AllowitContext) -> allowit::Result {\n    allowit::daily_spending_limit(ctx, &ctx.params[allowit::DAILY_SPENDING_LIMIT])?;\n    allowit::call_limit(ctx, &ctx.params[allowit::CALL_LIMIT])?;\n    allowit::tokens(ctx, &ctx.params[allowit::TOKENS])?;\n    Ok(())\n}\n";
+        assert_eq!(
+            lines(&draft, code),
+            "Daily spending: 5 ASTA\nOperation count: 3\nAssets: ASTA, ASTB, fixture-asset-other"
+        );
+        assert!(entries(&draft).contains(&json!({
+            "key": "tokens",
+            "kind": "assets",
+            "assets": ["ASTA", "ASTB", "fixture-asset-other"],
+        })));
+    }
+
+    /// Every compiled vendor supplies its own asset table, and the owner views name each asset.
+    #[test]
+    fn every_vendor_names_its_known_assets() {
+        for rail in crate::routing::all() {
+            let known = known_assets(rail.id).unwrap();
+            assert!(!known.is_empty(), "{}", rail.id);
+            let mut draft = draft(json!({"tokens": {"List": known
+                .iter()
+                .map(|asset| json!({"Addr": asset.address}))
+                .collect::<Vec<_>>()}}));
+            let symbols: Vec<&str> = known.iter().map(|asset| asset.symbol.as_str()).collect();
+            draft.asset = known[0].clone();
+            draft.known = known.clone();
+            assert!(
+                entries(&draft).contains(&json!({"key":"tokens","kind":"assets","assets":symbols})),
+                "{}",
+                rail.id
+            );
+        }
+    }
+
+    #[test]
+    fn integer_params_are_not_editable_when_the_source_analysis_fails() {
+        let draft = draft(json!({"max_count": {"Int": "5"}}));
+        let code = format!(
+            "pub fn execute(ctx: &AllowitContext) -> allowit::Result {{\n    let max: u32 = allowit::param(ctx, \"max_count\");\n    let deep = {}0{};\n    Ok(())\n}}\n",
+            "(".repeat(33),
+            ")".repeat(33)
+        );
+        assert!(param_reads(&code).is_err());
+        assert_eq!(fields(&draft, &code)[0].input, None);
+        assert!(set(&draft, &code, "max_count", "5000000000", 0).is_err());
     }
 }

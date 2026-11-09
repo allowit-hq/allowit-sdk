@@ -43,30 +43,3 @@ fn public_generation_validation_preserves_network_error_order() {
     request.prompt.clear();
     assert!(request.validate().unwrap_err().message.contains("5–3000"));
 }
-
-#[cfg(feature = "stellar")]
-#[test]
-fn reexported_native_client_accepts_the_public_sdk_request() {
-    use allowit_sdk::{
-        error::Result,
-        generation::GenerateRequest,
-        vendors::stellar::runtime::owner_client::{GeneratedPolicy, OwnerClient},
-    };
-    fn generate(client: &OwnerClient, request: &GenerateRequest) -> Result<GeneratedPolicy> {
-        client.generate(request, 0)
-    }
-    let _: fn(&OwnerClient, &GenerateRequest) -> Result<GeneratedPolicy> = generate;
-}
-
-#[cfg(feature = "stellar")]
-#[test]
-fn native_request_alias_keeps_the_sdk_type_identity() {
-    use allowit_sdk::{
-        generation::GenerateRequest,
-        vendors::stellar::runtime::owner_client::GenerateRequest as NativeRequest,
-    };
-    fn sdk_request(request: NativeRequest) -> GenerateRequest {
-        request
-    }
-    let _: fn(NativeRequest) -> GenerateRequest = sdk_request;
-}

@@ -110,7 +110,7 @@ fn on_parse_stack<T: Send>(work: impl FnOnce() -> Result<T> + Send) -> Result<T>
 /// Whether `name` is the key constant of a canonical rule, such as `PAYMENT_LIMIT`.
 fn canonical_constant(name: &str) -> bool {
     name == name.to_uppercase()
-        && allowit::RULES
+        && allowit_core::RULES
             .iter()
             .any(|r| r.key() == name.to_lowercase())
 }

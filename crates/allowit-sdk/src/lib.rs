@@ -3,7 +3,7 @@
 #[cfg(test)]
 extern crate self as allowit_sdk;
 /// Core-owned portable policy values, rules and evaluator used by SDK callers.
-pub use allowit as portable;
+pub use allowit_core as portable;
 pub use allowit_core::client::error;
 /// Core-backed private proof storage accepted by SDK owner workflows.
 pub use allowit_core::client::store::Store;
@@ -30,18 +30,13 @@ pub mod owner;
 pub mod owner_session;
 pub mod parameter_reads;
 pub mod parameters;
+pub mod plugins;
 pub mod profiles;
 pub mod request;
 mod request_proof;
 pub mod routing;
 pub mod runtime;
+pub mod transport_failure;
 pub mod typed_request;
-pub mod vendors;
 pub mod wallet;
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
-
-#[cfg(all(test, feature = "stellar"))]
-mod stellar_runtime_tests;
-
-#[cfg(all(test, feature = "stellar"))]
-mod stellar_request_tests;

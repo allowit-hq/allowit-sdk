@@ -2,7 +2,7 @@
 use crate::{
     config::parse_origin,
     error::{Error, Result},
-    routing, vendors,
+    plugins, routing,
 };
 use allowit_core::client::store::Store;
 use serde::{Deserialize, Serialize};
@@ -72,8 +72,8 @@ impl Profile {
             return Err(Error::config("Invalid public profile envelope"));
         }
         // Decode the strict native DTO before canonicalization can collapse duplicate fields.
-        let (description, binding) =
-            vendors::decode_profile(&envelope.network, envelope.descriptor.get().as_bytes())?;
+        let (description, binding) = plugins::for_network(&envelope.network)?
+            .decode_profile(&envelope.network, envelope.descriptor.get().as_bytes())?;
         let version = allowit_core::digest(&canonical(&envelope)?);
         Ok(Self {
             version,
@@ -101,7 +101,6 @@ impl Profile {
         value["version"] = self.version.clone().into();
         Ok(value)
     }
-    #[cfg_attr(not(feature = "stellar"), allow(dead_code))]
     fn envelope(&self) -> Result<Envelope> {
         Ok(Envelope {
             schema: 1,
@@ -120,7 +119,6 @@ impl Cache {
         })
     }
     /// Install only a descriptor returned by the checked owner export capability.
-    #[cfg_attr(not(feature = "stellar"), allow(dead_code))]
     pub(crate) fn install(
         &self,
         network: &str,
@@ -153,9 +151,9 @@ impl Cache {
         bytes: &[u8],
     ) -> Result<Profile> {
         let network = authority.network();
-        let (_, binding) = vendors::decode_profile(network, bytes)?;
-        vendors::verify_server_role(&binding, authority.public_key())?;
-        vendors::verify_profile_import(&binding, endpoint)?;
+        let (_, binding) = plugins::for_network(network)?.decode_profile(network, bytes)?;
+        binding.verify_server_role(authority.public_key())?;
+        binding.verify_import(endpoint)?;
         let raw = RawValue::from_string(
             std::str::from_utf8(bytes)
                 .map_err(|_| Error::usage("Public profile must use UTF-8"))?
