@@ -12,7 +12,6 @@
       "import": "./src/registry.js"
     },
     "./registered": {
-      "types": "./src/registered.d.ts",
       "import": "./src/registered.js"
     }
   },
