@@ -11,22 +11,7 @@ feature-gated host primitives. Rail cores provide native protocol and settlement
 
 SDK engine composes shared logic from core primitives and vendor capabilities.
 CLI and server callers use the same library and retain their own keys and authority.
-
-```mermaid
-flowchart TB
-    CLI["[allowit-cli]<br/>crate @allowit/cli<br/>DX: policy and agent keypair generation<br/>Policy validation · x402 marketplace"]
-    Server["[allowit-engine]<br/>crate @allowit/server<br/>Shared REST API · server enforcement"]
-    Engine["[allowit-sdk]<br/>crate @allowit/sdk/engine<br/>All other shared logic"]
-    Vendor["crate + npm @allowit/vendor/*<br/>Native contracts · signing · chain semantics<br/>SVG graphics · web components"]
-    Core["[allowit-core]<br/>crate + npm @allowit/sdk/core<br/>Common types · policy rules · primitives<br/>TypeScript interfaces"]
-
-    CLI -->|crate| Engine
-    Server -->|crate| Engine
-    Engine -->|crate| Vendor
-    Engine -->|crate| Core
-```
-
-[Architecture](../README.md#architecture).
+The [repository README](../../README.md#architecture) holds the architecture diagram.
 
 ## Responsibilities
 
@@ -96,15 +81,6 @@ SDK engine shares workflow logic between those callers without transferring thei
 Vendor adapters translate provider protocols. Generic transport, retry budgets and journal mechanics belong in common code.
 An adapter exposes an explicit provider recovery contract instead of duplicating the provider's delivery workflow.
 
-## Develop
-
-Run these commands from the repository root:
-
-```sh
-cargo test --locked -p allowit-sdk@0.5.0
-cargo clippy --locked -p allowit-sdk@0.5.0 --all-targets -- -D warnings
-```
-
 ## Compiled capabilities and public profiles
 
 The vendor library defines network identities, protocol and presentation aliases, display labels, asset defaults and explorer links. The SDK registers those values for common routing and presentation.
@@ -136,19 +112,10 @@ The receipt-only recovery capability instead reads the original private record, 
 It accepts no fresh preparation or operation-signing path. Recovery queries the configured settlement service for the original packet.
 A final success requires a verified receipt.
 
-## Coordinated producer releases
+## Provider boundary
 
 The host crate in Core exposes provider contracts behind its optional `vendor` feature.
 The SDK retains generic orchestration, storage, routing and consumer integration tests.
 It opens private journal namespaces declared by each provider. A caller-owned store opener preserves
 native validation before filesystem changes.
-Its existing Stellar client paths reexport the implementation from the Stellar crate.
-SDK packet deserialization delegates to that crate before exposing retained state.
-
-Release the reviewed Core API first, then the Stellar crate on that same Core release, then the SDK.
-The SDK dependency graph must use one Core release tag. Update downstream release tags and the lockfile
-after those approved producer releases. Keep local validation overrides outside committed manifests.
-
-Stellar protocol fixtures and codec construction belong to the Stellar crate. Its optional
-`test-support` feature supplies semantic fixtures for SDK consumer tests. The SDK keeps command,
-HTTP, storage and orchestration assertions without depending directly on native codecs or signature libraries.
+SDK packet deserialization delegates to the Stellar crate before exposing retained state.

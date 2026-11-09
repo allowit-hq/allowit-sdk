@@ -23,15 +23,13 @@ flowchart TB
     Server["[allowit-engine]<br/>crate @allowit/server<br/>Shared REST API · server enforcement"]
     Engine["[allowit-sdk]<br/>crate allowit-sdk<br/>All other shared logic"]
     Vendor["crate + npm @allowit/vendor/*<br/>Native contracts · signing · chain semantics<br/>SVG graphics · web components"]
-    Core["[allowit-core]<br/>crate + npm @allowit/sdk/core<br/>Common types · policy rules · primitives<br/>TypeScript interfaces"]
+    Core["[allowit-core]<br/>crate + npm @allowit/core<br/>Common types · policy rules · primitives<br/>TypeScript interfaces"]
 
     CLI -->|crate| Engine
     Server -->|crate| Engine
     Engine -->|crate| Vendor
     Engine -->|crate| Core
 ```
-
-[Full architecture][responsibility-model].
 
 ## Write a portable policy
 
@@ -58,13 +56,14 @@ See the [portable policy reference](docs/policy-reference.md) for source restric
 ## Embed SDK engine
 
 [`crates/allowit-sdk/`](crates/allowit-sdk/) contains shared workflows without terminal I/O:
-Stellar implementations live in the Stellar wallet crate. The SDK preserves its existing client paths through reexports.
 
 - `runtime::Runtime` composes native preparation, required durable retention, submission and recovery.
 - `vendors::stellar::runtime::owner_client` validates owner sign-in, binds its private session to the backend and Origin, and generates a portable draft with an explicit template or installation selection.
 - `vendors::stellar::runtime::client` implements the authenticated server protocol, exact-intent resumption and receipt validation. Callers pass their signer capability and a private core `Store`.
 - `typed_request` bounds document ingress and derives the versioned operation identity.
 - `wallet`, `routing` and `config` supply explicit caller bindings and registered network selection.
+
+The `vendors::stellar` paths reexport the Stellar wallet crate.
 
 Authorization is retained before post-authorization RPC simulation. Signed proof is retained before transmission.
 A failed policy-wallet envelope does not prove that its reusable address authorization cannot execute in another envelope.
@@ -81,7 +80,7 @@ Provider delivery is separate from native chain settlement.
 | [`crates/allowit-sdk/`](crates/allowit-sdk/) | Shared execution library for CLI, server and SDK callers |
 | [`docs/policy-reference.md`](docs/policy-reference.md) | Portable source and execution contract |
 
-All packages share one Cargo workspace, lockfile and version. Packages in this repository depend on each other by path.
+The Cargo workspace has one package, `crates/allowit-sdk`, and one lockfile.
 Cross-repository dependencies identify immutable release tags or exact source commits. A commit pin does not identify a published release. Core and rail dependencies must resolve the same core release.
 Published tags are immutable.
 The `allowit-core` dependency alias selects Core's released host package `allowit-sdk` at `v0.3.2`.
@@ -101,5 +100,3 @@ The affected [workflows](.github/workflows/) define the required checks.
 ## License
 
 SDK-authored code is under the [MIT License](LICENSE). Dependencies keep their own terms, including the portable `allowit` package.
-
-[responsibility-model]: https://github.com/allowit-hq/allowit-project/blob/main/wiki/allowit/architecture.md#dependency-direction
