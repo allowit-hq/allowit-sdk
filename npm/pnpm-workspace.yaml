@@ -1,0 +1,5 @@
+packages:
+  - .
+
+# Rail plugins and Core are pinned by exact git commit, including transitively.
+blockExoticSubdeps: false

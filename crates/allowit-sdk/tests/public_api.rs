@@ -43,4 +43,3 @@ fn public_generation_validation_preserves_network_error_order() {
     request.prompt.clear();
     assert!(request.validate().unwrap_err().message.contains("5–3000"));
 }
-

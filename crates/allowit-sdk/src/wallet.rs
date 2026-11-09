@@ -213,11 +213,9 @@ impl PublicWallet {
         if routing::normalize(&self.network)? != self.network {
             return Err(Error::usage("Registration requires a canonical network"));
         }
-        plugins::for_network(&self.network)?.keys().validate_identity(
-            &self.address,
-            &self.public_key,
-            &self.key_type,
-        )?;
+        plugins::for_network(&self.network)?
+            .keys()
+            .validate_identity(&self.address, &self.public_key, &self.key_type)?;
         Ok(())
     }
 }

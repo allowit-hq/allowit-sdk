@@ -39,4 +39,3 @@ pub mod runtime;
 pub mod typed_request;
 pub mod wallet;
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
-

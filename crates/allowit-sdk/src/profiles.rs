@@ -72,9 +72,8 @@ impl Profile {
             return Err(Error::config("Invalid public profile envelope"));
         }
         // Decode the strict native DTO before canonicalization can collapse duplicate fields.
-        let (description, binding) =
-            plugins::for_network(&envelope.network)?
-                .decode_profile(&envelope.network, envelope.descriptor.get().as_bytes())?;
+        let (description, binding) = plugins::for_network(&envelope.network)?
+            .decode_profile(&envelope.network, envelope.descriptor.get().as_bytes())?;
         let version = allowit_core::digest(&canonical(&envelope)?);
         Ok(Self {
             version,

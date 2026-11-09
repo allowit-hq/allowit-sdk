@@ -45,17 +45,23 @@ pub fn compile(source: &str, tools: &HostTools) -> Result<()> {
     let stage = tempfile::tempdir().map_err(io_error)?;
     let root = stage.path();
     std::fs::create_dir_all(root.join("scripts")).map_err(io_error)?;
-    std::fs::create_dir_all(root.join("crates/allowit/src")).map_err(io_error)?;
+    std::fs::create_dir_all(root.join("crates/allowit-core/src/portable")).map_err(io_error)?;
     std::fs::create_dir(root.join("tmp")).map_err(io_error)?;
     for (path, bytes) in [
         ("scripts/policy_source.py", policy_source::PYTHON_HELPER),
         ("scripts/LICENSE", policy_source::PYTHON_HELPER_TERMS),
-        ("crates/allowit/src/lib.rs", policy_source::PORTABLE_LIB_RS),
         (
-            "crates/allowit/src/core.rs",
+            "crates/allowit-core/src/portable/lib.rs",
+            policy_source::PORTABLE_LIB_RS,
+        ),
+        (
+            "crates/allowit-core/src/portable/core.rs",
             policy_source::PORTABLE_CORE_RS,
         ),
-        ("crates/allowit/LICENSE", policy_source::PORTABLE_TERMS),
+        (
+            "crates/allowit-core/src/portable/LICENSE",
+            policy_source::PORTABLE_TERMS,
+        ),
         ("policy.rs", source),
     ] {
         std::fs::write(root.join(path), bytes.as_bytes()).map_err(io_error)?;

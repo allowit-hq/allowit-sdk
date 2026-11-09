@@ -125,7 +125,11 @@ mod tests {
         let mut ids = std::collections::BTreeSet::new();
         let mut networks = std::collections::BTreeSet::new();
         for rail in rails() {
-            assert!(identifier(rail.id()) && rail.id() != "allowit", "{}", rail.id());
+            assert!(
+                identifier(rail.id()) && rail.id() != "allowit",
+                "{}",
+                rail.id()
+            );
             assert!(ids.insert(rail.id()), "duplicate rail {}", rail.id());
             let mut names = std::collections::BTreeSet::new();
             for (name, _) in rail.policy_functions() {
@@ -141,9 +145,14 @@ mod tests {
         }
         assert!(policy_function("allowit", "price").is_none());
         assert_eq!(
-            invoke_policy_function("unknown", "f", &serde_json::Value::Null, &serde_json::Value::Null)
-                .unwrap_err()
-                .code,
+            invoke_policy_function(
+                "unknown",
+                "f",
+                &serde_json::Value::Null,
+                &serde_json::Value::Null
+            )
+            .unwrap_err()
+            .code,
             2
         );
     }

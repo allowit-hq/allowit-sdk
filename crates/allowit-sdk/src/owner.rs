@@ -53,7 +53,9 @@ pub use allowit_core::vendor::owner::{Activate, Deploy, Setup};
 pub fn deploy(cx: &Context<'_>, request: Deploy<'_>) -> Result<serde_json::Value> {
     cx.check()?;
     let store = || owner_store(cx.root, cx.network);
-    for_network(cx.network)?.owner().deploy(&cx.provider_context(&store), request)
+    for_network(cx.network)?
+        .owner()
+        .deploy(&cx.provider_context(&store), request)
 }
 pub fn fund(
     cx: &Context<'_>,
@@ -75,7 +77,9 @@ pub fn fund(
 pub fn activate(cx: &Context<'_>, request: Activate<'_>) -> Result<serde_json::Value> {
     cx.check()?;
     let store = || owner_store(cx.root, cx.network);
-    for_network(cx.network)?.owner().activate(&cx.provider_context(&store), request)
+    for_network(cx.network)?
+        .owner()
+        .activate(&cx.provider_context(&store), request)
 }
 pub fn export(
     cx: &Context<'_>,
@@ -96,7 +100,9 @@ pub fn export(
 pub fn setup(cx: &Context<'_>, request: Setup<'_>) -> Result<serde_json::Value> {
     cx.check()?;
     let store = || owner_store(cx.root, cx.network);
-    for_network(cx.network)?.owner().setup(&cx.provider_context(&store), request)
+    for_network(cx.network)?
+        .owner()
+        .setup(&cx.provider_context(&store), request)
 }
 pub fn status(root: &Path, network: &str, rpc_url: &str, id: &str) -> Result<serde_json::Value> {
     let store = owner_store(root, network)?;

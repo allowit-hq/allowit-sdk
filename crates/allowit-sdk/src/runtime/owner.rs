@@ -173,7 +173,8 @@ pub fn source_consent<P: serde::Serialize>(
 /// The rail-neutral step that the owner signs for a prepared owner packet.
 pub fn step(packet: &crate::runtime::OwnerPacket) -> Result<OwnerStep> {
     let network = packet.network();
-    crate::plugins::for_network(network)?
-        .owner_runtime()
-        .step(network, &allowit_core::vendor::runtime::OwnerPacket(packet.0.clone()))
+    crate::plugins::for_network(network)?.owner_runtime().step(
+        network,
+        &allowit_core::vendor::runtime::OwnerPacket(packet.0.clone()),
+    )
 }

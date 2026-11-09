@@ -1,6 +1,7 @@
-//! The only Rust file that names vendors: one entry per registered rail plugin.
+//! The only Rust file that names vendors: one entry line per registered rail plugin.
 use allowit_core::vendor::plugin::RailPlugin;
 
+#[rustfmt::skip]
 pub(super) static RAILS: &[&dyn RailPlugin] = &[
-    &allowit_stellar_wallet::PLUGIN,
+    &allowit_stellar::PLUGIN,
 ];

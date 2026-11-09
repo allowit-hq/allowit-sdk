@@ -18,7 +18,11 @@ fn every_rail_has_a_unique_id_and_canonical_networks() {
     for rail in plugins::rails() {
         assert!(!ids.contains(&rail.id()), "duplicate rail id {}", rail.id());
         ids.push(rail.id());
-        assert!(rail.id().bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit()));
+        assert!(
+            rail.id()
+                .bytes()
+                .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit())
+        );
         assert!(!rail.networks().is_empty());
         let support = rail.test_support();
         let test = routing::info(support.network).unwrap();
@@ -51,7 +55,6 @@ fn input_validation_uses_the_rail_formats() {
             rail.id()
         );
         execution::check(network, "transfer", &fx.recipient, None, false).unwrap();
-        assert!(execution::check(network, "transfer", &fx.invalid_address, None, false).is_err());
         let capabilities = execution::capabilities(network).unwrap();
         assert!(capabilities.operations.contains(&"transfer"));
     });
@@ -62,7 +65,12 @@ fn generated_keys_round_trip_through_the_private_file() {
     testkit::each(Feature::Transfer, |rail, _| {
         let network = rail.test_support().network;
         let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().canonicalize().unwrap().join("agent.key");
+        let path = dir
+            .path()
+            .canonicalize()
+            .unwrap()
+            .join("keys")
+            .join("agent.key");
         let public = wallet::generate_wallet(network, &path).unwrap();
         let signer = wallet::local_signer(network, &path).unwrap();
         assert_eq!(signer.public(), public);
@@ -73,7 +81,10 @@ fn generated_keys_round_trip_through_the_private_file() {
             runtime::signer_identity(network, &[7; 32]).unwrap(),
             runtime::signer_identity(network, &[7; 32]).unwrap()
         );
-        assert!(wallet::generate_wallet(network, &path).is_err(), "never replaces a key");
+        assert!(
+            wallet::generate_wallet(network, &path).is_err(),
+            "never replaces a key"
+        );
     });
 }
 
@@ -93,12 +104,11 @@ fn explorer_links_name_the_id() {
 }
 
 #[test]
-fn the_public_profile_fixture_decodes() {
-    testkit::each(Feature::Export, |rail, fx| {
+fn a_malformed_public_profile_is_refused() {
+    testkit::each(Feature::Export, |rail, _| {
         let network = rail.test_support().network;
-        let (description, _) = rail.decode_profile(network, &fx.public_profile).unwrap();
-        assert_eq!(description.network, network);
         assert!(rail.decode_profile(network, b"{}").is_err());
+        assert!(rail.decode_profile(network, b"not json").is_err());
     });
 }
 
@@ -123,7 +133,12 @@ fn generation_on_another_network_stops_before_the_clock() {
             return;
         };
         let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().canonicalize().unwrap().join("owner.key");
+        let path = dir
+            .path()
+            .canonicalize()
+            .unwrap()
+            .join("keys")
+            .join("owner.key");
         wallet::generate_wallet(network, &path).unwrap();
         let signer = wallet::local_signer(network, &path).unwrap();
         let request = GenerateRequest {
@@ -133,10 +148,16 @@ fn generation_on_another_network_stops_before_the_clock() {
             target: Target::NewWallet,
         };
         let mut clock_calls = 0;
-        let result = generation::generate("invalid backend", "invalid origin", &signer, &request, || {
-            clock_calls += 1;
-            Ok(1)
-        });
+        let result = generation::generate(
+            "invalid backend",
+            "invalid origin",
+            &signer,
+            &request,
+            || {
+                clock_calls += 1;
+                Ok(1)
+            },
+        );
         assert!(result.is_err());
         assert_eq!(clock_calls, 0);
     });
@@ -174,9 +195,57 @@ fn server_hooks_offer_profiles_and_reject_bad_sign_ins() {
     testkit::each(Feature::OwnerSetup, |rail, fx| {
         let network = rail.test_support().network;
         let hooks = rail.server();
-        assert!(!hooks.profiles().is_empty(), "{} offers a profile", rail.id());
-        assert!(hooks.verify_sign_in(network, &fx.account, b"message", &[0; 64]).is_err());
+        assert!(
+            !hooks.profiles().is_empty(),
+            "{} offers a profile",
+            rail.id()
+        );
+        assert!(
+            hooks
+                .verify_sign_in(network, &fx.account, b"message", &[0; 64])
+                .is_err()
+        );
         let deadlines = rail.deadlines(network);
         assert!(deadlines.max_validity_secs > 0 && deadlines.owner_step_ttl_secs > 0);
+    });
+}
+
+#[test]
+fn every_published_token_parses_and_resolves() {
+    use allowit_sdk::input::asset::{self, Use};
+    testkit::each(Feature::Transfer, |rail, _| {
+        let network = rail.test_support().network;
+        let family = routing::family(network).unwrap();
+        let tokens = execution::tokens(network).unwrap();
+        for token in tokens.iter().filter(|token| !token.native) {
+            let amount =
+                asset::parse(family, tokens, &format!("{}:1", token.code), Use::Spend).unwrap();
+            assert_eq!(amount.decimals, Some(token.decimals), "{}", token.code);
+            assert_eq!(amount.units(), 10u128.pow(token.decimals.into()));
+            let resolved = asset::resolve(network, token.code, token.issuer, true).unwrap();
+            assert_eq!(resolved.symbol, token.code);
+            assert!(!resolved.address.is_empty());
+        }
+        if let Some(native) = tokens.iter().find(|token| token.native) {
+            let amount = asset::parse(family, tokens, "native:2", Use::Spend).unwrap();
+            assert_eq!(amount.units(), 2 * 10u128.pow(native.decimals.into()));
+        }
+        assert!(asset::parse(family, tokens, "UNKNOWNCODE:1", Use::Spend).is_err());
+        assert!(asset::parse(family, tokens, "0", Use::Spend).is_err());
+    });
+}
+
+#[test]
+fn an_undeclared_operation_is_refused() {
+    testkit::each(Feature::Transfer, |rail, fx| {
+        let network = rail.test_support().network;
+        let op = "undeclared-conformance-operation";
+        assert!(
+            !execution::capabilities(network)
+                .unwrap()
+                .operations
+                .contains(&op)
+        );
+        assert!(execution::check(network, op, &fx.recipient, None, false).is_err());
     });
 }

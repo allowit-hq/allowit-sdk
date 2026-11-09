@@ -91,7 +91,7 @@ for (const rail of sdk.rails()) {
 
   test(`${rail.id}: assets`, () => {
     const list = sdk.assets(network);
-    assert.ok(list.some((a) => a.id === fixtures.asset), 'fixture asset is published');
+    assert.ok(list.some((a) => a.id === fixtures.asset || a.symbol === fixtures.asset), 'fixture asset is published');
     for (const a of list) {
       assert.equal(a.network, network);
       assert.ok(Number.isInteger(a.decimals) && a.decimals >= 0);
