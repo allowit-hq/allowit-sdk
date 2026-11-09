@@ -36,6 +36,7 @@ pub mod request;
 mod request_proof;
 pub mod routing;
 pub mod runtime;
+pub mod transport_failure;
 pub mod typed_request;
 pub mod wallet;
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
