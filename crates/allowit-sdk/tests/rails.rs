@@ -104,6 +104,15 @@ fn explorer_links_name_the_id() {
 }
 
 #[test]
+fn each_rail_imports_its_public_profile_fixture() {
+    testkit::each(Feature::Export, |rail, fx| {
+        let network = rail.test_support().network;
+        rail.decode_profile(network, &fx.public_profile)
+            .unwrap_or_else(|e| panic!("{}: {e}", rail.id()));
+    });
+}
+
+#[test]
 fn a_malformed_public_profile_is_refused() {
     testkit::each(Feature::Export, |rail, _| {
         let network = rail.test_support().network;
