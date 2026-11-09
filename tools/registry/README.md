@@ -20,7 +20,7 @@ A plugin module assigns one object to `PLUGIN`. The configuration registers each
   A source maintained by the marketplace is a `.py` file in its repository.
   A source maintained by a vendor is an importable module from the vendor's package.
 - **Published registry**: a `registry <file or URL>` line loads a registry file that a vendor publishes in this schema.
-  A URL needs `sha256=<hex>`. `rails=<id>,...` names the rails that its records may use.
+  A URL needs `sha256=<hex>`. `rails=<id>,...` names the rails that its records may use; the default is every registered rail.
 - **Rail hook** (`RailHook`): declares `id`, `label` and `networks` (CAIP-2 ids or namespaces).
   `parse_offer(lines, i, offer)` reads one rail-specific payment offer construct.
   A source calls `ctx.rail(source, label)` and hands the hook the lines that it does not recognise.

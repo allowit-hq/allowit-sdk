@@ -253,6 +253,15 @@ class CoreTest(unittest.TestCase):
         with self.assertRaises(rg.ConfigError):
             ws.build()
 
+    def test_published_registry_defaults_to_every_registered_rail(self):
+        ws = self.workspace(config="registry vendor.json\n" + CONFIG)
+        self.assertEqual(ws.config().sources[0].rails, ("fakechain",))
+
+    def test_missing_skip_file_is_a_configuration_error(self):
+        ws = self.workspace(config=CONFIG.replace("skips.json", "missing.json"))
+        with self.assertRaises(rg.ConfigError):
+            ws.build()
+
     def test_text_helpers(self):
         lines = textwrap.dedent("""\
             | Field | Value |

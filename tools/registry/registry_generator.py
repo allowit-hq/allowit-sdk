@@ -263,7 +263,7 @@ def validate(rec: dict, key: str, source: Source, ctx: Context) -> list[str]:
 class PublishedRegistry(Source):
     """Records from a registry file that a vendor publishes in this schema."""
 
-    def __init__(self, location: str, rails: tuple[str, ...], sha256: str | None):
+    def __init__(self, location: str, rails: tuple[str, ...] | None, sha256: str | None):
         if "://" in location and not sha256:
             raise ConfigError(f"registry {location}: a URL needs sha256=<hex>")
         self.id = f"registry:{location}"
@@ -364,7 +364,7 @@ def load_config(path: Path, root: Path) -> Config:
             options = dict(a.split("=", 1) for a in args[1:] if "=" in a)
             if len(options) != len(args) - 1 or set(options) - {"rails", "sha256"}:
                 raise ConfigError(f"{where}: registry options are rails=<id>,... and sha256=<hex>")
-            rail_ids = tuple(options["rails"].split(",")) if "rails" in options else tuple(r.id for r in rails)
+            rail_ids = tuple(options["rails"].split(",")) if "rails" in options else None
             sources.append(PublishedRegistry(args[0], rail_ids, options.get("sha256")))
         else:
             raise ConfigError(f"{where}: unknown entry {kind!r}")
@@ -377,6 +377,8 @@ def load_config(path: Path, root: Path) -> Config:
             raise ConfigError(f"{path.name}: duplicate plugin id in {ids}")
     rail_ids = {r.id for r in rails}
     for source in sources:
+        if source.rails is None:  # a published registry without rails= may use every registered rail
+            source.rails = tuple(r.id for r in rails)
         if set(source.rails) - rail_ids:
             raise ConfigError(f"source {source.id}: unregistered rails {sorted(set(source.rails) - rail_ids)}")
     if not sources:
@@ -390,6 +392,8 @@ def load_config(path: Path, root: Path) -> Config:
 def load_skips(config: Config) -> dict[str, str]:
     if config.skips is None:
         return {}
+    if not config.skips.is_file():
+        raise ConfigError(f"skip file {config.skips} does not exist")
     data = json.loads(config.skips.read_text(encoding="utf-8"))
     for key, reason in data.items():
         if not isinstance(reason, str) or not reason.strip():
