@@ -23,3 +23,12 @@ The rail crates depend on Allowit core. Never move core or rail code into this
 repository, and never add a `[patch]` section. Each git dependency names a
 release tag `vX.Y.Z` in the root `[workspace.dependencies]`. Every crate in the build must name the same core tag:
 release the rail repositories on a new core tag before this SDK moves to it.
+
+Release the reviewed Core API first, then the Stellar crate on that Core release, then the SDK.
+After those approved releases, update the SDK's release tags and lockfile. Keep local validation
+overrides out of committed manifests.
+
+Stellar protocol fixtures and codec construction belong to the Stellar crate. Its optional
+`test-support` feature supplies fixtures for SDK consumer tests. SDK tests keep command, HTTP,
+storage and orchestration assertions and do not depend directly on native codecs or signature
+libraries.
