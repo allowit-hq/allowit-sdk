@@ -27,6 +27,8 @@ The [repository README](../../README.md#architecture) holds the architecture dia
 Placement follows responsibility. Generic orchestration belongs in SDK engine. Stellar execution, owner workflows, runtime clients, request validation, profiles, formatting, diagnostics and signing belong in the `allowit-stellar` package (library `allowit_stellar_wallet`) at `allowit-contracts-stellar/crates/allowit-stellar`.
 Rail packages can use common core primitives directly. Core has no dependency on SDK engine or a rail package.
 
+A vendor integrates with one line in the `registered!` list in `src/vendors/mod.rs`, gated by its Cargo feature, and an adapter module that reexports its provider. Every SDK dispatch goes through that list.
+
 ## Modules
 
 | Module | Purpose |

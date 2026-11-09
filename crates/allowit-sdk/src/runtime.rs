@@ -53,7 +53,7 @@ macro_rules! carrier {
                 d: D,
             ) -> std::result::Result<Self, D::Error> {
                 let raw = Box::<RawValue>::deserialize(d)?;
-                crate::vendors::runtime_restore(Kind::$kind, raw)
+                crate::vendors::runtime_restore(Kind::$kind, &raw)
                     .map(Self)
                     .map_err(serde::de::Error::custom)
             }

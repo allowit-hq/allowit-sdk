@@ -32,3 +32,7 @@ Stellar protocol fixtures and codec construction belong to the Stellar crate. It
 `test-support` feature supplies fixtures for SDK consumer tests. SDK tests keep command, HTTP,
 storage and orchestration assertions and do not depend directly on native codecs or signature
 libraries.
+
+SDK tests are vendor neutral. `crates/allowit-sdk/tests/vendors.rs` runs each case against every
+compiled vendor and skips a case that the vendor's capabilities do not declare, with the reason.
+Vendor protocol and RPC tests live in the vendor repository, next to the code they test.
