@@ -131,3 +131,18 @@ test('<allowit-rail> reports an unknown network', () => {
   assert.equal(host.children.length, 0);
   assert.equal(error?.code, 'unsupported');
 });
+
+for (const kind of ['constructor', 'toString', '__proto__', 'unknown-kind']) {
+  test(`<allowit-rail> reports the unsupported kind ${kind}`, () => {
+    const rail = sdk.rails()[0];
+    const host = new sdk.AllowitRail();
+    host.setAttribute('kind', kind);
+    host.setAttribute('network', rail.test.network);
+    let error = null;
+    host.addEventListener('allowit-error', (event) => (error = event.detail));
+    host.isConnected = true;
+    host.connectedCallback();
+    assert.equal(host.children.length, 0);
+    assert.equal(error?.code, 'unsupported');
+  });
+}

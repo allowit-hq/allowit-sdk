@@ -80,7 +80,7 @@ export class AllowitRail extends Base {
     const kind = this.getAttribute('kind');
     const network = this.getAttribute('network');
     const rail = network ? railFor(network) : null;
-    const tag = rail?.elements[kind];
+    const tag = rail && Object.hasOwn(rail.elements, kind) ? rail.elements[kind] : null;
     if (!tag) {
       this.#child = null;
       this.replaceChildren();
