@@ -79,8 +79,12 @@ class RailHook:
 
 
 def covers(rail, network: str) -> bool:
-    """Whether a rail hook's networks include this CAIP-2 network id."""
-    return any(network == n or network.startswith(n + ":") for n in rail.networks)
+    """Whether a rail hook's networks include this CAIP-2 network id.
+
+    A declared "namespace:reference" matches exactly. A declared namespace matches "namespace:<reference>".
+    """
+    return any(network == n if ":" in n else re.fullmatch(re.escape(n) + r":[-_a-zA-Z0-9]{1,32}", network)
+               for n in rail.networks)
 
 
 class Source:
@@ -246,11 +250,11 @@ SCHEMA = {
 
 
 def offer_rail(rec: dict, source: Source, ctx: Context):
-    """Return the first of the source's rail hooks that covers the record's network, or None."""
-    network = rec["network"]
-    if not _str(network):
+    """Return the first source rail hook that covers the network and declares every payment key, or None."""
+    if not (_str(rec["network"]) and isinstance(rec["payment"], dict)):
         return None
-    return next((ctx.rails[r] for r in source.rails if covers(ctx.rails[r], network)), None)
+    return next((ctx.rails[r] for r in source.rails if covers(ctx.rails[r], rec["network"])
+                 and set(rec["payment"]) <= set(ctx.rails[r].payment_fields)), None)
 
 
 def ordered(rec: dict, rail) -> dict:
@@ -281,12 +285,11 @@ def validate(rec: dict, key: str, source: Source, ctx: Context) -> list[str]:
     if any(offer) and not all(offer):
         problems.append("network, asset and payment must all be set or all be null")
     elif _str(rec["network"]) and isinstance(rec["payment"], dict):
-        rail = offer_rail(rec, source, ctx)
-        if rail is None:
+        covering = [r for r in source.rails if covers(ctx.rails[r], rec["network"])]
+        if not covering:
             problems.append(f"network {rec['network']!r} is not covered by the source rails {list(source.rails)}")
-        elif set(rec["payment"]) - set(rail.payment_fields):
-            problems.append(f"payment fields {sorted(set(rec['payment']) - set(rail.payment_fields))} "
-                            f"are not declared by rail {rail.id}")
+        elif offer_rail(rec, source, ctx) is None:
+            problems.append(f"payment fields {sorted(rec['payment'])} are not all declared by rails {covering}")
     return problems
 
 

@@ -192,7 +192,7 @@ class CoreTest(unittest.TestCase):
             "payment without payee": ({**good, "network": "fake:main", "asset": "T", "payment": {"scheme": "exact", "amount": "1"}}, "invalid payment"),
             "key mismatch": ({**good, "source_path": "other"}, "differs from the entry key"),
             "undeclared payment field": ({**good, "network": "fake:main", "asset": "T", "payment": {
-                "scheme": "exact", "amount": "1", "pay_to": "p", "extra": 1}}, "not declared by rail fakechain"),
+                "scheme": "exact", "amount": "1", "pay_to": "p", "extra": 1}}, "not all declared by rails ['fakechain']"),
             "non-string network": ({**good, "network": 42, "asset": "T", "payment": {
                 "scheme": "exact", "amount": "1", "pay_to": "p"}}, "invalid network"),
         }
@@ -200,6 +200,29 @@ class CoreTest(unittest.TestCase):
             with self.subTest(name):
                 problems = rg.validate(rec, "k", source, ctx)
                 self.assertTrue(any(expected in p for p in problems), problems)
+
+    def test_network_coverage_matches_namespaces_and_exact_ids(self):
+        rail = rg.RailHook()
+        rail.networks = ("ns", "other:main")
+        for network, expected in [("ns:1", True), ("ns", False), ("ns:1:x", False), ("nsx:1", False),
+                                  ("other:main", True), ("other:main:x", False), ("other:test", False)]:
+            with self.subTest(network):
+                self.assertEqual(bool(rg.covers(rail, network)), expected)
+
+    def test_offer_uses_a_rail_that_declares_its_payment_fields(self):
+        ws = self.workspace()
+        config = ws.config()
+        basic = rg.RailHook()
+        basic.id, basic.networks = "basic", ("fake",)
+        ctx = rg.Context(ws.root, {"basic": basic, "fakechain": config.rails[0]})
+        source = config.sources[0]
+        source_rails = source.rails
+        self.addCleanup(setattr, source, "rails", source_rails)
+        source.rails = ("basic", "fakechain")
+        rec = sys.modules["registry_plugin_plugins_fake_source_py"].record(
+            "a", "k", network="fake:main", asset="T", payment={"scheme": "exact", "amount": "1", "pay_to": "p", "memo": "m"})
+        self.assertEqual(rg.validate(rec, "k", source, ctx), [])
+        self.assertIs(rg.offer_rail(rec, source, ctx), config.rails[0])
 
     def test_duplicate_ids_fail(self):
         ws = self.workspace(captures={"a": "name: same\n", "b": "name: same\n"})
