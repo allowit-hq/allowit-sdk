@@ -21,7 +21,8 @@ A plugin module assigns one object to `PLUGIN`. The configuration registers each
   A source maintained by a vendor is an importable module from the vendor's package.
 - **Published registry**: a `registry <file or URL>` line loads a registry file that a vendor publishes in this schema.
   A URL needs `sha256=<hex>`. `rails=<id>,...` names the rails that its records may use; the default is every registered rail.
-- **Rail hook** (`RailHook`): declares `id`, `label` and `networks` (CAIP-2 ids or namespaces).
+- **Rail hook** (`RailHook`): declares `id`, `label`, `networks` (CAIP-2 ids or namespaces) and
+  `payment_fields` (the payment object keys in output order, including `scheme`, `amount` and `pay_to`).
   `parse_offer(lines, i, offer)` reads one rail-specific payment offer construct.
   A source calls `ctx.rail(source, label)` and hands the hook the lines that it does not recognise.
 
@@ -43,7 +44,10 @@ registry   https://example.com/registry.json rails=example sha256=<hex>
    A skip entry for a missing key, or for an entry that parses, is an error.
 4. It validates each record against `SCHEMA`: field set, field types, an all-or-nothing payment offer,
    unique `id`, `source_path` equal to the entry key, and a `network` that one of the source's rail hooks covers.
+   Payment keys must be among that rail hook's `payment_fields`. A key that two sources claim, as an entry or a skip, is an error.
 5. It writes `schema_version`, `source` (the source locations joined by `; `), `generator`, `resource_count`,
    `skipped` and `resources`, sorted by `source_path`, as indented UTF-8 JSON.
+   Nested objects use the schema key order and the rail's `payment_fields` order, whatever the input order.
+   `example_input` keeps the source's key order.
 
 The helpers `find`, `split_row`, `read_table`, `link`, `code` and `section` parse Markdown captures.

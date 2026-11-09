@@ -61,11 +61,13 @@ class RailHook:
     id        stable id that a source names in its `rails`
     label     rail name as captures spell it
     networks  CAIP-2 network ids or namespaces; a namespace "ns" covers every "ns:<ref>"
+    payment_fields  keys of the payment object in output order; includes scheme, amount and pay_to
     """
 
     id = ""
     label = ""
     networks: tuple[str, ...] = ()
+    payment_fields: tuple[str, ...] = PAYMENT_REQUIRED
 
     def parse_offer(self, lines: list[str], i: int, offer: dict) -> int | None:
         """Read the rail construct at lines[i] into offer {network, asset, payment}.
@@ -243,12 +245,25 @@ SCHEMA = {
 }
 
 
-def ordered(rec: dict) -> dict:
-    """Return a valid record with schema field order and canonical nested key order."""
+def offer_rail(rec: dict, source: Source, ctx: Context):
+    """Return the first of the source's rail hooks that covers the record's network, or None."""
+    network = rec["network"]
+    if not _str(network):
+        return None
+    return next((ctx.rails[r] for r in source.rails if covers(ctx.rails[r], network)), None)
+
+
+def ordered(rec: dict, rail) -> dict:
+    """Return a valid record in schema field order, with schema-defined key order in nested objects.
+
+    example_input keeps the key order that the source supplies; it is the provider's example.
+    """
     out = {name: rec[name] for name in SCHEMA}
     out["latest_check"] = {k: rec["latest_check"][k] for k in LATEST_CHECK_KEYS}
     if rec["parameters"] is not None:
         out["parameters"] = [{k: p[k] for k in PARAMETER_KEYS} for p in rec["parameters"]]
+    if rec["payment"] is not None:
+        out["payment"] = {k: rec["payment"][k] for k in rail.payment_fields if k in rec["payment"]}
     return out
 
 
@@ -265,8 +280,13 @@ def validate(rec: dict, key: str, source: Source, ctx: Context) -> list[str]:
     offer = [rec["network"] is None, rec["asset"] is None, rec["payment"] is None]
     if any(offer) and not all(offer):
         problems.append("network, asset and payment must all be set or all be null")
-    elif rec["network"] is not None and not any(covers(ctx.rails[r], rec["network"]) for r in source.rails):
-        problems.append(f"network {rec['network']!r} is not covered by the source rails {list(source.rails)}")
+    elif _str(rec["network"]) and isinstance(rec["payment"], dict):
+        rail = offer_rail(rec, source, ctx)
+        if rail is None:
+            problems.append(f"network {rec['network']!r} is not covered by the source rails {list(source.rails)}")
+        elif set(rec["payment"]) - set(rail.payment_fields):
+            problems.append(f"payment fields {sorted(set(rec['payment']) - set(rail.payment_fields))} "
+                            f"are not declared by rail {rail.id}")
     return problems
 
 
@@ -343,12 +363,14 @@ def load_plugin(spec: str, root: Path):
 
 
 def _check_plugin(spec: str, plugin, kind: type) -> None:
-    attrs = ("id", "label", "networks", "parse_offer") if kind is RailHook else ("id", "rails", "location", "discover", "parse")
+    attrs = ("id", "label", "networks", "payment_fields", "parse_offer") if kind is RailHook else ("id", "rails", "location", "discover", "parse")
     missing = [a for a in attrs if not hasattr(plugin, a)]
     if missing:
         raise ConfigError(f"{spec}: not a {kind.__name__}, missing {missing}")
     if not (isinstance(plugin.id, str) and plugin.id):
         raise ConfigError(f"{spec}: empty id")
+    if kind is RailHook and set(PAYMENT_REQUIRED) - set(plugin.payment_fields):
+        raise ConfigError(f"{spec}: payment_fields must include {list(PAYMENT_REQUIRED)}")
 
 
 def load_config(path: Path, root: Path) -> Config:
@@ -462,7 +484,7 @@ def build(config: Config) -> tuple[dict, list[str]]:
             errors.extend(f"{key}: {p}" for p in problems)
             continue
         ids.add(rec["id"])
-        resources.append(ordered(rec))
+        resources.append(ordered(rec, offer_rail(rec, source, ctx)))
     registry = {
         "schema_version": SCHEMA_VERSION,
         "source": "; ".join(s.location for s in config.sources),

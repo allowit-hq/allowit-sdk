@@ -25,6 +25,7 @@ class FakeRail(rg.RailHook):
     id = "fakechain"
     label = "Fakechain"
     networks = ("fake",)
+    payment_fields = ("scheme", "amount", "pay_to", "memo")
 
     def parse_offer(self, lines, i, offer):
         if not lines[i].startswith("offer "):
@@ -190,6 +191,10 @@ class CoreTest(unittest.TestCase):
             "partial offer": ({**good, "network": "fake:main"}, "all be set or all be null"),
             "payment without payee": ({**good, "network": "fake:main", "asset": "T", "payment": {"scheme": "exact", "amount": "1"}}, "invalid payment"),
             "key mismatch": ({**good, "source_path": "other"}, "differs from the entry key"),
+            "undeclared payment field": ({**good, "network": "fake:main", "asset": "T", "payment": {
+                "scheme": "exact", "amount": "1", "pay_to": "p", "extra": 1}}, "not declared by rail fakechain"),
+            "non-string network": ({**good, "network": 42, "asset": "T", "payment": {
+                "scheme": "exact", "amount": "1", "pay_to": "p"}}, "invalid network"),
         }
         for name, (rec, expected) in cases.items():
             with self.subTest(name):
@@ -206,9 +211,12 @@ class CoreTest(unittest.TestCase):
         rec = sys.modules["registry_plugin_plugins_fake_source_py"].record("a", "k")
         rec["latest_check"] = dict(reversed(list(rec["latest_check"].items())))
         rec["parameters"] = [{"required": True, "type": None, "in": "query", "name": "q"}]
-        out = rg.ordered(rec)
+        rec["payment"] = {"memo": None, "pay_to": "p", "amount": "1", "scheme": "exact"}
+        rail = sys.modules["registry_plugin_plugins_fake_rail_py"].PLUGIN
+        out = rg.ordered(rec, rail)
         self.assertEqual(list(out["latest_check"]), list(rg.LATEST_CHECK_KEYS))
         self.assertEqual(list(out["parameters"][0]), list(rg.PARAMETER_KEYS))
+        self.assertEqual(list(out["payment"]), list(rail.payment_fields))
 
     def test_configuration_errors(self):
         cases = {
@@ -269,7 +277,7 @@ class CoreTest(unittest.TestCase):
         ws.write("registry.conf", CONFIG.replace("source     plugins/fake_source.py\n", "registry vendor-registry.json\n"))
         registry, errors = ws.build()
         self.assertEqual(errors, [])
-        self.assertEqual(registry["resources"], own["resources"])
+        self.assertEqual(rg.render(dict(registry, source=own["source"])), rg.render(own))
 
     def test_published_skips_cannot_collide_with_other_entries(self):
         ws = self.workspace()
