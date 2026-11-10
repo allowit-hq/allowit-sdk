@@ -134,6 +134,46 @@ struct Reads {
     constants: BTreeMap<String, String>,
 }
 
+/// How many items and bindings declare each name, in every scope. A file-level constant names a
+/// key only when nothing else declares its name, so no scope can shadow it.
+#[derive(Default)]
+struct Names(BTreeMap<String, usize>);
+
+impl Names {
+    fn declare(&mut self, name: &syn::Ident) {
+        *self.0.entry(name.to_string()).or_default() += 1;
+    }
+}
+
+impl<'ast> syn::visit::Visit<'ast> for Names {
+    fn visit_item_const(&mut self, item: &'ast syn::ItemConst) {
+        self.declare(&item.ident);
+        syn::visit::visit_item_const(self, item);
+    }
+    fn visit_item_static(&mut self, item: &'ast syn::ItemStatic) {
+        self.declare(&item.ident);
+        syn::visit::visit_item_static(self, item);
+    }
+    fn visit_impl_item_const(&mut self, item: &'ast syn::ImplItemConst) {
+        self.declare(&item.ident);
+        syn::visit::visit_impl_item_const(self, item);
+    }
+    fn visit_trait_item_const(&mut self, item: &'ast syn::TraitItemConst) {
+        self.declare(&item.ident);
+        syn::visit::visit_trait_item_const(self, item);
+    }
+    fn visit_pat_ident(&mut self, pattern: &'ast syn::PatIdent) {
+        self.declare(&pattern.ident);
+        syn::visit::visit_pat_ident(self, pattern);
+    }
+    fn visit_use_name(&mut self, name: &'ast syn::UseName) {
+        self.declare(&name.ident);
+    }
+    fn visit_use_rename(&mut self, name: &'ast syn::UseRename) {
+        self.declare(&name.rename);
+    }
+}
+
 /// The plain name of `ty`, such as `u32`.
 fn type_name(ty: &syn::Type) -> Option<String> {
     match ty {
@@ -208,7 +248,7 @@ impl Reads {
 
     /// The key and the turbofish type of a `<ctx>.params[<key>].ok()` read.
     fn ok_read(&self, expr: &syn::Expr) -> Option<(String, Option<String>)> {
-        let syn::Expr::MethodCall(call) = bare(expr) else {
+        let syn::Expr::MethodCall(call) = expr else {
             return None;
         };
         let syn::Expr::Index(index) = bare(&call.receiver) else {
@@ -239,7 +279,7 @@ impl<'ast> syn::visit::Visit<'ast> for Reads {
                 self.push(key, call_turbofish(call).or_else(|| type_name(&pattern.ty)));
                 return;
             }
-            if let Some((key, turbofish)) = self.ok_read(&init.expr) {
+            if let Some((key, turbofish)) = self.ok_read(bare(&init.expr)) {
                 self.push(key, turbofish.or_else(|| type_name(&pattern.ty)));
                 return;
             }
@@ -255,7 +295,7 @@ impl<'ast> syn::visit::Visit<'ast> for Reads {
     fn visit_expr_reference(&mut self, reference: &'ast syn::ExprReference) {
         // `&ctx.params[key].ok()` passes the value itself, as a canonical rule takes it. The
         // rule's own bounds apply.
-        if matches!(self.ok_read(&reference.expr), Some((_, None))) {
+        if matches!(self.ok_read(bare(&reference.expr)), Some((_, None))) {
             return;
         }
         syn::visit::visit_expr_reference(self, reference);
@@ -277,12 +317,15 @@ pub fn param_reads(source: &str) -> Result<BTreeMap<String, Vec<ParamRead>>> {
         check_source_shape(source)?;
         let parsed = syn::parse_file(source)
             .map_err(|error| Error::usage(format!("The policy is not valid Rust: {error}.")))?;
+        let mut names = Names::default();
+        names.visit_file(&parsed);
         for item in &parsed.items {
             if let syn::Item::Const(constant) = item
                 && let syn::Expr::Lit(syn::ExprLit {
                     lit: syn::Lit::Str(key),
                     ..
                 }) = bare(&constant.expr)
+                && names.0.get(&constant.ident.to_string()) == Some(&1)
             {
                 reads
                     .constants
@@ -315,7 +358,7 @@ mod tests {
 
     #[test]
     fn ok_reads_name_their_types_and_rule_arguments_keep_the_rule_bounds() {
-        let source = "use allowit::prelude::*;\nconst FLOOR: &str = \"swap_output_floor\";\nconst SWAP_LIMIT: &str = \"swap_limit\";\npub fn execute(ctx: &AllowitContext) -> allowit::Result {\n    allowit::payment_limit(ctx, &ctx.params[SWAP_LIMIT].ok())?;\n    allowit::call_limit(ctx, &ctx.params[allowit::CALL_LIMIT].ok())?;\n    let floor: i128 = ctx.params[FLOOR].ok();\n    let count: u32 = ctx.params[\"max_count\"].ok();\n    let wide = ctx.params[\"max_count\"].ok::<u64>();\n    if ctx.request.amount > ctx.params[\"large\"].ok() {\n        return Err(AllowitError::PaymentLimitExceeded);\n    }\n    let calls: u64 = (ctx.params[allowit::CALL_LIMIT]).ok();\n    Ok(())\n}\n";
+        let source = "use allowit::prelude::*;\nconst FLOOR: &str = \"swap_output_floor\";\nconst SWAP_LIMIT: &str = \"swap_limit\";\npub fn execute(ctx: &AllowitContext) -> allowit::Result {\n    allowit::payment_limit(ctx, &ctx.params[SWAP_LIMIT].ok())?;\n    allowit::call_limit(ctx, &ctx.params[allowit::CALL_LIMIT].ok())?;\n    let floor: i128 = ctx.params[FLOOR].ok();\n    let count: u32 = ctx.params[\"max_count\"].ok();\n    let wide = ctx.params[\"max_count\"].ok::<u64>();\n    if ctx.request.amount > ctx.params[\"large\"].ok() {\n        return Err(AllowitError::PaymentLimitExceeded);\n    }\n    let calls: u64 = ((ctx.params[allowit::CALL_LIMIT]).ok());\n    Ok(())\n}\n";
         let reads = param_reads(source).unwrap();
         assert_eq!(
             reads["swap_output_floor"],
@@ -332,6 +375,12 @@ mod tests {
         assert_eq!(reads["call_limit"], [ParamRead::Typed("u64".into())]);
         // A value passed to a rule records no typed read.
         assert_eq!(reads.len(), 4);
+    }
+
+    #[test]
+    fn a_shadowed_key_constant_names_no_param() {
+        let source = "use allowit::prelude::*;\nconst KEY: &str = \"wide\";\npub fn execute(ctx: &AllowitContext) -> allowit::Result {\n    const KEY: &str = \"narrow\";\n    let n: u32 = allowit::param(ctx, KEY);\n    let m: u32 = ctx.params[KEY].ok();\n    Ok(())\n}\n";
+        assert!(param_reads(source).unwrap().is_empty());
     }
 
     #[test]
