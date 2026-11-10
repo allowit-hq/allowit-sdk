@@ -13,10 +13,10 @@ pub fn execute(ctx: &AllowitContext) -> allowit::Result {
 }
 ```
 
-The `allowit` package lives in [Allowit core](https://github.com/allowit-hq/allowit-core/tree/v0.3.1/crates/allowit).
+The `allowit` package is the portable module of [Allowit core](https://github.com/allowit-hq/allowit-core).
 Its `std` feature enables host evaluation. Native adapters bind the portable source to contract backends.
 The shared Core source gate admits only the portable vocabulary and one `execute` entrypoint.
-Host compilation uses the same exact Core revision as the gate and portable library.
+Host compilation calls `rustc` directly. It uses the same exact Core revision as the gate and portable library.
 
 ## Authoring order
 
@@ -42,7 +42,7 @@ Trusted hosts supply enrichment and application accounting; request JSON cannot 
 
 ## Native binding
 
-The Stellar rail derives the exact native request, effect and fee bounds, authorizers, simulation and settlement rules.
+The selected rail derives the exact native request, effect and fee bounds, authorizers, simulation and settlement rules.
 Its Simple, Common and Custom wallet implementations bind source, code and owner configuration.
 Common uses the owner-approved leading canonical rule calls. Custom compiles the complete portable source.
 Simple requires full trusted host evaluation before the server authorizes execution.
