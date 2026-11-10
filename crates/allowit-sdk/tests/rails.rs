@@ -255,6 +255,8 @@ fn an_undeclared_operation_is_refused() {
                 .operations
                 .contains(&op)
         );
-        assert!(execution::check(network, op, &fx.recipient, None, false).is_err());
+        let error = execution::check(network, op, &fx.recipient, None, false).unwrap_err();
+        assert_eq!(error.code, 3);
+        assert!(error.message.contains(network));
     });
 }

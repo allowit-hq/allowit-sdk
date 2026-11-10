@@ -166,7 +166,12 @@ impl Cache {
     pub fn resolve(&self, selector: &Selector) -> Result<Profile> {
         let network = routing::normalize(&selector.network)?;
         let mut found = Vec::new();
-        for envelope in self.versions.entries::<Envelope>()? {
+        for envelope in self
+            .versions
+            .entries::<Envelope>()?
+            .into_iter()
+            .filter(|envelope| envelope.network == network)
+        {
             let p = Profile::decode(envelope)?;
             let d = &p.description;
             if d.network == network
@@ -220,4 +225,46 @@ fn selection_key(s: &Selector) -> Result<String> {
         &s.agent,
         &s.policy_id,
     ))?))
+}
+
+#[cfg(all(test, unix))]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn resolving_a_profile_ignores_descriptors_from_other_networks() {
+        let dir = tempfile::tempdir().unwrap();
+        let cache = Cache::open(&dir.path().canonicalize().unwrap()).unwrap();
+        let rail = plugins::rails()[0];
+        let support = rail.test_support();
+        let backend = "http://localhost:8080";
+        let descriptor = String::from_utf8((support.fixtures)().public_profile).unwrap();
+        let installed = cache
+            .install(
+                support.network,
+                backend,
+                RawValue::from_string(descriptor).unwrap(),
+            )
+            .unwrap();
+        let mut other = Envelope {
+            schema: 1,
+            network: "example:unregistered".into(),
+            backend: backend.into(),
+            descriptor: RawValue::from_string("{}".into()).unwrap(),
+        };
+        cache.versions.save("other-network", &other).unwrap();
+
+        let selector = Selector {
+            network: support.network.into(),
+            ..Default::default()
+        };
+        assert_eq!(cache.resolve(&selector).unwrap().version, installed.version);
+
+        other.network = support.network.into();
+        cache
+            .versions
+            .save("selected-network-invalid", &other)
+            .unwrap();
+        assert!(cache.resolve(&selector).is_err());
+    }
 }
