@@ -115,34 +115,67 @@ fn canonical_constant(name: &str) -> bool {
             .any(|r| r.key() == name.to_lowercase())
 }
 
-/// How custom code reads one param with `allowit::param`.
+/// Whether `name` is the function of a canonical rule, such as `payment_limit`.
+fn canonical_rule(name: &str) -> bool {
+    allowit_core::RULES.iter().any(|rule| rule.key() == name)
+}
+
+/// How custom code reads one param with `ctx.params[key].ok()` or `allowit::param`.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ParamRead {
-    /// The read names its type, as in `let limit: u32 = allowit::param(ctx, "max_count");` or
+    /// The read names its type, as in `let limit: u32 = ctx.params["max_count"].ok();`,
+    /// `let limit: u32 = allowit::param(ctx, "max_count");` or
     /// `allowit::param::<u64>(ctx, "max_count")`.
     Typed(String),
     /// The compiler infers the type from the use, or the type is not a plain name.
     Inferred,
 }
 
-/// The `allowit::param` reads with a string literal key, by key.
+/// The typed reads with a known key, by key.
 #[derive(Default)]
-struct Reads(BTreeMap<String, Vec<ParamRead>>);
+struct Reads {
+    reads: BTreeMap<String, Vec<ParamRead>>,
+    /// The file's `const NAME: &str = "key";` items, by name.
+    constants: BTreeMap<String, String>,
+}
 
-/// The key of an `allowit::param(ctx, "<key>")` call, or of a read with a canonical key constant,
-/// such as `allowit::param(ctx, allowit::CALL_LIMIT)`.
-fn param_key(call: &syn::ExprCall) -> Option<String> {
-    if allowit_path(&call.func).as_deref() != Some("param") {
-        return None;
+/// How many items and bindings declare each name, in every scope. A file-level constant names a
+/// key only when nothing else declares its name, so no scope can shadow it.
+#[derive(Default)]
+struct Names(BTreeMap<String, usize>);
+
+impl Names {
+    fn declare(&mut self, name: &syn::Ident) {
+        *self.0.entry(name.to_string()).or_default() += 1;
     }
-    match call.args.iter().nth(1)? {
-        syn::Expr::Lit(syn::ExprLit {
-            lit: syn::Lit::Str(key),
-            ..
-        }) => Some(key.value()),
-        expr => allowit_path(expr)
-            .filter(|name| canonical_constant(name))
-            .map(|name| name.to_lowercase()),
+}
+
+impl<'ast> syn::visit::Visit<'ast> for Names {
+    fn visit_item_const(&mut self, item: &'ast syn::ItemConst) {
+        self.declare(&item.ident);
+        syn::visit::visit_item_const(self, item);
+    }
+    fn visit_item_static(&mut self, item: &'ast syn::ItemStatic) {
+        self.declare(&item.ident);
+        syn::visit::visit_item_static(self, item);
+    }
+    fn visit_impl_item_const(&mut self, item: &'ast syn::ImplItemConst) {
+        self.declare(&item.ident);
+        syn::visit::visit_impl_item_const(self, item);
+    }
+    fn visit_trait_item_const(&mut self, item: &'ast syn::TraitItemConst) {
+        self.declare(&item.ident);
+        syn::visit::visit_trait_item_const(self, item);
+    }
+    fn visit_pat_ident(&mut self, pattern: &'ast syn::PatIdent) {
+        self.declare(&pattern.ident);
+        syn::visit::visit_pat_ident(self, pattern);
+    }
+    fn visit_use_name(&mut self, name: &'ast syn::UseName) {
+        self.declare(&name.ident);
+    }
+    fn visit_use_rename(&mut self, name: &'ast syn::UseRename) {
+        self.declare(&name.rename);
     }
 }
 
@@ -156,27 +189,87 @@ fn type_name(ty: &syn::Type) -> Option<String> {
     }
 }
 
-/// The type of a turbofish read, `allowit::param::<u64>(...)`, when it has a plain name.
-fn turbofish(call: &syn::ExprCall) -> Option<String> {
-    let syn::Expr::Path(path) = &*call.func else {
-        return None;
-    };
-    let syn::PathArguments::AngleBracketed(arguments) = &path.path.segments.last()?.arguments
-    else {
-        return None;
-    };
+/// The type of a turbofish, `::<u64>`, when it has a plain name.
+fn turbofish(arguments: &syn::AngleBracketedGenericArguments) -> Option<String> {
     match arguments.args.iter().collect::<Vec<_>>().as_slice() {
         [syn::GenericArgument::Type(ty)] => type_name(ty),
         _ => None,
     }
 }
 
+/// The type of a turbofish read, `allowit::param::<u64>(...)`, when it has a plain name.
+fn call_turbofish(call: &syn::ExprCall) -> Option<String> {
+    let syn::Expr::Path(path) = &*call.func else {
+        return None;
+    };
+    match &path.path.segments.last()?.arguments {
+        syn::PathArguments::AngleBracketed(arguments) => turbofish(arguments),
+        _ => None,
+    }
+}
+
+/// `expr` without parentheses.
+fn bare(mut expr: &syn::Expr) -> &syn::Expr {
+    while let syn::Expr::Paren(paren) = expr {
+        expr = &paren.expr;
+    }
+    expr
+}
+
 impl Reads {
     fn push(&mut self, key: String, read: Option<String>) {
-        self.0
+        self.reads
             .entry(key)
             .or_default()
             .push(read.map_or(ParamRead::Inferred, ParamRead::Typed));
+    }
+
+    /// The key that `expr` names: a string literal, a canonical key constant such as
+    /// `allowit::CALL_LIMIT`, or a `&str` constant of the file.
+    fn key(&self, expr: &syn::Expr) -> Option<String> {
+        match bare(expr) {
+            syn::Expr::Lit(syn::ExprLit {
+                lit: syn::Lit::Str(key),
+                ..
+            }) => Some(key.value()),
+            syn::Expr::Path(path) if path.qself.is_none() && path.path.get_ident().is_some() => {
+                self.constants
+                    .get(&path.path.get_ident()?.to_string())
+                    .cloned()
+            }
+            expr => allowit_path(expr)
+                .filter(|name| canonical_constant(name))
+                .map(|name| name.to_lowercase()),
+        }
+    }
+
+    /// The key of an `allowit::param(ctx, <key>)` call.
+    fn param_key(&self, call: &syn::ExprCall) -> Option<String> {
+        if allowit_path(&call.func).as_deref() != Some("param") {
+            return None;
+        }
+        self.key(call.args.iter().nth(1)?)
+    }
+
+    /// The key and the turbofish type of a `<ctx>.params[<key>].ok()` read.
+    fn ok_read(&self, expr: &syn::Expr) -> Option<(String, Option<String>)> {
+        let syn::Expr::MethodCall(call) = expr else {
+            return None;
+        };
+        let syn::Expr::Index(index) = bare(&call.receiver) else {
+            return None;
+        };
+        let syn::Expr::Field(field) = bare(&index.expr) else {
+            return None;
+        };
+        let params = matches!(&field.member, syn::Member::Named(name) if name == "params");
+        if call.method != "ok" || !call.args.is_empty() || !params {
+            return None;
+        }
+        Some((
+            self.key(&index.index)?,
+            call.turbofish.as_ref().and_then(turbofish),
+        ))
     }
 }
 
@@ -184,24 +277,49 @@ impl<'ast> syn::visit::Visit<'ast> for Reads {
     fn visit_local(&mut self, local: &'ast syn::Local) {
         if let (syn::Pat::Type(pattern), Some(init)) = (&local.pat, &local.init)
             && init.diverge.is_none()
-            && let syn::Expr::Call(call) = &*init.expr
-            && let Some(key) = param_key(call)
         {
-            self.push(key, turbofish(call).or_else(|| type_name(&pattern.ty)));
-            return;
+            if let syn::Expr::Call(call) = &*init.expr
+                && let Some(key) = self.param_key(call)
+            {
+                self.push(key, call_turbofish(call).or_else(|| type_name(&pattern.ty)));
+                return;
+            }
+            if let Some((key, turbofish)) = self.ok_read(bare(&init.expr)) {
+                self.push(key, turbofish.or_else(|| type_name(&pattern.ty)));
+                return;
+            }
         }
         syn::visit::visit_local(self, local);
     }
     fn visit_expr_call(&mut self, call: &'ast syn::ExprCall) {
-        if let Some(key) = param_key(call) {
-            self.push(key, turbofish(call));
+        if let Some(key) = self.param_key(call) {
+            self.push(key, call_turbofish(call));
+        }
+        // A canonical rule, such as `allowit::payment_limit(ctx, &ctx.params[key].ok())`, takes
+        // the value itself and applies its own bounds. Every other read records its type.
+        if allowit_path(&call.func).is_some_and(|name| canonical_rule(&name)) {
+            for argument in &call.args {
+                if let syn::Expr::Reference(reference) = bare(argument)
+                    && matches!(self.ok_read(bare(&reference.expr)), Some((_, None)))
+                {
+                    continue;
+                }
+                self.visit_expr(argument);
+            }
+            return;
         }
         syn::visit::visit_expr_call(self, call);
     }
+    fn visit_expr(&mut self, expr: &'ast syn::Expr) {
+        if let Some((key, turbofish)) = self.ok_read(expr) {
+            self.push(key, turbofish);
+        }
+        syn::visit::visit_expr(self, expr);
+    }
 }
 
-/// The `allowit::param` reads of `source` by param key, so a value edit can stay within the
-/// types that the policy reads.
+/// The typed reads of `source` by param key, so a value edit can stay within the types that the
+/// policy reads.
 pub fn param_reads(source: &str) -> Result<BTreeMap<String, Vec<ParamRead>>> {
     on_parse_stack(|| {
         use syn::visit::Visit;
@@ -209,8 +327,23 @@ pub fn param_reads(source: &str) -> Result<BTreeMap<String, Vec<ParamRead>>> {
         check_source_shape(source)?;
         let parsed = syn::parse_file(source)
             .map_err(|error| Error::usage(format!("The policy is not valid Rust: {error}.")))?;
+        let mut names = Names::default();
+        names.visit_file(&parsed);
+        for item in &parsed.items {
+            if let syn::Item::Const(constant) = item
+                && let syn::Expr::Lit(syn::ExprLit {
+                    lit: syn::Lit::Str(key),
+                    ..
+                }) = bare(&constant.expr)
+                && names.0.get(&constant.ident.to_string()) == Some(&1)
+            {
+                reads
+                    .constants
+                    .insert(constant.ident.to_string(), key.value());
+            }
+        }
         reads.visit_file(&parsed);
-        Ok(reads.0)
+        Ok(reads.reads)
     })
 }
 
@@ -231,6 +364,36 @@ mod tests {
         // A canonical key constant names its param.
         assert_eq!(reads["call_limit"], [ParamRead::Typed("u32".into())]);
         assert_eq!(reads.len(), 4);
+    }
+
+    #[test]
+    fn ok_reads_name_their_types_and_rule_arguments_keep_the_rule_bounds() {
+        let source = "use allowit::prelude::*;\nconst FLOOR: &str = \"swap_output_floor\";\nconst SWAP_LIMIT: &str = \"swap_limit\";\npub fn execute(ctx: &AllowitContext) -> allowit::Result {\n    allowit::payment_limit(ctx, &ctx.params[SWAP_LIMIT].ok())?;\n    allowit::call_limit(ctx, &ctx.params[allowit::CALL_LIMIT].ok())?;\n    let floor: i128 = ctx.params[FLOOR].ok();\n    let count: u32 = ctx.params[\"max_count\"].ok();\n    let wide = ctx.params[\"max_count\"].ok::<u64>();\n    if ctx.request.amount > ctx.params[\"large\"].ok() {\n        return Err(AllowitError::PaymentLimitExceeded);\n    }\n    let calls: u64 = ((ctx.params[allowit::CALL_LIMIT]).ok());\n    let borrowed: &u32 = &ctx.params[\"borrowed\"].ok();\n    custom(&ctx.params[\"passed\"].ok());\n    Ok(())\n}\n";
+        let reads = param_reads(source).unwrap();
+        assert_eq!(
+            reads["swap_output_floor"],
+            [ParamRead::Typed("i128".into())]
+        );
+        assert_eq!(
+            reads["max_count"],
+            [
+                ParamRead::Typed("u32".into()),
+                ParamRead::Typed("u64".into())
+            ]
+        );
+        assert_eq!(reads["large"], [ParamRead::Inferred]);
+        assert_eq!(reads["call_limit"], [ParamRead::Typed("u64".into())]);
+        // A borrowed read outside a canonical rule has no plain type name.
+        assert_eq!(reads["borrowed"], [ParamRead::Inferred]);
+        assert_eq!(reads["passed"], [ParamRead::Inferred]);
+        // A value passed to a canonical rule records no typed read.
+        assert_eq!(reads.len(), 6);
+    }
+
+    #[test]
+    fn a_shadowed_key_constant_names_no_param() {
+        let source = "use allowit::prelude::*;\nconst KEY: &str = \"wide\";\npub fn execute(ctx: &AllowitContext) -> allowit::Result {\n    const KEY: &str = \"narrow\";\n    let n: u32 = allowit::param(ctx, KEY);\n    let m: u32 = ctx.params[KEY].ok();\n    Ok(())\n}\n";
+        assert!(param_reads(source).unwrap().is_empty());
     }
 
     #[test]

@@ -28,4 +28,6 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-      - run: corepack enable && pnpm --dir npm install && pnpm --dir npm test
+      # Corepack reads the pnpm version from the package in the working directory.
+      - run: corepack enable && pnpm install && pnpm test
+        working-directory: npm

@@ -1,6 +1,6 @@
-//! Classification of failed rail RPC calls. A plugin reports a call that got no answer (a timeout
-//! or a connection, DNS or TLS failure) with [`NETWORK_UNAVAILABLE`]. Callers read the class with
-//! [`classify`] and never parse messages.
+//! Classification of failed rail RPC calls. A plugin reports a call that got no answer (a timeout,
+//! a connection, DNS or TLS failure, or a deadline that expires before the request is sent) with
+//! [`NETWORK_UNAVAILABLE`]. Callers read the class with [`classify`] and never parse messages.
 use crate::{error::Error, transport::rpc};
 
 /// The error code (and CLI exit code) of a call that got no answer. Nothing was observed, so a
@@ -34,7 +34,10 @@ pub fn classify(error: &Error) -> Failure {
 /// The class of a bounded RPC transport error.
 pub fn classify_rpc(error: &rpc::Error) -> Failure {
     match error.kind {
-        rpc::ErrorKind::Timeout | rpc::ErrorKind::Connection => Failure::NetworkUnavailable,
+        // A deadline that expires before the send means that nothing was sent.
+        rpc::ErrorKind::Timeout | rpc::ErrorKind::Connection | rpc::ErrorKind::Deadline => {
+            Failure::NetworkUnavailable
+        }
         rpc::ErrorKind::Transport | rpc::ErrorKind::Read => Failure::Unknown,
         _ => Failure::Other,
     }
@@ -90,6 +93,27 @@ mod tests {
             classify_rpc(&call(&url, Duration::from_secs(5))),
             Failure::NetworkUnavailable
         );
+    }
+
+    #[test]
+    fn a_deadline_that_expires_before_the_send_is_network_unavailable() {
+        // The server would answer, but the deadline has passed: the client sends nothing.
+        let unused = TcpListener::bind("127.0.0.1:0").unwrap();
+        let url = format!("http://{}", unused.local_addr().unwrap());
+        unused.set_nonblocking(true).unwrap();
+        let error = RpcClient::new(&url, Duration::from_secs(5), 1 << 16)
+            .unwrap()
+            .call_with_id(
+                "ping",
+                &json!({}),
+                1,
+                EnvelopeValidation::StrictIdentity,
+                Some(std::time::Instant::now() - Duration::from_secs(1)),
+            )
+            .unwrap_err();
+        assert_eq!(error.kind, rpc::ErrorKind::Deadline);
+        assert!(unused.accept().is_err(), "the client opened a connection");
+        assert_eq!(classify_rpc(&error), Failure::NetworkUnavailable);
     }
 
     #[test]

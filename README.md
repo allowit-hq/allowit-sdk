@@ -50,7 +50,7 @@ The host and the rail's policy contract use the same source. Owner-approved para
 Request amounts, native identity, accounting and enrichment come from the executing host and rail.
 Policy source cannot provide its own trusted spending state.
 
-The shared host build gate compiles source against the exact portable library before installation authorization.
+The shared host build gate runs Core's Rust source gate, then compiles the source with `rustc` against the exact portable library before installation authorization.
 See the [portable policy reference](docs/policy-reference.md) for source restrictions and wallet tiers.
 
 ## Embed SDK engine
@@ -103,7 +103,7 @@ cargo build --workspace --all-targets --locked
 cargo fmt --all --check
 cargo test --locked -p allowit-sdk@0.5.0 --features testkit
 cargo clippy --locked -p allowit-sdk@0.5.0 --all-targets --features testkit -- -D warnings
-pnpm --dir npm install && pnpm --dir npm test
+(cd npm && pnpm install && pnpm test)
 ```
 
 The affected [workflows](.github/workflows/) define the required checks.

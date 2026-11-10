@@ -16,14 +16,13 @@ const MAX_OUTPUT_BYTES: u64 = 1_048_576;
 
 /// Caller-owned host tool bindings. The result is a local type-check, never publication authority.
 pub struct HostTools {
-    pub python: PathBuf,
     pub rustc: PathBuf,
+    /// Wall-clock limit of the whole compilation, at most 60 seconds.
     pub timeout: Duration,
 }
 impl Default for HostTools {
     fn default() -> Self {
         Self {
-            python: "python3".into(),
             rustc: "rustc".into(),
             timeout: Duration::from_secs(30),
         }
@@ -31,44 +30,100 @@ impl Default for HostTools {
 }
 pub use allowit_core::vendor::authoring::{canonical_digest, check, portable_identity};
 
+/// The host crate of one policy: a `no_std` crate whose only dependency is `allowit`.
+const POLICY_HOST: &str = "#![no_std]\n#[path = \"policy.rs\"]\nmod policy;\npub const EXECUTE: fn(&allowit::AllowitContext) -> allowit::Result = policy::execute;\n";
+/// Flags of every compilation. Function pointer comparisons depend on code layout, so the lint is
+/// forbidden and no source attribute can lower its level.
+const RUSTC_FLAGS: [&str; 5] = [
+    "--edition=2024",
+    "-C",
+    "overflow-checks=on",
+    "-F",
+    "unpredictable_function_pointer_comparisons",
+];
+
 /// Compile structurally admitted source against the exact embedded portable Std library.
+/// The Rust source gate runs first. Then `rustc` builds the portable library with only its `std`
+/// feature and the policy as a module of a `no_std` crate, with overflow checks on.
 /// Missing tools, time/output limits and compilation failures fail closed. Nothing is published.
 #[cfg(unix)]
 pub fn compile(source: &str, tools: &HostTools) -> Result<()> {
-    use std::os::unix::process::CommandExt;
     check(source)?;
     if tools.timeout.is_zero() || tools.timeout > Duration::from_secs(60) {
         return Err(Error::config(
             "Host compiler timeout must be within 60 seconds",
         ));
     }
+    let deadline = Instant::now() + tools.timeout;
     let stage = tempfile::tempdir().map_err(io_error)?;
     let root = stage.path();
-    std::fs::create_dir_all(root.join("scripts")).map_err(io_error)?;
-    std::fs::create_dir_all(root.join("crates/allowit-core/src/portable")).map_err(io_error)?;
-    std::fs::create_dir(root.join("tmp")).map_err(io_error)?;
+    for directory in ["allowit", "out", "tmp"] {
+        std::fs::create_dir(root.join(directory)).map_err(io_error)?;
+    }
     for (path, bytes) in [
-        ("scripts/policy_source.py", policy_source::PYTHON_HELPER),
-        ("scripts/LICENSE", policy_source::PYTHON_HELPER_TERMS),
-        (
-            "crates/allowit-core/src/portable/lib.rs",
-            policy_source::PORTABLE_LIB_RS,
-        ),
-        (
-            "crates/allowit-core/src/portable/core.rs",
-            policy_source::PORTABLE_CORE_RS,
-        ),
-        (
-            "crates/allowit-core/src/portable/LICENSE",
-            policy_source::PORTABLE_TERMS,
-        ),
+        ("allowit/lib.rs", policy_source::PORTABLE_LIB_RS),
+        ("allowit/core.rs", policy_source::PORTABLE_CORE_RS),
+        ("allowit/LICENSE", policy_source::PORTABLE_TERMS),
         ("policy.rs", source),
+        ("policy_host.rs", POLICY_HOST),
     ] {
         std::fs::write(root.join(path), bytes.as_bytes()).map_err(io_error)?;
     }
-    let digest = allowit_core::digest(source.as_bytes());
-    let mut command = Command::new(&tools.python);
-    // Compiler tools receive only public runtime/toolchain paths, never provider or signer environment.
+    let library = [
+        "--crate-type=rlib",
+        "--crate-name=allowit",
+        "--cfg",
+        "feature=\"std\"",
+        "allowit/lib.rs",
+        "-o",
+        "out/liballowit.rlib",
+    ];
+    let policy = [
+        "--crate-type=rlib",
+        "--crate-name=policy_host",
+        "--extern",
+        "allowit=out/liballowit.rlib",
+        "policy_host.rs",
+        "-o",
+        "out/libpolicy_host.rlib",
+    ];
+    for (arguments, output, authored) in [
+        (library, "out/liballowit.rlib", false),
+        (policy, "out/libpolicy_host.rlib", true),
+    ] {
+        let (status, stderr) = run(tools, root, &arguments, deadline)?;
+        if !status.success() {
+            let detail = String::from_utf8_lossy(&stderr);
+            let message = format!("Portable host compilation failed: {}", detail.trim());
+            // rustc exits with 1 for errors in the compiled source.
+            return Err(if authored && status.code() == Some(1) {
+                Error::usage(message)
+            } else {
+                Error::config(message)
+            });
+        }
+        // A tool that exits without the compiled library did not compile the source.
+        if !std::fs::metadata(root.join(output)).is_ok_and(|file| file.is_file() && file.len() > 0)
+        {
+            return Err(Error::config(
+                "Core host compilation did not confirm the exact source",
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// Run one bounded `rustc` process in the private stage and return its status and diagnostics.
+#[cfg(unix)]
+fn run(
+    tools: &HostTools,
+    root: &std::path::Path,
+    arguments: &[&str],
+    deadline: Instant,
+) -> Result<(std::process::ExitStatus, Vec<u8>)> {
+    use std::os::unix::process::CommandExt;
+    let mut command = Command::new(&tools.rustc);
+    // The compiler receives only public runtime/toolchain paths, never provider or signer environment.
     command
         .env_clear()
         .env("PATH", std::env::var_os("PATH").unwrap_or_default())
@@ -86,11 +141,9 @@ pub fn compile(source: &str, tools: &HostTools) -> Result<()> {
         command.env("RUSTUP_TOOLCHAIN", toolchain);
     }
     command
-        .args(["-I", "-c", DRIVER])
-        .arg(root)
-        .arg(&digest)
+        .args(RUSTC_FLAGS)
+        .args(arguments)
         .current_dir(root)
-        .env("RUSTC", &tools.rustc)
         .env("TMPDIR", root.join("tmp"))
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
@@ -118,7 +171,7 @@ pub fn compile(source: &str, tools: &HostTools) -> Result<()> {
     }
     let child = command
         .spawn()
-        .map_err(|_| Error::config("Cannot start the Core host compiler; Python is required"))?;
+        .map_err(|_| Error::config("Cannot start the Core host compiler; rustc is required"))?;
     let mut process = CompilerProcess {
         child,
         active: true,
@@ -143,7 +196,6 @@ pub fn compile(source: &str, tools: &HostTools) -> Result<()> {
         capture(Box::new(process.child.stderr.take().ok_or_else(|| {
             Error::config("Cannot capture compiler diagnostics")
         })?));
-    let started = Instant::now();
     let mut stopped = None;
     let mut exited = None;
     let status = loop {
@@ -159,7 +211,7 @@ pub fn compile(source: &str, tools: &HostTools) -> Result<()> {
             process.active = false;
             break status;
         }
-        if started.elapsed() >= tools.timeout || exceeded.load(Ordering::Relaxed) {
+        if Instant::now() >= deadline || exceeded.load(Ordering::Relaxed) {
             stopped = Some(if exceeded.load(Ordering::Relaxed) {
                 "Core host compiler output exceeds its limit"
             } else {
@@ -174,7 +226,7 @@ pub fn compile(source: &str, tools: &HostTools) -> Result<()> {
         }
         std::thread::sleep(Duration::from_millis(10));
     };
-    let stdout = stdout
+    stdout
         .join()
         .map_err(|_| Error::config("Cannot read compiler output"))?
         .map_err(io_error)?;
@@ -188,21 +240,7 @@ pub fn compile(source: &str, tools: &HostTools) -> Result<()> {
     if exceeded.load(Ordering::Relaxed) {
         return Err(Error::config("Core host compiler output exceeds its limit"));
     }
-    if !status.success() {
-        let detail = String::from_utf8_lossy(&stderr);
-        let message = format!("Portable host compilation failed: {}", detail.trim());
-        return Err(if status.code() == Some(2) {
-            Error::usage(message)
-        } else {
-            Error::config(message)
-        });
-    }
-    if stdout != format!("allowit-host-compile-v1 {digest}\n").as_bytes() {
-        return Err(Error::config(
-            "Core host compilation did not confirm the exact source",
-        ));
-    }
-    Ok(())
+    Ok((status, stderr))
 }
 #[cfg(unix)]
 struct CompilerProcess {
@@ -229,22 +267,3 @@ pub fn compile(_source: &str, _tools: &HostTools) -> Result<()> {
 fn io_error(_: std::io::Error) -> Error {
     Error::config("Cannot prepare or observe the private host compilation")
 }
-
-#[cfg(unix)]
-const DRIVER: &str = r#"
-import hashlib, importlib.util, os, shutil, sys
-from pathlib import Path
-root=Path(sys.argv[1]); source=root/'policy.rs'
-if shutil.which(os.environ['RUSTC']) is None:
-    print('The Core host compile requires rustc',file=sys.stderr);sys.exit(3)
-if hashlib.sha256(source.read_bytes()).hexdigest()!=sys.argv[2]:
-    print('The original source changed before compilation',file=sys.stderr);sys.exit(3)
-spec=importlib.util.spec_from_file_location('allowit_core_policy_source',root/'scripts/policy_source.py')
-module=importlib.util.module_from_spec(spec);spec.loader.exec_module(module)
-try:
-    module.checked_code(source.read_text(encoding='utf-8'))
-    module.host_compile(source)
-except ValueError as error:
-    print(error,file=sys.stderr);sys.exit(2)
-print('allowit-host-compile-v1 '+sys.argv[2])
-"#;

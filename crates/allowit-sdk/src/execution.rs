@@ -1,6 +1,6 @@
 //! Shared execution input and profile-bound orchestration. Callers control keys and storage.
 use crate::{
-    error::Result,
+    error::{Error, Result, quoted},
     input::asset::{Amount, Token},
     plugins::{self, execution_store, for_network},
     profiles::Profile,
@@ -8,6 +8,18 @@ use crate::{
 };
 pub use allowit_core::vendor::execution::{Binding, Capabilities, Outcome, Recovery, Request};
 use std::{path::Path, sync::Arc, time::Duration};
+
+fn rail_for_operation(network: &str, op: &str) -> Result<&'static dyn plugins::RailPlugin> {
+    let rail = for_network(network)?;
+    if !rail.capabilities(network).operations.contains(&op) {
+        return Err(Error::unsupported(format!(
+            "Operation {} is not supported on {network}",
+            quoted(op)
+        )));
+    }
+    Ok(rail)
+}
+
 pub fn tokens(network: &str) -> Result<&'static [Token]> {
     let network = crate::routing::normalize(network)?;
     Ok(for_network(network)?.tokens(network))
@@ -20,7 +32,7 @@ pub fn check(
     args: bool,
 ) -> Result<()> {
     let network = crate::routing::normalize(network)?;
-    for_network(network)?
+    rail_for_operation(network, op)?
         .execution()
         .check(network, op, to, minimum, args)
 }
@@ -30,7 +42,13 @@ pub fn build(
     rpc: Option<&str>,
     r: &Request,
 ) -> Result<serde_json::Value> {
-    let rail = for_network(&profile.description().network)?;
+    let network = &profile.description().network;
+    let rail = rail_for_operation(network, &r.op)?;
+    if !rail.capabilities(network).build_only {
+        return Err(Error::unsupported(format!(
+            "Building execution requests is not supported on {network}"
+        )));
+    }
     rail.execution()
         .build(&profile.inner, &|| execution_store(root, rail), rpc, r)
 }
@@ -42,7 +60,7 @@ pub fn execute(
     r: &Request,
 ) -> Result<Outcome> {
     profile.require_authority()?;
-    let rail = for_network(&profile.description().network)?;
+    let rail = rail_for_operation(&profile.description().network, &r.op)?;
     rail.execution().execute(
         profile.inner,
         Arc::new(signer),
