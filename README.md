@@ -103,7 +103,7 @@ cargo build --workspace --all-targets --locked
 cargo fmt --all --check
 cargo test --locked -p allowit-sdk@0.5.0 --features testkit
 cargo clippy --locked -p allowit-sdk@0.5.0 --all-targets --features testkit -- -D warnings
-pnpm --dir npm install && pnpm --dir npm test
+(cd npm && pnpm install && pnpm test)
 ```
 
 The affected [workflows](.github/workflows/) define the required checks.
