@@ -115,6 +115,11 @@ fn canonical_constant(name: &str) -> bool {
             .any(|r| r.key() == name.to_lowercase())
 }
 
+/// Whether `name` is the function of a canonical rule, such as `payment_limit`.
+fn canonical_rule(name: &str) -> bool {
+    allowit_core::RULES.iter().any(|rule| rule.key() == name)
+}
+
 /// How custom code reads one param with `ctx.params[key].ok()` or `allowit::param`.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ParamRead {
@@ -290,15 +295,20 @@ impl<'ast> syn::visit::Visit<'ast> for Reads {
         if let Some(key) = self.param_key(call) {
             self.push(key, call_turbofish(call));
         }
-        syn::visit::visit_expr_call(self, call);
-    }
-    fn visit_expr_reference(&mut self, reference: &'ast syn::ExprReference) {
-        // `&ctx.params[key].ok()` passes the value itself, as a canonical rule takes it. The
-        // rule's own bounds apply.
-        if matches!(self.ok_read(bare(&reference.expr)), Some((_, None))) {
+        // A canonical rule, such as `allowit::payment_limit(ctx, &ctx.params[key].ok())`, takes
+        // the value itself and applies its own bounds. Every other read records its type.
+        if allowit_path(&call.func).is_some_and(|name| canonical_rule(&name)) {
+            for argument in &call.args {
+                if let syn::Expr::Reference(reference) = bare(argument)
+                    && matches!(self.ok_read(bare(&reference.expr)), Some((_, None)))
+                {
+                    continue;
+                }
+                self.visit_expr(argument);
+            }
             return;
         }
-        syn::visit::visit_expr_reference(self, reference);
+        syn::visit::visit_expr_call(self, call);
     }
     fn visit_expr(&mut self, expr: &'ast syn::Expr) {
         if let Some((key, turbofish)) = self.ok_read(expr) {
@@ -358,7 +368,7 @@ mod tests {
 
     #[test]
     fn ok_reads_name_their_types_and_rule_arguments_keep_the_rule_bounds() {
-        let source = "use allowit::prelude::*;\nconst FLOOR: &str = \"swap_output_floor\";\nconst SWAP_LIMIT: &str = \"swap_limit\";\npub fn execute(ctx: &AllowitContext) -> allowit::Result {\n    allowit::payment_limit(ctx, &ctx.params[SWAP_LIMIT].ok())?;\n    allowit::call_limit(ctx, &ctx.params[allowit::CALL_LIMIT].ok())?;\n    let floor: i128 = ctx.params[FLOOR].ok();\n    let count: u32 = ctx.params[\"max_count\"].ok();\n    let wide = ctx.params[\"max_count\"].ok::<u64>();\n    if ctx.request.amount > ctx.params[\"large\"].ok() {\n        return Err(AllowitError::PaymentLimitExceeded);\n    }\n    let calls: u64 = ((ctx.params[allowit::CALL_LIMIT]).ok());\n    Ok(())\n}\n";
+        let source = "use allowit::prelude::*;\nconst FLOOR: &str = \"swap_output_floor\";\nconst SWAP_LIMIT: &str = \"swap_limit\";\npub fn execute(ctx: &AllowitContext) -> allowit::Result {\n    allowit::payment_limit(ctx, &ctx.params[SWAP_LIMIT].ok())?;\n    allowit::call_limit(ctx, &ctx.params[allowit::CALL_LIMIT].ok())?;\n    let floor: i128 = ctx.params[FLOOR].ok();\n    let count: u32 = ctx.params[\"max_count\"].ok();\n    let wide = ctx.params[\"max_count\"].ok::<u64>();\n    if ctx.request.amount > ctx.params[\"large\"].ok() {\n        return Err(AllowitError::PaymentLimitExceeded);\n    }\n    let calls: u64 = ((ctx.params[allowit::CALL_LIMIT]).ok());\n    let borrowed: &u32 = &ctx.params[\"borrowed\"].ok();\n    custom(&ctx.params[\"passed\"].ok());\n    Ok(())\n}\n";
         let reads = param_reads(source).unwrap();
         assert_eq!(
             reads["swap_output_floor"],
@@ -373,8 +383,11 @@ mod tests {
         );
         assert_eq!(reads["large"], [ParamRead::Inferred]);
         assert_eq!(reads["call_limit"], [ParamRead::Typed("u64".into())]);
-        // A value passed to a rule records no typed read.
-        assert_eq!(reads.len(), 4);
+        // A borrowed read outside a canonical rule has no plain type name.
+        assert_eq!(reads["borrowed"], [ParamRead::Inferred]);
+        assert_eq!(reads["passed"], [ParamRead::Inferred]);
+        // A value passed to a canonical rule records no typed read.
+        assert_eq!(reads.len(), 6);
     }
 
     #[test]
