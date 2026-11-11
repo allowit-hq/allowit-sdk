@@ -235,25 +235,18 @@ for (const rail of sdk.rails()) {
     assert.match(sdk.reviewAgentPrompt(link, 'https://example.test', 'policy-1', 'wallet-1', fixtures.address), /^Do the work\./);
     assert.deepEqual(sdk.reviewParamLines(network, {}), []);
 
-    // One install step, then one funding step. The workflow signs each once and reports both receipts.
-    const hash = (n) => String(n).repeat(64);
-    const step = (action, n) => ({action, payload: `unsigned-${n}`, transactionHash: hash(n), expiresAt: Math.floor(Date.now() / 1000) + 300});
-    const journal = new Map(), signed = [];
-    let installed = false;
-    const ask = async (path, body) => {
-      if (path === 'native/deploy/prepare') return installed ? {policyId: 'p', installed: true, installation: {wallet: 'wallet-1'}} : {policyId: 'p', step: step('create_wallet', 1)};
-      if (path === 'native/owner/prepare') return {policyId: 'p', step: step('fund', 2)};
-      const n = body.payload.at(-1);
-      installed = true;
-      return {policyId: 'p', action: n === '1' ? 'create_wallet' : 'fund', status: 'confirmed', transactionHash: hash(n)};
-    };
-    const result = await sdk.installAndFund(network, {
-      ask, sign: async (s) => (signed.push(s.action), `signed-${s.hash[0]}`),
+    // Dispatch only: the rail's workflow gets the host's transport, and a transport failure signs nothing.
+    // Each rail tests its own owner protocol in its repository.
+    const offline = new Error('offline'), journal = new Map(), signed = [];
+    const input = {
+      ask: async () => { throw offline; }, sign: async (step) => (signed.push(step), 'signed'),
       journal: {get: (k) => journal.get(k) ?? null, set: (k, v) => void journal.set(k, v), remove: (k) => void journal.delete(k)},
       key: 'k', policyId: 'p', agent: fixtures.address, amount: '5', onStep() {},
-    });
-    assert.equal(result.wallet, 'wallet-1');
-    assert.deepEqual(signed, ['create_wallet', 'fund']);
-    assert.deepEqual(result.receipts.map((r) => r.action), ['create_wallet', 'fund']);
+    };
+    await assert.rejects(sdk.installAndFund(network, input), (error) => error === offline);
+    for (const alias of rail.networks.find((n) => n.id === network).aliases) {
+      await assert.rejects(sdk.installAndFund(alias, input), (error) => error === offline);
+    }
+    assert.deepEqual([signed.length, journal.size], [0, 0]);
   });
 }
