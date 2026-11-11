@@ -53,6 +53,56 @@ export interface AssetDisplay {
   name: string;
   native: boolean;
 }
+/** Base units of an asset with the rail's display metadata and the printed text. */
+export interface Quantity {
+  /** Base units as decimal text. */
+  units: string;
+  asset: AssetDisplay;
+  /** The amount with its unit, such as `5 XYZ`. */
+  text: string;
+}
+/** What a settled operation cost: top-level `settlement` of a status or receipt document. */
+export interface Settlement {
+  /** The block or ledger that holds the transaction. */
+  height: number;
+  /** The network fee that the transaction paid, in the fee asset. */
+  fee: Quantity;
+  /** The amount that the operation moved, or null when the rail reports none. */
+  amount: Quantity | null;
+}
+/** One spending limit: an entry of the top-level `limits` of a status, receipt or wallet document. */
+export interface LimitReport {
+  /** The policy param that holds the limit, such as `daily_spending_limit`. */
+  param: string;
+  limit: Quantity;
+  spent: Quantity;
+  remaining: Quantity;
+}
+/** The reports that a status or receipt document may carry at its top level. */
+export interface OperationReports {
+  settlement?: Settlement;
+  /** The fee that the spending limits count, in the installed asset. */
+  feeCharged?: Quantity;
+  limits?: LimitReport[];
+  explorer?: string;
+}
+/** The reply of `GET /api/wallet-kinds?network=<CAIP-2>`. */
+export interface WalletKindsReply {
+  network: string;
+  kinds: WalletKindInfo[];
+}
+/** The optional choice that the authoring generate and adopt requests accept at their top level. */
+export interface WalletKindChoice {
+  walletKind?: WalletKindId;
+}
+export type WalletKindRefusalCode = 'wallet_kind_unsupported' | 'wallet_kind_unknown';
+/** A 400 refusal of a wallet-kind choice. `wallet_kind_unsupported` carries all three details. */
+export interface WalletKindRefusal {
+  code: WalletKindRefusalCode;
+  walletKind: string | null;
+  network: string | null;
+  reason: string | null;
+}
 export interface ReviewProposal {
   network: string;
   revision: number;
@@ -190,6 +240,11 @@ export function walletKinds(): readonly WalletKindInfo[];
 export function walletKind(id: unknown): WalletKindInfo | null;
 export function walletKindsFor(network: string): readonly WalletKindInfo[];
 export function walletKindOf(network: string, document: unknown): WalletKindInfo | null;
+export function walletKindIdOf(document: unknown): WalletKindId | null;
+export function settlementOf(document: unknown): Settlement | null;
+export function feeChargedOf(document: unknown): Quantity | null;
+export function limitsOf(document: unknown): LimitReport[] | null;
+export function walletKindRefusal(error: unknown): WalletKindRefusal | null;
 export function nativeAsset(network: string): AssetDisplay | null;
 export function assetDisplay(network: string, asset: string): AssetDisplay | null;
 export function formatUnits(units: string | bigint | number, decimals: number): string;

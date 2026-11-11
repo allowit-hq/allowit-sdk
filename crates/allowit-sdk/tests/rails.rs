@@ -209,6 +209,7 @@ fn generation_on_another_network_stops_before_the_clock() {
             network: other.id.into(),
             profile: "advertised-profile".into(),
             target: Target::NewWallet,
+            wallet_kind: None,
         };
         let mut clock_calls = 0;
         let result = generation::generate(
@@ -313,4 +314,168 @@ fn an_undeclared_operation_is_refused() {
         assert_eq!(error.code, 3);
         assert!(error.message.contains(network));
     });
+}
+
+#[test]
+fn a_generation_request_names_only_a_wallet_kind_that_the_rail_and_the_profile_offer() {
+    testkit::each(Feature::OwnerSetup, |rail, _| {
+        let network = rail.test_support().network;
+        let offered = rail.wallet_kinds(network);
+        let request = |profile: &str, wallet_kind| GenerateRequest {
+            prompt: "Use only the approved recipient".into(),
+            network: network.into(),
+            profile: profile.into(),
+            target: Target::NewWallet,
+            wallet_kind,
+        };
+        for profile in rail.server().profiles() {
+            // Without a choice the request is valid, as before.
+            request(profile.id, None).validate().unwrap();
+            let Some(installed) = profile.wallet_kind() else {
+                continue;
+            };
+            if offered.contains(&installed) {
+                request(profile.id, Some(installed)).validate().unwrap();
+            }
+            for other in WalletKind::ALL
+                .into_iter()
+                .filter(|kind| *kind != installed)
+            {
+                let error = request(profile.id, Some(other)).validate().unwrap_err();
+                assert_eq!(error.code, 2, "{} {}", rail.id(), other.id());
+            }
+        }
+        for kind in WalletKind::ALL {
+            let result = request("another-advertised-profile", Some(kind)).validate();
+            assert_eq!(result.is_ok(), offered.contains(&kind), "{}", kind.id());
+        }
+    });
+}
+
+#[test]
+fn a_generated_draft_names_its_wallet_kind_at_the_top_level() {
+    for kind in WalletKind::ALL {
+        let draft = generation::GeneratedDraft {
+            document: serde_json::json!({"walletKind": kind.id()}),
+            unresolved: Vec::new(),
+        };
+        assert_eq!(draft.wallet_kind(), Some(kind));
+        assert_eq!(generation::wallet_kind_of(&draft.document), Some(kind));
+    }
+    assert_eq!(
+        generation::wallet_kind_of(&serde_json::json!({"walletKind": "unknown-kind"})),
+        None
+    );
+    assert_eq!(generation::wallet_kind_of(&serde_json::json!({})), None);
+}
+
+#[test]
+fn a_draft_prints_its_params_in_human_units() {
+    testkit::each(Feature::DraftDisplay, |rail, fx| {
+        let network = rail.test_support().network;
+        // The fixture is a generation reply; its draft is the document under `policy`.
+        let draft = fx
+            .owner_generation
+            .get("policy")
+            .unwrap_or(&fx.owner_generation);
+        let read = rail.draft_params(network, draft).unwrap();
+        let lines = kinds::param_lines(network, draft).unwrap();
+        assert_eq!(lines.len(), read.params.len());
+        assert!(!lines.is_empty(), "{}: no params in the fixture", rail.id());
+        let registry = allowit_sdk::policy_metadata::canonical_function_registry().unwrap();
+        for line in &lines {
+            assert!(!line.label.is_empty() && !line.value.is_empty(), "{line:?}");
+            assert!(!line.value.contains(['{', '"']), "{line:?}");
+            let Some(function) = registry.functions.iter().find(|f| f.name == line.key) else {
+                assert_eq!(line.label, line.key);
+                continue;
+            };
+            assert_eq!(line.label, function.label);
+            match function.parameter.semantic_type.as_str() {
+                "amount" => assert!(
+                    line.value.ends_with(&format!(" {}", read.asset.symbol)),
+                    "{line:?}"
+                ),
+                "timestamp" => assert!(line.value.ends_with('Z'), "{line:?}"),
+                _ => {}
+            }
+        }
+        assert!(kinds::param_lines(network, &serde_json::json!({})).is_err());
+        assert!(kinds::param_lines("unknown:network", draft).is_err());
+    });
+}
+
+#[test]
+fn an_imported_profile_prints_its_params_in_human_units() {
+    testkit::each(Feature::DraftDisplay, |rail, fx| {
+        let network = rail.test_support().network;
+        let Ok((description, _)) = rail.decode_profile(network, &fx.public_profile) else {
+            eprintln!("skip {}: no public profile fixture", rail.id());
+            return;
+        };
+        let lines = kinds::profile_param_lines(&description).unwrap();
+        assert_eq!(lines.len(), description.params.len());
+        for line in &lines {
+            assert!(!line.label.is_empty() && !line.value.is_empty(), "{line:?}");
+            assert!(!line.value.contains(['{', '"']), "{line:?}");
+        }
+    });
+}
+
+#[test]
+fn an_outcome_document_gives_its_limits_charged_fee_and_explorer_link() {
+    testkit::each(Feature::Limits, |rail, fx| {
+        let network = rail.test_support().network;
+        let asset = kinds::asset_display(network, fx.token.code).unwrap();
+        let quantity = |units| execution::Quantity::new(units, asset.clone());
+        let limits = vec![execution::LimitReport {
+            param: "daily_spending_limit".into(),
+            limit: quantity(500),
+            spent: quantity(120),
+            remaining: quantity(380),
+        }];
+        let link = rail.explorer(network, LinkKind::Transaction, "ab");
+        let mut document = serde_json::json!({"requestId": "r",
+            execution::Limits::KEY: limits, execution::FEE_CHARGED_KEY: quantity(7)});
+        if let Some(link) = &link {
+            document[execution::EXPLORER_KEY] = link.clone().into();
+        }
+        assert_eq!(execution::Limits::of(&document), Some(limits));
+        assert_eq!(execution::fee_charged(&document), Some(quantity(7)));
+        assert_eq!(execution::explorer(&document), link);
+        assert!(
+            execution::fee_charged(&document)
+                .unwrap()
+                .text
+                .ends_with(&asset.symbol)
+        );
+        let plain = serde_json::json!({"requestId": "r"});
+        assert_eq!(execution::Limits::of(&plain), None);
+        assert_eq!(execution::fee_charged(&plain), None);
+        assert_eq!(execution::explorer(&plain), None);
+    });
+}
+
+/// Every registered policy package answers its samples through the registry dispatch. A package
+/// that keeps a feature closed is skipped with its reason.
+#[test]
+fn every_registered_policy_package_answers_its_samples() {
+    use allowit_sdk::plugins::PackageFeature;
+    for feature in [PackageFeature::AuthenticatedFacts, PackageFeature::LiveCall] {
+        testkit::each_package(feature, |package, sample| {
+            let reply = plugins::invoke_policy_function(
+                package.namespace,
+                sample.function,
+                &sample.args,
+                &sample.facts,
+            );
+            assert_eq!(
+                reply.ok(),
+                sample.reply,
+                "{}::{}",
+                package.namespace,
+                sample.function
+            );
+        });
+    }
 }

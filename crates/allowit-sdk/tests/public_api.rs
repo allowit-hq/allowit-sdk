@@ -37,6 +37,7 @@ fn public_generation_validation_preserves_network_error_order() {
         network: "unsupported:network".into(),
         profile: "".into(),
         target: Target::NewWallet,
+        wallet_kind: None,
     };
     let error = request.validate().unwrap_err();
     assert!(error.message.contains("unknown rail"));
