@@ -44,7 +44,13 @@ are listed in the [Core README](https://github.com/allowit-hq/allowit-core/blob/
 | Kind that a wallet binds | `kinds::wallet_kind(network, profile)`, `Profile::wallet_kind()`, `ConfigurationInfo::wallet_kind()` | `walletKindOf(network, document)` |
 | Unit of an asset | `kinds::native_asset(network)`, `kinds::asset_display(network, asset)` | `nativeAsset(network)`, `assetDisplay(network, asset)` |
 | Print an amount | `kinds::format_amount(network, asset, units)`, `AssetDisplay::format(units)` | `formatAmount(network, asset, units)`, `formatUnits(units, decimals)` |
-| Settled operation | `execution::Settlement::of(&outcome.document)` | the `settlement` object of the outcome document |
+| Settled operation | `execution::Settlement::of(&outcome.document)` | `settlementOf(document)` |
+| Fee that the limits count | `execution::fee_charged(&outcome.document)` | `feeChargedOf(document)` |
+| Spent and remaining per limit | `execution::Limits::of(&outcome.document)`, `execution::limits(profile, signer, root, rpc)` | `limitsOf(document)` |
+| Explorer link of an operation | `execution::explorer(&outcome.document)` | the `explorer` text of the document |
+| Choose a wallet kind | `generation::GenerateRequest.wallet_kind`, `GeneratedDraft::wallet_kind()`, `generation::wallet_kind_of(document)` | `walletKindIdOf(document)`, the `walletKind` field of a generate or adopt request |
+| Refused wallet kind | `error.api_code`, `error.details`, `error.detail("reason")` | `walletKindRefusal(error)` |
+| Print the params of a draft or profile | `kinds::param_lines(network, document)`, `kinds::profile_param_lines(&profile)` | `reviewParamLines(network, params)` |
 | Review and sign | | `parseReviewLink`, `reviewAgentPrompt`, `reviewParamLines`, `installAndFund(network, input)` |
 
 A host never prints a unit of its own. An asset without a known unit is an error in Rust and `null` in npm.

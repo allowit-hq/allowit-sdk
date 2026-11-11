@@ -4,13 +4,18 @@ use crate::{
     wallet::LocalSigner,
 };
 
-pub use allowit_core::vendor::generation::{GeneratedDraft, Target};
+pub use allowit_core::vendor::generation::{GeneratedDraft, Target, wallet_kind_of};
+pub use allowit_core::vendor::kinds::WalletKind;
 #[derive(Clone, Debug)]
 pub struct GenerateRequest {
     pub prompt: String,
     pub network: String,
     pub profile: String,
     pub target: Target,
+    /// The wallet kind that the owner chose. The rail sends it to the backend as the top-level
+    /// `walletKind`; the backend binds it or refuses with a typed error whose `details` the
+    /// error keeps. `None` lets the backend propose a kind.
+    pub wallet_kind: Option<WalletKind>,
 }
 impl GenerateRequest {
     pub fn validate(&self) -> Result<()> {
@@ -20,7 +25,35 @@ impl GenerateRequest {
             &self.profile,
             &self.target,
             |network| crate::routing::info(network).map(|_| ()),
-        )
+        )?;
+        let Some(kind) = self.wallet_kind else {
+            return Ok(());
+        };
+        // A rail that does not offer the kind, or a profile of the rail that installs another
+        // kind, cannot serve the choice: stop before any request.
+        let network = crate::routing::normalize(&self.network)?;
+        let rail = crate::plugins::for_network(network)?;
+        if !rail.wallet_kinds(network).contains(&kind) {
+            return Err(Error::usage(format!(
+                "The {} wallet kind is not offered on {network}",
+                kind.id()
+            )));
+        }
+        // Several profiles of a rail may share an id and differ in the kind that they install.
+        let mut installs = rail
+            .server()
+            .profiles()
+            .iter()
+            .filter(|profile| profile.id == self.profile)
+            .filter_map(|profile| profile.wallet_kind())
+            .peekable();
+        if installs.peek().is_some() && !installs.any(|installed| installed == kind) {
+            return Err(Error::usage(format!(
+                "The selected wallet profile does not install the {} wallet kind",
+                kind.id()
+            )));
+        }
+        Ok(())
     }
 }
 impl From<&GenerateRequest> for allowit_core::vendor::generation::GenerateRequest {
@@ -30,6 +63,7 @@ impl From<&GenerateRequest> for allowit_core::vendor::generation::GenerateReques
             network: request.network.clone(),
             profile: request.profile.clone(),
             target: request.target.clone(),
+            wallet_kind: request.wallet_kind,
         }
     }
 }

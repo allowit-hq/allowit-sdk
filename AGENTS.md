@@ -31,7 +31,15 @@ Only five files may name a vendor, and only on import or dependency lines:
 `plugins` (Rust) or `@allowit/sdk` (JavaScript). Maintainers check this boundary in the
 allowit-project review before merge.
 
+A policy package registers with one dependency line per manifest and one import line in
+`registered.rs`, `use <crate>::PACKAGE as PACKAGE_<n>;`, plus its alias in `PACKAGES`. Its namespace
+is the crate name. `plugins::policy_registry` composes rail evidence functions and package
+functions, reserves `allowit` and every rail id, and checks the complete list against the
+policy-source gate. Hosts call that function and `plugins::invoke_policy_function`.
+
 SDK tests are vendor neutral. They run on every registered rail through
 `plugins::testkit::each` (Rust) or `for (const rail of rails())` (JavaScript) and take values
-from each rail's fixtures. A rail declares the features it skips, with a reason. Vendor
+from each rail's fixtures. A rail declares the features it skips, with a reason. Package tests run
+on every registered policy package through `plugins::testkit::each_package` with the package's
+samples; a package declares the features it skips, with a reason. Vendor
 protocol, codec and RPC tests live in the vendor repository.

@@ -7,7 +7,8 @@ use crate::{
     wallet::LocalSigner,
 };
 pub use allowit_core::vendor::execution::{
-    Binding, Capabilities, Outcome, Quantity, Recovery, Request, Settlement,
+    Binding, Capabilities, EXPLORER_KEY, FEE_CHARGED_KEY, LimitReport, Limits, Outcome, Quantity,
+    Recovery, Request, Settlement, explorer, fee_charged,
 };
 use std::{path::Path, sync::Arc, time::Duration};
 
@@ -87,6 +88,23 @@ pub fn status(
         rpc,
         id,
         wait,
+    )
+}
+/// The spending limits of the profile's wallet as the backend reports them: what each limit
+/// allows, what the policy has spent and what remains. `None` means that the rail holds no
+/// report for this wallet yet. The read needs the agent key, as a status read does.
+pub fn limits(
+    profile: Profile,
+    signer: LocalSigner,
+    root: &Path,
+    rpc: Option<String>,
+) -> Result<Option<Vec<LimitReport>>> {
+    let rail = for_network(&profile.description().network)?;
+    rail.execution().limits(
+        profile.inner,
+        Arc::new(signer),
+        &|| execution_store(root, rail),
+        rpc,
     )
 }
 

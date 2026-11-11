@@ -1,5 +1,6 @@
-//! Rail plugin registry. Each vendor registers one [`RailPlugin`] in `registered.rs`; every
-//! dispatch below looks the plugin up by network, so no function in this module names a vendor.
+//! Rail plugin and policy package registry. Each vendor registers one [`RailPlugin`] or one
+//! [`PolicyPackage`] in `registered.rs`; every dispatch below looks the registration up by
+//! network or namespace, so no function in this module names a vendor.
 mod registered;
 #[cfg(feature = "testkit")]
 pub mod testkit;
@@ -8,6 +9,7 @@ use crate::{
     error::{Error, Result},
     routing::{Family, RailInfo},
 };
+pub use allowit_core::policy_package::{PackageFeature, PackageSample, PolicyPackage};
 pub use allowit_core::vendor::plugin::*;
 pub(crate) use allowit_core::vendor::{PrivateSigner, RuntimeProvider};
 use std::path::Path;
@@ -44,18 +46,82 @@ pub fn by_id(id: &str) -> Result<&'static dyn RailPlugin> {
         .ok_or_else(|| Error::config(format!("unknown rail plugin {}", crate::error::quoted(id))))
 }
 
-/// The vendor policy function `namespace::name`, where `namespace` is a rail plugin id.
-/// The `allowit` namespace belongs to Core and is never dispatched here.
-pub fn policy_function(namespace: &str, name: &str) -> Option<PolicyFunction> {
-    by_id(namespace)
-        .ok()?
-        .policy_functions()
-        .iter()
-        .find(|(function, _)| *function == name)
-        .map(|(_, f)| *f)
+/// Every registered policy package, in registration order.
+pub fn packages() -> &'static [&'static PolicyPackage] {
+    registered::PACKAGES
 }
 
-/// Invoke a vendor policy function with guest arguments and host-supplied facts.
+/// One namespace of evidence functions and the release that declares it: a rail plugin id or
+/// a policy package's crate name.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct PolicyNamespace {
+    pub namespace: &'static str,
+    /// The package's crate release. A rail's functions release with the rail crate, which the
+    /// host pins by revision.
+    pub release: Option<&'static str>,
+}
+
+/// The composed policy registry of this build: every evidence function that a server policy
+/// may call. Hosts call this one function and name no vendor.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PolicyRegistry {
+    /// Exact `(namespace, function)` host calls: rail evidence functions, then package
+    /// functions, each in registration order.
+    pub host_calls: Vec<(&'static str, &'static str)>,
+    /// Each namespace with its release, for the build identity of a server policy.
+    pub namespaces: Vec<PolicyNamespace>,
+}
+
+/// Compose and check the policy registry. A rail's namespace is its plugin id. A package's
+/// namespace is its crate name; `allowit` and every rail id are reserved. `built_in` are the
+/// host's own `allowit` server calls; the complete list must pass the policy-source gate, so a
+/// registration that the gate cannot serve fails here and not in a later source check.
+pub fn policy_registry(built_in: &[(&'static str, &'static str)]) -> Result<PolicyRegistry> {
+    let unusable = |reason: String| Error::config(format!("policy registry: {reason}"));
+    let rail_ids: Vec<&str> = rails().iter().map(|rail| rail.id()).collect();
+    let mut host_calls = Vec::new();
+    let mut namespaces = Vec::new();
+    for rail in rails() {
+        let functions = rail.policy_functions();
+        if !functions.is_empty() {
+            namespaces.push(PolicyNamespace {
+                namespace: rail.id(),
+                release: None,
+            });
+        }
+        host_calls.extend(functions.iter().map(|(name, _)| (rail.id(), *name)));
+    }
+    host_calls
+        .extend(allowit_core::policy_package::host_calls(packages(), &rail_ids).map_err(unusable)?);
+    namespaces.extend(packages().iter().map(|package| PolicyNamespace {
+        namespace: package.namespace,
+        release: Some(package.release),
+    }));
+    let complete: Vec<_> = built_in.iter().chain(&host_calls).copied().collect();
+    allowit_core::policy_source::check_host_call_registry(&complete).map_err(unusable)?;
+    Ok(PolicyRegistry {
+        host_calls,
+        namespaces,
+    })
+}
+
+/// The evidence function `namespace::name`: a rail plugin's function or a policy package's.
+/// The `allowit` namespace belongs to Core and is never dispatched here.
+pub fn policy_function(namespace: &str, name: &str) -> Option<PolicyFunction> {
+    if let Ok(rail) = by_id(namespace) {
+        return rail
+            .policy_functions()
+            .iter()
+            .find(|(function, _)| *function == name)
+            .map(|(_, f)| *f);
+    }
+    packages()
+        .iter()
+        .find(|package| package.namespace == namespace)?
+        .function(name)
+}
+
+/// Invoke an evidence function with guest arguments and host-supplied facts.
 pub fn invoke_policy_function(
     namespace: &str,
     name: &str,
@@ -144,6 +210,33 @@ mod tests {
             }
         }
         assert!(policy_function("allowit", "price").is_none());
+        // The composed registry lists exactly the registered functions, and each dispatches.
+        let registry = policy_registry(&[("allowit", "price")]).unwrap();
+        let declared: usize = rails()
+            .iter()
+            .map(|rail| rail.policy_functions().len())
+            .chain(packages().iter().map(|package| package.functions.len()))
+            .sum();
+        assert_eq!(registry.host_calls.len(), declared);
+        for (namespace, name) in &registry.host_calls {
+            assert!(
+                policy_function(namespace, name).is_some(),
+                "{namespace}::{name}"
+            );
+        }
+        for package in packages() {
+            assert!(!ids.contains(package.namespace), "{}", package.namespace);
+            assert!(
+                registry.namespaces.contains(&PolicyNamespace {
+                    namespace: package.namespace,
+                    release: Some(package.release)
+                }),
+                "{}",
+                package.namespace
+            );
+        }
+        // A host cannot register a built-in call that Core does not define.
+        assert!(policy_registry(&[("allowit", "unknown")]).is_err());
         assert_eq!(
             invoke_policy_function(
                 "unknown",

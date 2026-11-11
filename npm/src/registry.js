@@ -73,6 +73,74 @@ export function walletKindOf(network, document) {
   return walletKind(hit ? hit.rail.walletKind(document) : null);
 }
 
+const WALLET_KIND_IDS = new Set(WALLET_KINDS.map((kind) => kind.id));
+const record = (value) => (value !== null && typeof value === 'object' && !Array.isArray(value) ? value : null);
+
+/**
+ * The wallet kind id at the top level of a server draft, policy or wallet document (`walletKind`), or null
+ * when the document names none or names an unknown id. Ids are exact.
+ */
+export function walletKindIdOf(document) {
+  const id = record(document)?.walletKind;
+  return typeof id === 'string' && WALLET_KIND_IDS.has(id) ? id : null;
+}
+
+/** A quantity `{units, asset, text}` of a server document, or null when the value is not one. */
+function quantity(value) {
+  const item = record(value);
+  const asset = record(item?.asset);
+  return item && asset && typeof item.units === 'string' && /^-?[0-9]+$/.test(item.units)
+    && typeof item.text === 'string' && typeof asset.symbol === 'string'
+    && Number.isInteger(asset.decimals) && asset.decimals >= 0
+    ? item
+    : null;
+}
+
+/** The settlement `{height, fee, amount}` of a status or receipt document, or null. */
+export function settlementOf(document) {
+  const item = record(record(document)?.settlement);
+  if (!item || !Number.isSafeInteger(item.height) || !quantity(item.fee)) return null;
+  return item.amount === null || item.amount === undefined || quantity(item.amount) ? item : null;
+}
+
+/** The fee that the spending limits count for an operation (`feeCharged`), or null. */
+export function feeChargedOf(document) {
+  return quantity(record(document)?.feeCharged);
+}
+
+/**
+ * The spending limits of a status, receipt or wallet document: `{param, limit, spent, remaining}` per limit.
+ * Null when the document reports none or one entry is malformed; an empty list is a report of no limits.
+ */
+export function limitsOf(document) {
+  const list = record(document)?.limits;
+  if (!Array.isArray(list)) return null;
+  const valid = list.every((entry) => {
+    const item = record(entry);
+    return item && typeof item.param === 'string' && item.param
+      && quantity(item.limit) && quantity(item.spent) && quantity(item.remaining);
+  });
+  return valid ? list : null;
+}
+
+/**
+ * The typed wallet-kind refusal of a rejected generate or adopt request, or null. `error` is the rejection of
+ * the host transport, or the parsed error body: `{code, error, details: {walletKind, network, reason}}`.
+ */
+export function walletKindRefusal(error) {
+  const item = record(error);
+  const code = item?.code;
+  if (code !== 'wallet_kind_unsupported' && code !== 'wallet_kind_unknown') return null;
+  const details = record(item.details) ?? {};
+  const text = (value) => (typeof value === 'string' && value ? value : null);
+  return {
+    code,
+    walletKind: text(details.walletKind),
+    network: text(details.network),
+    reason: text(details.reason),
+  };
+}
+
 /** Display metadata of the network's native asset, or null for an unknown network. */
 export function nativeAsset(network) {
   const hit = lookup(network);

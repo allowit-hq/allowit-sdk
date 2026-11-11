@@ -250,3 +250,48 @@ for (const rail of sdk.rails()) {
     assert.deepEqual([signed.length, journal.size], [0, 0]);
   });
 }
+
+test('server documents give their wallet kind, settlement, charged fee and limits', async () => {
+  const sdk = await import('../src/registry.js');
+  for (const rail of sdk.rails()) {
+    const network = rail.test.network;
+    const asset = sdk.nativeAsset(network);
+    const quantity = (units) => ({units, asset, text: sdk.formatAmount(network, asset, units)});
+    const limits = [{param: 'daily_spending_limit', limit: quantity('500'), spent: quantity('120'), remaining: quantity('380')}];
+    const document = {
+      walletKind: 'standard',
+      settlement: {height: 42, fee: quantity('7'), amount: null},
+      feeCharged: quantity('7'),
+      limits,
+    };
+    assert.equal(sdk.walletKindIdOf(document), 'standard');
+    assert.equal(sdk.settlementOf(document).fee.text, quantity('7').text);
+    assert.deepEqual(sdk.feeChargedOf(document), quantity('7'));
+    assert.deepEqual(sdk.limitsOf(document), limits);
+    assert.deepEqual(sdk.limitsOf({limits: []}), []);
+  }
+  // An absent or malformed value is null; it never reads as zero or as an empty report.
+  for (const document of [null, 'text', [], {}, {walletKind: 'common', settlement: {height: 1}, feeCharged: '7', limits: [{param: 'p'}]}]) {
+    assert.equal(sdk.walletKindIdOf(document), null);
+    assert.equal(sdk.settlementOf(document), null);
+    assert.equal(sdk.feeChargedOf(document), null);
+    assert.equal(sdk.limitsOf(document), null);
+  }
+  const unit = {symbol: 'XYZ', decimals: 2, name: 'Example', native: false};
+  assert.equal(sdk.feeChargedOf({feeCharged: {units: '1.5', asset: unit, text: '1.5 XYZ'}}), null);
+  assert.equal(sdk.limitsOf({limits: [{param: '', limit: {}, spent: {}, remaining: {}}]}), null);
+});
+
+test('a wallet-kind refusal keeps its code and details', async () => {
+  const sdk = await import('../src/registry.js');
+  const details = {walletKind: 'custom', network: 'example:testnet', reason: 'No template is configured'};
+  assert.deepEqual(
+    sdk.walletKindRefusal({code: 'wallet_kind_unsupported', error: 'Refused', details}),
+    {code: 'wallet_kind_unsupported', ...details},
+  );
+  const failure = Object.assign(new Error('Refused'), {code: 'wallet_kind_unknown', details: {walletKind: 'common'}});
+  assert.deepEqual(sdk.walletKindRefusal(failure), {code: 'wallet_kind_unknown', walletKind: 'common', network: null, reason: null});
+  for (const other of [null, 'text', {}, {code: 'network_unavailable', details}, new Error('x')]) {
+    assert.equal(sdk.walletKindRefusal(other), null);
+  }
+});

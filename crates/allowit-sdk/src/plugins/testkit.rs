@@ -1,6 +1,8 @@
 //! Vendor-neutral test harness. Shared tests run each case on every registered rail and skip a
 //! rail that declares the feature unsupported. Values come from the rail's [`Fixtures`].
-use super::{Feature, Fixtures, RailPlugin, rails};
+use super::{
+    Feature, Fixtures, PackageFeature, PackageSample, PolicyPackage, RailPlugin, packages, rails,
+};
 
 /// Runs `f` once per registered rail that supports `feature`, with that rail's fixtures.
 pub fn each(feature: Feature, mut f: impl FnMut(&'static dyn RailPlugin, &Fixtures)) {
@@ -25,4 +27,27 @@ pub fn network() -> &'static str {
         .expect("no registered rail")
         .test_support()
         .network
+}
+
+/// Runs `f` once per sample of every registered policy package that supports `feature`.
+/// A package that skips the feature states its reason. Values come from the package's samples.
+pub fn each_package(
+    feature: PackageFeature,
+    mut f: impl FnMut(&'static PolicyPackage, &PackageSample),
+) {
+    let mut ran = 0;
+    for package in packages() {
+        if let Some(why) = package.skip(feature) {
+            eprintln!("skip {} {feature:?}: {why}", package.namespace);
+            continue;
+        }
+        for sample in (package.samples)()
+            .iter()
+            .filter(|sample| sample.feature == feature)
+        {
+            f(package, sample);
+            ran += 1;
+        }
+    }
+    eprintln!("{feature:?}: ran {ran} package sample(s)");
 }
