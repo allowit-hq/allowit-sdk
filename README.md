@@ -52,6 +52,7 @@ are listed in the [Core README](https://github.com/allowit-hq/allowit-core/blob/
 | Refused wallet kind | `error.api_code`, `error.details`, `error.detail("reason")` | `walletKindRefusal(error)` |
 | Print the params of a draft or profile | `kinds::param_lines(network, document)`, `kinds::profile_param_lines(&profile)` | `reviewParamLines(network, params)` |
 | Review and sign | | `parseReviewLink`, `reviewAgentPrompt`, `reviewParamLines`, `installAndFund(network, input)` |
+| Kind that a Review and sign link names | | the `walletKind` field of `parseReviewLink(fragment)`, beside `proposal` |
 
 A host never prints a unit of its own. An asset without a known unit is an error in Rust and `null` in npm.
 `npm/src/wallet-kinds.js` is generated from Core by the test `npm_wallet_kinds_equal_the_core_description`;

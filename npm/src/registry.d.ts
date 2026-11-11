@@ -113,12 +113,17 @@ export interface ReviewProposal {
   paramsHash: string;
   params: Record<string, unknown>;
 }
-/** A missing agent key or amount is null and returns the owner to the conversation. */
+/**
+ * A missing agent key or amount is null and returns the owner to the conversation. `walletKind` is the id
+ * that the owner chose in the conversation, beside the proposal, or null when the link names none. The rail
+ * checks its shape only: offer it when `walletKindsFor(proposal.network)` lists it.
+ */
 export interface ReviewLink {
   proposal: ReviewProposal;
   workPrompt: string;
   agent: string | null;
   amount: string | null;
+  walletKind: string | null;
 }
 export interface ReviewParamLine {
   key: string;

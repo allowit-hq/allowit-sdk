@@ -228,8 +228,18 @@ for (const rail of sdk.rails()) {
       sourceHash: 'ab'.repeat(32), paramsHash: 'cd'.repeat(32), params: {}};
     const encode = (envelope) => rail.review.fragment + Buffer.from(JSON.stringify(envelope)).toString('base64url');
     const link = sdk.parseReviewLink(encode({proposal, workPrompt: 'Do the work.', agent: fixtures.address, amount: '5'}));
-    assert.deepEqual(link, {proposal, workPrompt: 'Do the work.', agent: fixtures.address, amount: '5'});
+    assert.deepEqual(link, {proposal, workPrompt: 'Do the work.', agent: fixtures.address, amount: '5', walletKind: null});
     assert.deepEqual(sdk.parseReviewLink(encode({proposal, workPrompt: 'w'})).agent, null);
+    // The link names the chosen kind beside the proposal. The proposal keeps its exact keys.
+    for (const kind of sdk.walletKindsFor(network)) {
+      const chosen = sdk.parseReviewLink(encode({proposal, workPrompt: 'w', walletKind: kind.id}));
+      assert.deepEqual(chosen, {proposal, workPrompt: 'w', agent: null, amount: null, walletKind: kind.id});
+      assert.throws(() => sdk.parseReviewLink(encode({proposal: {...proposal, walletKind: kind.id}, workPrompt: 'w'})), /invalid/);
+    }
+    assert.equal(sdk.parseReviewLink(encode({proposal, workPrompt: 'w', walletKind: null})).walletKind, null);
+    for (const bad of [1, {}, ['native']]) {
+      assert.throws(() => sdk.parseReviewLink(encode({proposal, workPrompt: 'w', walletKind: bad})), /invalid/);
+    }
     assert.throws(() => sdk.parseReviewLink(encode({proposal: {...proposal, network: 'unknown:none'}, workPrompt: 'w'})), /invalid/);
     assert.throws(() => sdk.parseReviewLink(encode({proposal, workPrompt: 'w', extra: 1})), /invalid/);
     assert.match(sdk.reviewAgentPrompt(link, 'https://example.test', 'policy-1', 'wallet-1', fixtures.address), /^Do the work\./);

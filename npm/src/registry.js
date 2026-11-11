@@ -183,7 +183,8 @@ export function formatAmount(network, asset, units) {
 
 /**
  * Decode and check a Review and sign link. The rail of the proposal checks it; an unknown rail or a
- * malformed link throws. The result has `network` so the host can dispatch the workflow.
+ * malformed link throws. The result has `network` so the host can dispatch the workflow, and
+ * `walletKind`: the id that the link names beside the proposal, or null. A kind inside the proposal throws.
  */
 export function parseReviewLink(fragment) {
   for (const rail of RAILS) {
