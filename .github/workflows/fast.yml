@@ -15,9 +15,16 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@1.98.0
-      - uses: Swatinem/rust-cache@v2
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: dtolnay/rust-toolchain@5059963b1731bf1580991b5f3b1eecfb5da406c0 # 1.98.0
+      # No Rust cache in this job. This repository is public: a pull request from a fork can
+      # restore caches of the base branch, and a cache of ~/.cargo/git or target/ would hold
+      # private source and its build output.
+      - name: Fetch private and locked sources
+        uses: ./.github/actions/private-dependency
+        with:
+          repository: ${{ secrets.PRIVATE_DEPENDENCY_REPOSITORY }}
+          ssh-key: ${{ secrets[vars.PRIVATE_DEPENDENCY_KEY_SECRET] }}
       - run: cargo build --workspace --all-targets --locked
   npm-registry:
     name: npm registry
