@@ -358,6 +358,43 @@ fn a_generation_request_names_only_a_wallet_kind_that_the_rail_and_the_profile_o
     });
 }
 
+/// A rail that advertises a wallet kind must be able to install it. Generation refuses a kind
+/// that no profile of the rail installs, so each advertised kind needs a profile, and a request
+/// for that profile and kind must pass on every network of the rail.
+#[test]
+fn generation_accepts_every_wallet_kind_that_a_rail_advertises() {
+    testkit::each(Feature::OwnerSetup, |rail, _| {
+        let profiles = rail.server().profiles();
+        for network in rail.networks() {
+            let advertised = rail.wallet_kinds(network.id);
+            for kind in WalletKind::ALL {
+                let installs = profiles
+                    .iter()
+                    .find(|profile| profile.wallet_kind() == Some(kind));
+                assert_eq!(
+                    installs.is_some(),
+                    advertised.contains(&kind),
+                    "{}: the {} kind is advertised {} and a profile installs it {}",
+                    network.id,
+                    kind.id(),
+                    advertised.contains(&kind),
+                    installs.is_some(),
+                );
+                let Some(profile) = installs else { continue };
+                GenerateRequest {
+                    prompt: "Use only the approved recipient".into(),
+                    network: network.id.into(),
+                    profile: profile.id.into(),
+                    target: Target::NewWallet,
+                    wallet_kind: Some(kind),
+                }
+                .validate()
+                .unwrap_or_else(|error| panic!("{} {}: {error}", network.id, kind.id()));
+            }
+        }
+    });
+}
+
 #[test]
 fn a_generated_draft_names_its_wallet_kind_at_the_top_level() {
     for kind in WalletKind::ALL {
