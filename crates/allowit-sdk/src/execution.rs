@@ -6,7 +6,9 @@ use crate::{
     profiles::Profile,
     wallet::LocalSigner,
 };
-pub use allowit_core::vendor::execution::{Binding, Capabilities, Outcome, Recovery, Request};
+pub use allowit_core::vendor::execution::{
+    Binding, Capabilities, Outcome, Quantity, Recovery, Request, Settlement,
+};
 use std::{path::Path, sync::Arc, time::Duration};
 
 fn rail_for_operation(network: &str, op: &str) -> Result<&'static dyn plugins::RailPlugin> {

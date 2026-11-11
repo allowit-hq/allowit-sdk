@@ -5,6 +5,7 @@ use allowit_sdk::{
     execution,
     generation::{self, GenerateRequest, Target},
     input::address,
+    kinds::{self, WalletKind},
     owner,
     plugins::{self, Feature, LinkKind, testkit},
     routing,
@@ -36,6 +37,59 @@ fn every_rail_has_a_unique_id_and_canonical_networks() {
         assert_eq!(plugins::by_id(rail.id()).unwrap().id(), rail.id());
     }
     assert_eq!(plugins::for_network("unknown:none").err().unwrap().code, 2);
+}
+
+#[test]
+fn every_rail_advertises_wallet_kinds_and_reports_the_kind_of_its_profile() {
+    for rail in plugins::rails() {
+        for network in rail.networks() {
+            let offered = kinds::wallet_kinds(network.id).unwrap();
+            assert!(!offered.is_empty(), "{} offers no wallet kind", network.id);
+            let ids: Vec<_> = offered.iter().map(|kind| kind.id).collect();
+            let mut ordered = ids.clone();
+            ordered.sort();
+            ordered.dedup();
+            assert_eq!(ids, ordered, "{} kinds are in selection order", network.id);
+            for alias in network.aliases {
+                assert_eq!(kinds::wallet_kinds(alias).unwrap(), offered);
+            }
+        }
+        let support = rail.test_support();
+        let fixtures = (support.fixtures)();
+        let bound = kinds::wallet_kind(support.network, &fixtures.public_profile).unwrap();
+        assert!(rail.wallet_kinds(support.network).contains(&bound));
+        assert!(kinds::wallet_kind(support.network, b"{}").is_err());
+    }
+    assert_eq!(kinds::wallet_kinds("unknown:none").unwrap_err().code, 2);
+    assert_eq!(WalletKind::parse("standard"), Some(WalletKind::Standard));
+}
+
+#[test]
+fn every_rail_supplies_the_unit_of_its_native_asset_and_tokens() {
+    for rail in plugins::rails() {
+        for network in rail.networks() {
+            let native = kinds::native_asset(network.id).unwrap();
+            assert!(native.native && !native.symbol.is_empty() && !native.name.is_empty());
+            let one = 10i128.pow(u32::from(native.decimals));
+            assert_eq!(native.format(5 * one), format!("5 {}", native.symbol));
+            for token in rail.tokens(network.id) {
+                let shown = kinds::asset_display(network.id, token.code).unwrap();
+                assert_eq!(
+                    (shown.symbol.as_str(), shown.decimals),
+                    (token.code, token.decimals)
+                );
+                assert_eq!(shown.native, token.native);
+                let text = kinds::format_amount(network.id, token.code, 1).unwrap();
+                assert!(text.ends_with(&format!(" {}", token.code)), "{text}");
+                assert!(!text.contains("UNIT"));
+            }
+            // An unknown asset has no unit. It is an error, never a placeholder.
+            let fixtures = (rail.test_support().fixtures)();
+            assert!(kinds::asset_display(network.id, &fixtures.invalid_address).is_err());
+            assert!(kinds::format_amount(network.id, "", 1).is_err());
+        }
+    }
+    assert!(kinds::native_asset("unknown:none").is_err());
 }
 
 #[test]

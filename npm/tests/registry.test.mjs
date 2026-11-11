@@ -146,3 +146,111 @@ for (const kind of ['constructor', 'toString', '__proto__', 'unknown-kind']) {
     assert.equal(error?.code, 'unsupported');
   });
 }
+
+test('the four wallet kinds have stable ids, text and one list of supported params', () => {
+  const kinds = sdk.walletKinds();
+  assert.deepEqual(kinds.map((kind) => kind.id), ['native', 'simple', 'standard', 'custom']);
+  assert.deepEqual(kinds.map((kind) => [kind.enforcement, kind.custody]), [
+    ['offchain', 'keypair'], ['offchain', 'contract'], ['onchain', 'contract'], ['onchain', 'contract'],
+  ]);
+  for (const kind of kinds) {
+    assert.ok(kind.title && /\.$/.test(kind.explanation), kind.id);
+    assert.equal(sdk.walletKind(kind.id), kind);
+    assert.equal(kind.supportedParams.length > 0, kind.id === 'standard');
+    assert.equal(kind.paramsUrl !== null, kind.id === 'standard');
+    assert.ok(Object.isFrozen(kind) && Object.isFrozen(kind.supportedParams));
+  }
+  const standard = sdk.walletKind('standard');
+  assert.equal(standard.title, 'Standard');
+  assert.match(standard.paramsUrl, /^https:\/\/github\.com\/allowit-hq\/allowit-core\/.+#standard-wallet-parameters$/);
+  assert.ok(standard.supportedParams.includes('payment_limit'));
+  // The old selection value has no alias.
+  for (const unknown of ['common', 'Standard', '', null, undefined]) assert.equal(sdk.walletKind(unknown), null);
+});
+
+test('amounts print exact decimals with the given unit and never a placeholder', () => {
+  assert.equal(sdk.formatUnits('50000000', 7), '5');
+  assert.equal(sdk.formatUnits(2500000n, 7), '0.25');
+  assert.equal(sdk.formatUnits('-1', 7), '-0.0000001');
+  assert.equal(sdk.formatUnits('0', 7), '0');
+  assert.equal(sdk.formatUnits('-0', 2), '0');
+  assert.equal(sdk.formatUnits('0007', 0), '7');
+  assert.equal(sdk.formatUnits('340282366920938463463374607431768211455', 0), '340282366920938463463374607431768211455');
+  for (const bad of ['1.5', 'x', '', '1e3']) assert.throws(() => sdk.formatUnits(bad, 7), TypeError);
+  assert.throws(() => sdk.formatUnits('1', -1), TypeError);
+  const display = {symbol: 'XYZ', decimals: 2, name: 'Example', native: false};
+  assert.equal(sdk.formatAmount('unknown:none', display, '1250'), '12.5 XYZ');
+  assert.throws(() => sdk.formatAmount('unknown:none', 'XYZ', '1'), /No unit is known/);
+  assert.equal(sdk.nativeAsset('unknown:none'), null);
+  assert.equal(sdk.assetDisplay('unknown:none', 'XYZ'), null);
+  assert.deepEqual(sdk.walletKindsFor('unknown:none'), []);
+  assert.equal(sdk.walletKindOf('unknown:none', {}), null);
+  assert.throws(() => sdk.parseReviewLink('#unknown=abc'), /agent policy link is invalid/);
+  assert.throws(() => sdk.parseReviewLink(null), /agent policy link is invalid/);
+});
+
+test('the owner workflow rejects an unknown network', async () => {
+  await assert.rejects(sdk.installAndFund('unknown:none', {}), /No rail is registered/);
+});
+
+for (const rail of sdk.rails()) {
+  const {network, fixtures} = rail.test;
+
+  test(`${rail.id}: wallet kinds and the bound kind`, () => {
+    const offered = sdk.walletKindsFor(network);
+    assert.ok(offered.length > 0);
+    for (const kind of offered) assert.equal(sdk.walletKind(kind.id), kind);
+    assert.deepEqual(offered.map((kind) => kind.id), rail.walletKinds(network).filter((id) => sdk.walletKind(id)));
+    assert.equal(sdk.walletKindOf(network, {}), null);
+    assert.equal(sdk.walletKindOf(network, null), null);
+  });
+
+  test(`${rail.id}: every published asset has a unit`, () => {
+    const native = sdk.nativeAsset(network);
+    assert.ok(native.native && native.symbol && native.name);
+    assert.equal(sdk.formatAmount(network, native, 5n * 10n ** BigInt(native.decimals)), `5 ${native.symbol}`);
+    for (const asset of sdk.assets(network)) {
+      const display = sdk.assetDisplay(network, asset.id);
+      assert.equal(display.symbol, asset.symbol);
+      assert.equal(display.decimals, asset.decimals);
+      const text = sdk.formatAmount(network, asset.id, '1');
+      assert.ok(text.endsWith(` ${asset.symbol}`) && !text.includes('UNIT'), text);
+    }
+    assert.equal(sdk.assetDisplay(network, fixtures.invalidAddress), null);
+    assert.throws(() => sdk.formatAmount(network, fixtures.invalidAddress, '1'), /No unit is known/);
+  });
+
+  test(`${rail.id}: review links and the owner workflow dispatch to the rail`, async () => {
+    const proposal = {network, revision: 1, title: 'Pay', explanation: '', code: 'fn policy() {}',
+      sourceHash: 'ab'.repeat(32), paramsHash: 'cd'.repeat(32), params: {}};
+    const encode = (envelope) => rail.review.fragment + Buffer.from(JSON.stringify(envelope)).toString('base64url');
+    const link = sdk.parseReviewLink(encode({proposal, workPrompt: 'Do the work.', agent: fixtures.address, amount: '5'}));
+    assert.deepEqual(link, {proposal, workPrompt: 'Do the work.', agent: fixtures.address, amount: '5'});
+    assert.deepEqual(sdk.parseReviewLink(encode({proposal, workPrompt: 'w'})).agent, null);
+    assert.throws(() => sdk.parseReviewLink(encode({proposal: {...proposal, network: 'unknown:none'}, workPrompt: 'w'})), /invalid/);
+    assert.throws(() => sdk.parseReviewLink(encode({proposal, workPrompt: 'w', extra: 1})), /invalid/);
+    assert.match(sdk.reviewAgentPrompt(link, 'https://example.test', 'policy-1', 'wallet-1', fixtures.address), /^Do the work\./);
+    assert.deepEqual(sdk.reviewParamLines(network, {}), []);
+
+    // One install step, then one funding step. The workflow signs each once and reports both receipts.
+    const hash = (n) => String(n).repeat(64);
+    const step = (action, n) => ({action, payload: `unsigned-${n}`, transactionHash: hash(n), expiresAt: Math.floor(Date.now() / 1000) + 300});
+    const journal = new Map(), signed = [];
+    let installed = false;
+    const ask = async (path, body) => {
+      if (path === 'native/deploy/prepare') return installed ? {policyId: 'p', installed: true, installation: {wallet: 'wallet-1'}} : {policyId: 'p', step: step('create_wallet', 1)};
+      if (path === 'native/owner/prepare') return {policyId: 'p', step: step('fund', 2)};
+      const n = body.payload.at(-1);
+      installed = true;
+      return {policyId: 'p', action: n === '1' ? 'create_wallet' : 'fund', status: 'confirmed', transactionHash: hash(n)};
+    };
+    const result = await sdk.installAndFund(network, {
+      ask, sign: async (s) => (signed.push(s.action), `signed-${s.hash[0]}`),
+      journal: {get: (k) => journal.get(k) ?? null, set: (k, v) => void journal.set(k, v), remove: (k) => void journal.delete(k)},
+      key: 'k', policyId: 'p', agent: fixtures.address, amount: '5', onStep() {},
+    });
+    assert.equal(result.wallet, 'wallet-1');
+    assert.deepEqual(signed, ['create_wallet', 'fund']);
+    assert.deepEqual(result.receipts.map((r) => r.action), ['create_wallet', 'fund']);
+  });
+}

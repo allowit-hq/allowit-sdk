@@ -43,3 +43,23 @@ fn public_generation_validation_preserves_network_error_order() {
     request.prompt.clear();
     assert!(request.validate().unwrap_err().message.contains("5–3000"));
 }
+
+/// The npm package shows the same wallet kinds as Core: `npm/src/wallet-kinds.js` holds the exact
+/// JSON of `WALLET_KINDS`. Regenerate it with `ALLOWIT_WRITE_WALLET_KINDS=1 cargo test`.
+#[test]
+fn npm_wallet_kinds_equal_the_core_description() {
+    let kinds = serde_json::to_string_pretty(&allowit_sdk::kinds::WALLET_KINDS).unwrap();
+    let module = format!(
+        "// Generated from Core `vendor::kinds::WALLET_KINDS` by the SDK test `npm_wallet_kinds_equal_the_core_description`.\nexport default Object.freeze({kinds}.map((kind) => Object.freeze({{...kind, supportedParams: Object.freeze(kind.supportedParams)}})));\n"
+    );
+    let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../../npm/src/wallet-kinds.js");
+    if std::env::var_os("ALLOWIT_WRITE_WALLET_KINDS").is_some() {
+        std::fs::write(path, &module).unwrap();
+    }
+    assert_eq!(std::fs::read_to_string(path).unwrap(), module);
+    let ids: Vec<_> = allowit_sdk::kinds::WALLET_KINDS
+        .iter()
+        .map(|k| k.id.id())
+        .collect();
+    assert_eq!(ids, ["native", "simple", "standard", "custom"]);
+}

@@ -31,6 +31,27 @@ flowchart TB
     Engine -->|crate| Core
 ```
 
+## Wallet kinds, units and the owner workflow
+
+Hosts offer the same four wallet kinds and show the same text. Core describes them; each rail advertises the kinds
+it supports. The selection id `standard` names the tier that technical names call Common, and its supported params
+are listed in the [Core README](https://github.com/allowit-hq/allowit-core/blob/main/README.md#standard-wallet-parameters).
+
+| Need | Rust (`allowit_sdk`) | npm (`@allowit/sdk`) |
+| --- | --- | --- |
+| All kinds | `kinds::WALLET_KINDS`, `kinds::WalletKind` | `walletKinds()`, `walletKind(id)` |
+| Kinds of a rail | `kinds::wallet_kinds(network)` | `walletKindsFor(network)` |
+| Kind that a wallet binds | `kinds::wallet_kind(network, profile)`, `Profile::wallet_kind()`, `ConfigurationInfo::wallet_kind()` | `walletKindOf(network, document)` |
+| Unit of an asset | `kinds::native_asset(network)`, `kinds::asset_display(network, asset)` | `nativeAsset(network)`, `assetDisplay(network, asset)` |
+| Print an amount | `kinds::format_amount(network, asset, units)`, `AssetDisplay::format(units)` | `formatAmount(network, asset, units)`, `formatUnits(units, decimals)` |
+| Settled operation | `execution::Settlement::of(&outcome.document)` | the `settlement` object of the outcome document |
+| Review and sign | | `parseReviewLink`, `reviewAgentPrompt`, `reviewParamLines`, `installAndFund(network, input)` |
+
+A host never prints a unit of its own. An asset without a known unit is an error in Rust and `null` in npm.
+`npm/src/wallet-kinds.js` is generated from Core by the test `npm_wallet_kinds_equal_the_core_description`;
+run it with `ALLOWIT_WRITE_WALLET_KINDS=1` after a Core change.
+`progress::set_sink` installs the sink for the progress lines of long provider steps.
+
 ## Write a portable policy
 
 Policies are synchronous Rust against the `allowit` package:
