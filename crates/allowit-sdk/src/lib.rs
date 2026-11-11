@@ -5,6 +5,8 @@ extern crate self as allowit_sdk;
 /// Core-owned portable policy values, rules and evaluator used by SDK callers.
 pub use allowit_core as portable;
 pub use allowit_core::client::error;
+/// Progress of long provider steps. A terminal host installs a sink; a server installs none.
+pub use allowit_core::client::progress;
 /// Core-backed private proof storage accepted by SDK owner workflows.
 pub use allowit_core::client::store::Store;
 /// Stable Core digest used for source and caller-owned record identities.
@@ -25,6 +27,7 @@ pub mod config;
 pub mod execution;
 pub mod generation;
 pub mod input;
+pub mod kinds;
 pub mod output;
 pub mod owner;
 pub mod owner_session;

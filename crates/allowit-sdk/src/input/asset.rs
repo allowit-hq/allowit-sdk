@@ -20,7 +20,7 @@ pub use allowit_core::vendor::input::asset::{Amount, Asset, Token, Use, exec_use
 
 const FORMS: &str = "use CODE:DECIMAL, CODE:ISSUER:DECIMAL, CONTRACT:DECIMAL or INTEGER base units";
 
-pub use allowit_core::vendor::input::asset::decimal_units;
+pub use allowit_core::vendor::input::asset::{AssetDisplay, decimal_units, units_decimal};
 
 /// Parses an amount for a rail with the given family and token table.
 pub fn parse(family: Family, tokens: &[Token], text: &str, usage: Use) -> Result<Amount> {

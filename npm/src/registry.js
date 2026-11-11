@@ -1,6 +1,7 @@
 // Vendor-neutral rail registry and the generic <allowit-rail> element.
 // Hosts pass data in and listen for allowit-* events; the registered plugin renders the rest.
 import * as registered from './registered.js';
+import WALLET_KINDS from './wallet-kinds.js';
 
 const RAILS = Object.freeze(Object.values(registered));
 
@@ -43,6 +44,117 @@ export function explorerUrl(network, kind, id) {
 export function assets(network) {
   const hit = lookup(network);
   return hit ? hit.rail.assets(hit.network.id) : [];
+}
+
+/** The four wallet kinds, in selection order, with the text that every host shows. */
+export function walletKinds() {
+  return WALLET_KINDS;
+}
+
+/** The description of one kind by its selection id, or null. Ids are exact; there are no aliases. */
+export function walletKind(id) {
+  return WALLET_KINDS.find((kind) => kind.id === id) ?? null;
+}
+
+/** The kinds that the rail of `network` supports, in selection order. */
+export function walletKindsFor(network) {
+  const hit = lookup(network);
+  if (!hit) return [];
+  const offered = hit.rail.walletKinds(hit.network.id);
+  return WALLET_KINDS.filter((kind) => offered.includes(kind.id));
+}
+
+/**
+ * The kind that a policy, draft, wallet profile or installation binds, or null when it binds none.
+ * The document's rail reads its own binding, so hosts never read a rail-specific field.
+ */
+export function walletKindOf(network, document) {
+  const hit = lookup(network);
+  return walletKind(hit ? hit.rail.walletKind(document) : null);
+}
+
+/** Display metadata of the network's native asset, or null for an unknown network. */
+export function nativeAsset(network) {
+  const hit = lookup(network);
+  return hit ? hit.rail.nativeAsset(hit.network.id) : null;
+}
+
+/** Display metadata of an asset reference, or null when the rail knows no unit for it. */
+export function assetDisplay(network, asset) {
+  const hit = lookup(network);
+  return hit ? hit.rail.assetDisplay(hit.network.id, asset) : null;
+}
+
+/**
+ * Base units as an exact decimal without trailing zeros. `units` is integer text, a bigint or a safe
+ * integer number. A number beyond the safe range has already lost its exact value, so it throws.
+ */
+export function formatUnits(units, decimals) {
+  const exact = typeof units === 'string' || typeof units === 'bigint' || Number.isSafeInteger(units);
+  const text = exact ? String(units) : '';
+  if (!/^-?\d+$/.test(text) || !Number.isInteger(decimals) || decimals < 0 || decimals > 255) {
+    throw new TypeError('units must be integer text, a bigint or a safe integer, and decimals a count from 0 to 255');
+  }
+  const negative = text.startsWith('-');
+  const digits = (negative ? text.slice(1) : text).replace(/^0+(?=\d)/, '').padStart(decimals + 1, '0');
+  const whole = digits.slice(0, digits.length - decimals);
+  const fraction = digits.slice(digits.length - decimals).replace(/0+$/, '');
+  return `${negative && /[1-9]/.test(digits) ? '-' : ''}${whole}${fraction ? `.${fraction}` : ''}`;
+}
+
+/**
+ * Base units of an asset as an amount with the rail's unit, such as `5 XYZ`. `asset` is an asset
+ * reference, or the display metadata itself. An asset without a known unit throws; nothing prints
+ * a placeholder unit.
+ */
+export function formatAmount(network, asset, units) {
+  const display = typeof asset === 'string' ? assetDisplay(network, asset) : asset;
+  if (!display) throw new Error(`No unit is known for ${String(asset)} on ${network}`);
+  return `${formatUnits(units, display.decimals)} ${display.symbol}`;
+}
+
+/**
+ * Decode and check a Review and sign link. The rail of the proposal checks it; an unknown rail or a
+ * malformed link throws. The result has `network` so the host can dispatch the workflow.
+ */
+export function parseReviewLink(fragment) {
+  for (const rail of RAILS) {
+    if (typeof fragment !== 'string' || !fragment.startsWith(rail.review.fragment)) continue;
+    try {
+      const link = rail.review.parseLink(fragment);
+      if (lookup(link.proposal.network)?.rail === rail) return link;
+    } catch {
+      // Another rail may own this link.
+    }
+  }
+  throw new Error('The agent policy link is invalid.');
+}
+
+function hitOf(network) {
+  const hit = lookup(network);
+  if (!hit) throw new Error(`No rail is registered for ${network}`);
+  return hit;
+}
+const railOf = (network) => hitOf(network).rail;
+
+/** The prompt that the owner gives the agent after signing. */
+export function reviewAgentPrompt(link, origin, policyId, wallet, agent) {
+  return railOf(link.proposal.network).review.agentPrompt(link, origin, policyId, wallet, agent);
+}
+
+/** Owner-readable lines for the params of a proposal. */
+export function reviewParamLines(network, params) {
+  return railOf(network).review.paramLines(params);
+}
+
+/**
+ * Install the reviewed policy wallet, then fund it. The host supplies its transport, the signing of
+ * one owner step and a journal; the rail settles a saved signed step before it signs another one.
+ * An unknown network rejects.
+ */
+export async function installAndFund(network, input) {
+  const hit = hitOf(network);
+  return hit.rail.ownerWorkflow.installAndFund({...input, network: hit.network.id});
 }
 
 const Base = globalThis.HTMLElement ?? class {};
