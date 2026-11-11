@@ -176,7 +176,10 @@ test('amounts print exact decimals with the given unit and never a placeholder',
   assert.equal(sdk.formatUnits('-0', 2), '0');
   assert.equal(sdk.formatUnits('0007', 0), '7');
   assert.equal(sdk.formatUnits('340282366920938463463374607431768211455', 0), '340282366920938463463374607431768211455');
-  for (const bad of ['1.5', 'x', '', '1e3']) assert.throws(() => sdk.formatUnits(bad, 7), TypeError);
+  assert.equal(sdk.formatUnits(Number.MAX_SAFE_INTEGER, 0), '9007199254740991');
+  // A number beyond the safe range no longer holds the exact amount.
+  for (const bad of ['1.5', 'x', '', '1e3', 1000000000000000100, 2 ** 53, 1.5, NaN, null, undefined, {}, [5]]) assert.throws(() => sdk.formatUnits(bad, 7), TypeError);
+  assert.throws(() => sdk.formatAmount('unknown:none', {symbol: 'XYZ', decimals: 0, name: 'x', native: false}, 2 ** 60), TypeError);
   assert.throws(() => sdk.formatUnits('1', -1), TypeError);
   const display = {symbol: 'XYZ', decimals: 2, name: 'Example', native: false};
   assert.equal(sdk.formatAmount('unknown:none', display, '1250'), '12.5 XYZ');

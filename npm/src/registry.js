@@ -85,11 +85,15 @@ export function assetDisplay(network, asset) {
   return hit ? hit.rail.assetDisplay(hit.network.id, asset) : null;
 }
 
-/** Base units as an exact decimal without trailing zeros. `units` is integer text or a bigint. */
+/**
+ * Base units as an exact decimal without trailing zeros. `units` is integer text, a bigint or a safe
+ * integer number. A number beyond the safe range has already lost its exact value, so it throws.
+ */
 export function formatUnits(units, decimals) {
-  const text = String(units);
+  const exact = typeof units === 'string' || typeof units === 'bigint' || Number.isSafeInteger(units);
+  const text = exact ? String(units) : '';
   if (!/^-?\d+$/.test(text) || !Number.isInteger(decimals) || decimals < 0 || decimals > 255) {
-    throw new TypeError('units must be an integer and decimals a count from 0 to 255');
+    throw new TypeError('units must be integer text, a bigint or a safe integer, and decimals a count from 0 to 255');
   }
   const negative = text.startsWith('-');
   const digits = (negative ? text.slice(1) : text).replace(/^0+(?=\d)/, '').padStart(decimals + 1, '0');
