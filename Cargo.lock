@@ -19,11 +19,28 @@ dependencies = [
 ]
 
 [[package]]
+name = "allowit-core"
+version = "0.6.0"
+source = "git+https://github.com/allowit-hq/allowit-core.git?rev=f55b34491882336f2340a8a43c418bebb5426b11#f55b34491882336f2340a8a43c418bebb5426b11"
+dependencies = [
+ "libc",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "serde_json_canonicalizer",
+ "sha2",
+ "time",
+ "url",
+ "zeroize",
+]
+
+[[package]]
 name = "allowit-sdk"
 version = "0.5.0"
 dependencies = [
- "allowit-core",
+ "allowit-core 0.6.0 (git+https://github.com/allowit-hq/allowit-core.git?rev=f55b34491882336f2340a8a43c418bebb5426b11)",
  "allowit-stellar",
+ "allowit-vendor-etherfuse",
  "chrono",
  "getrandom 0.3.4",
  "libc",
@@ -41,7 +58,7 @@ name = "allowit-stellar"
 version = "0.4.0"
 source = "git+https://github.com/allowit-hq/allowit-contracts-stellar.git?rev=e7e18662a9f4e36f932277626b9bcedc53586e91#e7e18662a9f4e36f932277626b9bcedc53586e91"
 dependencies = [
- "allowit-core",
+ "allowit-core 0.6.0 (git+https://github.com/allowit-hq/allowit-core.git?rev=9195f6111811c60f8c5dbe158d614345ae300014)",
  "base64 0.22.1",
  "ed25519-dalek",
  "serde",
@@ -52,6 +69,16 @@ dependencies = [
  "stellar-xdr",
  "time",
  "zeroize",
+]
+
+[[package]]
+name = "allowit-vendor-etherfuse"
+version = "0.2.0"
+source = "git+https://github.com/allowit-hq/vendor-etherfuse.git?rev=f90ed6f00f93caab110dc6c7575529c6682e917e#f90ed6f00f93caab110dc6c7575529c6682e917e"
+dependencies = [
+ "allowit-core 0.6.0 (git+https://github.com/allowit-hq/allowit-core.git?rev=f55b34491882336f2340a8a43c418bebb5426b11)",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]

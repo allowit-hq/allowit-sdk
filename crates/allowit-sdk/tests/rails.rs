@@ -314,3 +314,27 @@ fn an_undeclared_operation_is_refused() {
         assert!(error.message.contains(network));
     });
 }
+
+/// Every registered policy package answers its samples through the registry dispatch. A package
+/// that keeps a feature closed is skipped with its reason.
+#[test]
+fn every_registered_policy_package_answers_its_samples() {
+    use allowit_sdk::plugins::{self, PackageFeature, testkit};
+    for feature in [PackageFeature::AuthenticatedFacts, PackageFeature::LiveCall] {
+        testkit::each_package(feature, |package, sample| {
+            let reply = plugins::invoke_policy_function(
+                package.namespace,
+                sample.function,
+                &sample.args,
+                &sample.facts,
+            );
+            assert_eq!(
+                reply.ok(),
+                sample.reply,
+                "{}::{}",
+                package.namespace,
+                sample.function
+            );
+        });
+    }
+}
