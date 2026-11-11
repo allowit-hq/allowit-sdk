@@ -39,13 +39,15 @@ impl GenerateRequest {
                 kind.id()
             )));
         }
-        let installs = rail
+        // Several profiles of a rail may share an id and differ in the kind that they install.
+        let mut installs = rail
             .server()
             .profiles()
             .iter()
-            .find(|profile| profile.id == self.profile)
-            .and_then(|profile| profile.wallet_kind());
-        if installs.is_some_and(|installed| installed != kind) {
+            .filter(|profile| profile.id == self.profile)
+            .filter_map(|profile| profile.wallet_kind())
+            .peekable();
+        if installs.peek().is_some() && !installs.any(|installed| installed == kind) {
             return Err(Error::usage(format!(
                 "The selected wallet profile does not install the {} wallet kind",
                 kind.id()

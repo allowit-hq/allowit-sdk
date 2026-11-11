@@ -50,7 +50,7 @@ are listed in the [Core README](https://github.com/allowit-hq/allowit-core/blob/
 | Explorer link of an operation | `execution::explorer(&outcome.document)` | the `explorer` text of the document |
 | Choose a wallet kind | `generation::GenerateRequest.wallet_kind`, `GeneratedDraft::wallet_kind()`, `generation::wallet_kind_of(document)` | `walletKindIdOf(document)`, the `walletKind` field of a generate or adopt request |
 | Refused wallet kind | `error.api_code`, `error.details`, `error.detail("reason")` | `walletKindRefusal(error)` |
-| Print the params of a draft or profile | `kinds::param_lines(network, draft)`, `kinds::profile_param_lines(description)` | `reviewParamLines(network, params)` |
+| Print the params of a draft or profile | `kinds::param_lines(network, document)`, `kinds::profile_param_lines(&profile)` | `reviewParamLines(network, params)` |
 | Review and sign | | `parseReviewLink`, `reviewAgentPrompt`, `reviewParamLines`, `installAndFund(network, input)` |
 
 A host never prints a unit of its own. An asset without a known unit is an error in Rust and `null` in npm.

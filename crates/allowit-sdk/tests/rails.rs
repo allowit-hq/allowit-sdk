@@ -331,18 +331,24 @@ fn a_generation_request_names_only_a_wallet_kind_that_the_rail_and_the_profile_o
         for profile in rail.server().profiles() {
             // Without a choice the request is valid, as before.
             request(profile.id, None).validate().unwrap();
-            let Some(installed) = profile.wallet_kind() else {
+            // The kinds that the profiles with this id install; an id may serve several.
+            let installed: Vec<WalletKind> = rail
+                .server()
+                .profiles()
+                .iter()
+                .filter(|other| other.id == profile.id)
+                .filter_map(|other| other.wallet_kind())
+                .collect();
+            if installed.is_empty() {
                 continue;
-            };
-            if offered.contains(&installed) {
-                request(profile.id, Some(installed)).validate().unwrap();
             }
-            for other in WalletKind::ALL
-                .into_iter()
-                .filter(|kind| *kind != installed)
-            {
-                let error = request(profile.id, Some(other)).validate().unwrap_err();
-                assert_eq!(error.code, 2, "{} {}", rail.id(), other.id());
+            for kind in WalletKind::ALL {
+                let result = request(profile.id, Some(kind)).validate();
+                let served = offered.contains(&kind) && installed.contains(&kind);
+                assert_eq!(result.is_ok(), served, "{} {}", rail.id(), kind.id());
+                if let Err(error) = result {
+                    assert_eq!(error.code, 2, "{} {}", rail.id(), kind.id());
+                }
             }
         }
         for kind in WalletKind::ALL {
@@ -413,11 +419,26 @@ fn an_imported_profile_prints_its_params_in_human_units() {
             eprintln!("skip {}: no public profile fixture", rail.id());
             return;
         };
-        let lines = kinds::profile_param_lines(&description).unwrap();
+        // `kinds::profile_param_lines` passes the same document of an imported profile.
+        let document: serde_json::Value = serde_json::from_slice(&fx.public_profile).unwrap();
+        let read = rail.draft_params(network, &document).unwrap();
+        let lines = kinds::param_lines(network, &document).unwrap();
         assert_eq!(lines.len(), description.params.len());
+        let registry = allowit_sdk::policy_metadata::canonical_function_registry().unwrap();
         for line in &lines {
+            assert!(description.params.contains_key(&line.key), "{line:?}");
             assert!(!line.label.is_empty() && !line.value.is_empty(), "{line:?}");
             assert!(!line.value.contains(['{', '"']), "{line:?}");
+            let amount = registry
+                .functions
+                .iter()
+                .any(|f| f.name == line.key && f.parameter.semantic_type == "amount");
+            if amount {
+                assert!(
+                    line.value.ends_with(&format!(" {}", read.asset.symbol)),
+                    "{line:?}"
+                );
+            }
         }
     });
 }

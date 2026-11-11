@@ -51,8 +51,8 @@ pub struct ParamLine {
     pub value: String,
 }
 
-/// Owner-readable lines for the params of a generated draft, a policy or an installation
-/// document of the rail of `network`. The rail reads its own document; this function prints
+/// Owner-readable lines for the params of a generated draft, a policy, a public wallet profile
+/// or an installation document of the rail of `network`. The rail reads its own document; this function prints
 /// each param: an amount in the unit of the installed asset, an expiry as a UTC time, an asset
 /// by its symbol and a canonical key by its Core label.
 pub fn param_lines(network: &str, document: &serde_json::Value) -> Result<Vec<ParamLine>> {
@@ -65,18 +65,10 @@ pub fn param_lines(network: &str, document: &serde_json::Value) -> Result<Vec<Pa
     )
 }
 
-/// Owner-readable lines for the params of an imported wallet profile.
-pub fn profile_param_lines(description: &crate::profiles::Description) -> Result<Vec<ParamLine>> {
-    let network = normalize(&description.network)?;
-    let asset = asset_display(network, &description.asset)
-        .or_else(|_| asset_display(network, &description.asset_symbol))?;
-    let params = description
-        .params
-        .iter()
-        .map(|(key, value)| Ok((key.as_str(), serde_json::to_value(value)?)))
-        .collect::<std::result::Result<Vec<_>, serde_json::Error>>()
-        .map_err(|_| crate::error::Error::config("Cannot encode policy parameters"))?;
-    lines(network, params.iter().map(|(k, v)| (*k, v)), &asset)
+/// Owner-readable lines for the params of an imported wallet profile. The rail reads the
+/// profile document, so the unit of its installed asset is the one that the rail resolves.
+pub fn profile_param_lines(profile: &crate::profiles::Profile) -> Result<Vec<ParamLine>> {
+    param_lines(&profile.description().network, &profile.document()?)
 }
 
 fn lines<'a>(
