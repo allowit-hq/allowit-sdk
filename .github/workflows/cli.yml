@@ -7,6 +7,9 @@ on:
       - "Cargo.toml"
       - "Cargo.lock"
       - ".github/workflows/cli.yml"
+  # The staging branch registers private packages. Its tests run on each push.
+  push:
+    branches: [staging]
   schedule:
     - cron: "43 4 * * *"
   workflow_dispatch:
