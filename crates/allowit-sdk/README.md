@@ -11,22 +11,7 @@ feature-gated host primitives. Rail cores provide native protocol and settlement
 
 SDK engine composes shared logic from core primitives and vendor capabilities.
 CLI and server callers use the same library and retain their own keys and authority.
-
-```mermaid
-flowchart TB
-    CLI["[allowit-cli]<br/>crate @allowit/cli<br/>DX: policy and agent keypair generation<br/>Policy validation · x402 marketplace"]
-    Server["[allowit-engine]<br/>crate @allowit/server<br/>Shared REST API · server enforcement"]
-    Engine["[allowit-sdk]<br/>crate allowit-sdk<br/>All other shared logic"]
-    Vendor["crate + npm @allowit/vendor/*<br/>Native contracts · signing · chain semantics<br/>SVG graphics · web components"]
-    Core["[allowit-core]<br/>crate + npm @allowit/sdk/core<br/>Common types · policy rules · primitives<br/>TypeScript interfaces"]
-
-    CLI -->|crate| Engine
-    Server -->|crate| Engine
-    Engine -->|crate| Vendor
-    Engine -->|crate| Core
-```
-
-[Architecture](../../README.md#architecture).
+The [repository README](../../README.md#architecture) holds the architecture diagram.
 
 ## Responsibilities
 
@@ -39,25 +24,25 @@ flowchart TB
 | CLI | Developer workflows, policy and agent keypair generation, client validation and x402 marketplace interaction |
 | Vendor adapter | Provider request/response protocols and typed facts, using common transport and workflow capabilities |
 
-Placement follows responsibility. A reusable rail workflow belongs in SDK engine even when its first caller is the server.
+Placement follows responsibility. Generic orchestration belongs in SDK engine. Each rail's execution, owner workflows, runtime clients, request validation, profiles, formatting, diagnostics and signing belong in its vendor repository, behind the `RailPlugin` trait from `allowit_core::vendor::plugin`.
 Rail packages can use common core primitives directly. Core has no dependency on SDK engine or a rail package.
 
 ## Modules
 
 | Module | Purpose |
 | --- | --- |
-| `authoring` | Shared portable source gate and bounded real compilation using embedded Core resources |
+| `authoring` | Core's Rust source gate, then a bounded direct `rustc` compilation against the embedded portable library |
 | `generation` | Registered owner-authenticated generation with exact selected-rail binding |
 | `owner` | Common owner deployment, funding, activation, export and receipt workflows |
 | `profiles` | Verified public exports, portable imports, immutable versions and explicit selection |
 | `execution`, `input` | Shared request orchestration, amount parsing and selected native format checks |
 | `runtime` | Common local execution, caller-owned OperationStore and original-packet recovery |
-| `vendors::stellar` | Native request, owner-signing, simulation and receipt bindings |
-| `vendors::stellar::runtime::owner_client` | Owner sign-in and server-backed portable generation with explicit template or installation selection |
-| `vendors::stellar::runtime::client` | Authenticated server requests, signer capabilities and exact-intent client resumption |
+| `plugins` | Rail plugin registry: `rails`, `for_network`, `by_id`, `networks`; one registration line per vendor in `plugins/registered.rs` |
+| `plugins::testkit` | Feature `testkit`: runs shared tests on every registered rail and applies declared skips |
 | `request`, `typed_request` | Bounded request identifiers, input documents and operation identities |
 | `config`, `routing`, `wallet` | Configuration, registered network selection and caller-owned opaque signers |
 | `output` | Shared printable values |
+| `transport_failure` | Class of a failed rail call: `network_unavailable` (code 7), unknown outcome (code 5) or other |
 | `error` | The error type from `allowit_core::client::error` |
 
 ## Communication and authority
@@ -66,6 +51,8 @@ Common host transport owns HTTP and JSON-RPC bounds, deadlines and connection be
 SDK engine composes those primitives with rail capabilities and caller-supplied state.
 Rail semantics determine whether an exact operation can be queried, resumed or resubmitted.
 An uncertain mutation retains its original identity and signed bytes.
+A call that got no answer is `network_unavailable`: a timeout, a connection failure, or a deadline that expires before the request is sent.
+The caller can retry it with the same request ID.
 Provider delivery and chain settlement remain separate results.
 
 `Runtime::finalize_authorization` requires the caller's authorization and retention callbacks.
@@ -77,13 +64,13 @@ Native key formats, cryptography and message domains live in the vendor library.
 SDK engine retains secure files, configuration, sessions and workflow sequencing.
 `generation::generate` requires a matching signer network before selecting its registered backend capability.
 
-`vendors::stellar::runtime::owner_client` takes a distinct caller-owned owner signer. Native helpers check the exact
-sign-in message, account, Origin and nonce. SDK engine checks freshness and requires a rotated owner session.
+`RailPlugin::generate` takes a distinct caller-owned owner signer. The plugin checks the exact
+sign-in message, account, Origin and nonce, uses Core session helpers to check freshness and requires a rotated owner session.
 It checks advertised generation profiles, networks and terms before sending one creation request.
-The SDK checks returned source, params and native bindings as a draft. This draft grants no publication or spending authority.
+It checks returned source, params and native bindings as a draft. This draft grants no publication or spending authority.
 An uncertain generation is not repeated automatically.
 
-`vendors::stellar::runtime::client` takes a caller-owned signer capability and private core `Store`.
+`RailPlugin::execution` takes a caller-owned signer capability and a private core `Store` opener.
 It saves the original intent before preparation and the exact signed proof before transmission.
 It preserves packet bytes, hashes and request IDs through status and recovery.
 CLI exit codes and terminal rendering stay in the CLI.
@@ -96,19 +83,10 @@ SDK engine shares workflow logic between those callers without transferring thei
 Vendor adapters translate provider protocols. Generic transport, retry budgets and journal mechanics belong in common code.
 An adapter exposes an explicit provider recovery contract instead of duplicating the provider's delivery workflow.
 
-## Develop
-
-Run these commands from the repository root:
-
-```sh
-cargo test --locked -p allowit-sdk@0.5.0
-cargo clippy --locked -p allowit-sdk@0.5.0 --all-targets -- -D warnings
-```
-
 ## Compiled capabilities and public profiles
 
-The vendor library defines native network identities and protocol aliases. SDK adapters register friendly aliases, display labels, asset defaults and explorer links for common routing and presentation.
-A build without vendor features exposes an empty rail inventory.
+The vendor library defines network identities, protocol and presentation aliases, display labels, asset defaults and explorer links. The SDK registers those values for common routing and presentation.
+The registered plugins define the rail inventory.
 
 Owner export installs only the exact independently checked activation result.
 Explicit public import checks current native authority before saving a profile.
@@ -129,9 +107,17 @@ That status path cannot prepare or sign a replacement operation.
 
 A public descriptor and an unauthenticated server response cannot supply their own trusted identity.
 Fresh Native signing verifies actual source consent and current roles through independent RPC.
-The compiler receives an explicit allowlist of public toolchain paths. Provider credentials, signer values and authoring overrides do not enter Python or rustc.
+The compiler receives an explicit allowlist of public toolchain paths. Provider credentials, signer values and authoring overrides do not enter rustc.
 
 A resolved execution profile and its authority remain owned by one caller across its journal check and dispatch.
 The receipt-only recovery capability instead reads the original private record, without importing an obsolete public profile.
 It accepts no fresh preparation or operation-signing path. Recovery queries the configured settlement service for the original packet.
 A final success requires a verified receipt.
+
+## Provider boundary
+
+The host crate in Core exposes provider contracts behind its optional `vendor` feature.
+The SDK retains generic orchestration, storage, routing and consumer integration tests.
+It opens the private namespaces `<id>-journal` and `<id>-owner-workflows` for each plugin. A caller-owned store opener preserves
+native validation before filesystem changes.
+A retained packet serializes as `{"rail": <plugin id>, "packet": <native document>}`. Deserialization restores it through that plugin before exposing retained state.

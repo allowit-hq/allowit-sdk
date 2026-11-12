@@ -1,7 +1,8 @@
 //! Owner orchestration through the selected compiled capability. No terminal I/O or native DTOs.
 use crate::{
     error::{Error, Result},
-    routing, vendors,
+    plugins::{for_network, owner_store},
+    routing,
     wallet::LocalSigner,
 };
 use std::path::Path;
@@ -17,6 +18,21 @@ pub struct Context<'a> {
     pub clock: &'a dyn Fn() -> Result<u64>,
 }
 impl Context<'_> {
+    pub(crate) fn provider_context<'a>(
+        &'a self,
+        store: &'a dyn Fn() -> Result<crate::Store>,
+    ) -> allowit_core::vendor::owner::Context<'a> {
+        allowit_core::vendor::owner::Context {
+            network: self.network,
+            backend: self.backend,
+            authority: &self.authority.0,
+            origin: self.origin,
+            rpc_url: self.rpc_url,
+            store,
+            signer: self.signer,
+            clock: self.clock,
+        }
+    }
     fn check(&self) -> Result<()> {
         if self.authority.origin() != crate::config::parse_origin(self.backend)?
             || self.authority.network() != routing::normalize(self.network)?
@@ -33,29 +49,13 @@ impl Context<'_> {
         Ok(())
     }
 }
-pub struct Deploy<'a> {
-    pub draft: &'a [u8],
-    pub agent: &'a str,
-    pub server: &'a str,
-    pub executable: &'a [u8],
-    pub request_id: &'a str,
-    pub fee_limit: &'a str,
-}
-pub struct Activate<'a> {
-    pub document: &'a [u8],
-    pub agent: Option<&'a str>,
-    pub server: Option<&'a str>,
-    pub request_id: &'a str,
-}
-pub struct Setup<'a> {
-    pub agent: &'a str,
-    pub server: &'a str,
-    pub request_id: &'a str,
-    pub fee_per_operation: &'a str,
-}
+pub use allowit_core::vendor::owner::{Activate, Deploy, Setup};
 pub fn deploy(cx: &Context<'_>, request: Deploy<'_>) -> Result<serde_json::Value> {
     cx.check()?;
-    vendors::owner(cx.network)?.deploy(cx, request)
+    let store = || owner_store(cx.root, cx.network);
+    for_network(cx.network)?
+        .owner()
+        .deploy(&cx.provider_context(&store), request)
 }
 pub fn fund(
     cx: &Context<'_>,
@@ -65,11 +65,21 @@ pub fn fund(
     fee_limit: &str,
 ) -> Result<serde_json::Value> {
     cx.check()?;
-    vendors::owner(cx.network)?.fund(cx, document, id, amount, fee_limit)
+    let store = || owner_store(cx.root, cx.network);
+    for_network(cx.network)?.owner().fund(
+        &cx.provider_context(&store),
+        document,
+        id,
+        amount,
+        fee_limit,
+    )
 }
 pub fn activate(cx: &Context<'_>, request: Activate<'_>) -> Result<serde_json::Value> {
     cx.check()?;
-    vendors::owner(cx.network)?.activate(cx, request)
+    let store = || owner_store(cx.root, cx.network);
+    for_network(cx.network)?
+        .owner()
+        .activate(&cx.provider_context(&store), request)
 }
 pub fn export(
     cx: &Context<'_>,
@@ -77,12 +87,26 @@ pub fn export(
     activation_id: &str,
 ) -> Result<crate::profiles::Profile> {
     cx.check()?;
-    vendors::owner(cx.network)?.export(cx, document, activation_id)
+    let store = || owner_store(cx.root, cx.network);
+    let raw = for_network(cx.network)?.owner().export(
+        &cx.provider_context(&store),
+        document,
+        activation_id,
+    )?;
+    crate::profiles::Cache::open(cx.root)?
+        .install(cx.network, cx.backend, raw)?
+        .with_authority(cx.authority)
 }
 pub fn setup(cx: &Context<'_>, request: Setup<'_>) -> Result<serde_json::Value> {
     cx.check()?;
-    vendors::owner(cx.network)?.setup(cx, request)
+    let store = || owner_store(cx.root, cx.network);
+    for_network(cx.network)?
+        .owner()
+        .setup(&cx.provider_context(&store), request)
 }
 pub fn status(root: &Path, network: &str, rpc_url: &str, id: &str) -> Result<serde_json::Value> {
-    vendors::owner(network)?.status(root, network, rpc_url, id)
+    let store = owner_store(root, network)?;
+    for_network(network)?
+        .owner()
+        .status(&store, network, rpc_url, id)
 }

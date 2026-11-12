@@ -1,7 +1,7 @@
 //! Local agent keys. PublicWallet is the only serializable registration value.
 use crate::{
     error::{Error, Result},
-    routing, vendors,
+    plugins, routing,
 };
 use allowit_core::client::store::Store;
 use serde::{Deserialize, Serialize};
@@ -18,7 +18,7 @@ pub struct PublicWallet {
 /// A caller-bound local signer. Its native key stays behind the compiled provider.
 pub struct LocalSigner {
     network: String,
-    key: Box<dyn vendors::PrivateSigner>,
+    key: Box<dyn plugins::PrivateSigner>,
 }
 impl LocalSigner {
     pub fn network(&self) -> &str {
@@ -40,10 +40,22 @@ impl LocalSigner {
         self.key.sign_hash(digest)
     }
 }
+impl allowit_core::vendor::wallet::Signer for LocalSigner {
+    fn network(&self) -> &str {
+        self.network()
+    }
+    fn address(&self) -> &str {
+        self.address()
+    }
+    fn sign_hash(&self, digest: &[u8]) -> Result<Vec<u8>> {
+        self.sign_hash(digest)
+    }
+}
+
 #[cfg(test)]
 fn public(network: &str, entropy: &[u8]) -> Result<PublicWallet> {
     let network = routing::normalize(network)?;
-    let key = vendors::keys(network)?.derive(entropy)?;
+    let key = plugins::for_network(network)?.keys().derive(entropy)?;
     Ok(LocalSigner {
         network: network.into(),
         key,
@@ -72,7 +84,7 @@ fn storage(path: &Path) -> Result<(Store, String)> {
 pub fn generate_wallet(network: &str, path: &Path) -> Result<PublicWallet> {
     routing::info(network)?;
     let (_lock, _name) = storage(path)?;
-    let provider = vendors::keys(network)?;
+    let provider = plugins::for_network(network)?.keys();
     let mut entropy = Zeroizing::new(vec![0u8; provider.entropy_bytes()]);
     getrandom::fill(entropy.as_mut())
         .map_err(|_| Error::config("Operating-system randomness unavailable"))?;
@@ -162,7 +174,7 @@ fn read_signer(path: &Path) -> Result<Zeroizing<String>> {
 /// Open the selected rail's private signer without exposing native key bytes.
 pub fn local_signer(network: &str, path: &Path) -> Result<LocalSigner> {
     let network = routing::normalize(network)?;
-    let provider = vendors::keys(network)?;
+    let provider = plugins::for_network(network)?.keys();
     let text = read_signer(path)?;
     let key = provider.parse(text.trim())?;
     Ok(LocalSigner {
@@ -201,11 +213,9 @@ impl PublicWallet {
         if routing::normalize(&self.network)? != self.network {
             return Err(Error::usage("Registration requires a canonical network"));
         }
-        vendors::keys(&self.network)?.validate_identity(
-            &self.address,
-            &self.public_key,
-            &self.key_type,
-        )?;
+        plugins::for_network(&self.network)?
+            .keys()
+            .validate_identity(&self.address, &self.public_key, &self.key_type)?;
         Ok(())
     }
 }

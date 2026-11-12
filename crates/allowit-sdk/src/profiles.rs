@@ -2,29 +2,14 @@
 use crate::{
     config::parse_origin,
     error::{Error, Result},
-    routing, vendors,
+    plugins, routing,
 };
-use allowit_core::{client::store::Store, policy::PolicyValue};
+use allowit_core::client::store::Store;
 use serde::{Deserialize, Serialize};
 use serde_json::value::RawValue;
-use std::{collections::BTreeMap, path::Path};
+use std::path::Path;
 
-#[derive(Clone, Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct Description {
-    pub network: String,
-    pub wallet: String,
-    pub agent: String,
-    pub policy_id: String,
-    pub owner: String,
-    pub server: String,
-    pub asset: String,
-    pub asset_symbol: String,
-    pub source: String,
-    pub source_hash: String,
-    pub module_digest: String,
-    pub params: BTreeMap<String, PolicyValue>,
-}
+pub use allowit_core::vendor::profiles::Description;
 /// Select one exact public installation. Multiple versions require explicit selection.
 #[derive(Clone, Debug, Default)]
 pub struct Selector {
@@ -35,14 +20,14 @@ pub struct Selector {
     pub version: Option<String>,
 }
 pub struct Profile {
-    description: Description,
     pub version: String,
-    #[cfg_attr(not(feature = "stellar"), allow(dead_code))]
-    pub(crate) backend: String,
-    #[cfg_attr(not(feature = "stellar"), allow(dead_code))]
-    pub(crate) binding: vendors::ProfileBinding,
-    descriptor: Box<RawValue>,
-    authority: Option<crate::config::ServerAuthority>,
+    pub(crate) inner: allowit_core::vendor::profiles::Profile,
+}
+impl std::ops::Deref for Profile {
+    type Target = allowit_core::vendor::profiles::Profile;
+    fn deref(&self) -> &Self::Target {
+        &self.inner
+    }
 }
 #[derive(Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -70,27 +55,15 @@ fn canonical(value: &impl Serialize) -> Result<Vec<u8>> {
 }
 impl Profile {
     pub fn with_authority(mut self, authority: &crate::config::ServerAuthority) -> Result<Self> {
-        if self.description.network != authority.network() || self.backend != authority.origin() {
-            return Err(Error::config(
-                "Configured server authority belongs to another backend or rail",
-            ));
-        }
-        vendors::verify_server_role(&self.binding, authority.public_key())?;
-        self.authority = Some(authority.clone());
+        self.inner = self.inner.with_authority(&authority.0)?;
         Ok(self)
     }
-    pub fn server_origin(&self) -> &str {
-        &self.backend
-    }
-    pub(crate) fn require_authority(&self) -> Result<&crate::config::ServerAuthority> {
-        self.authority.as_ref().ok_or_else(|| {
-            Error::config("Fresh execution requires independently configured server authority")
-        })
-    }
     pub fn description(&self) -> &Description {
-        &self.description
+        self.inner.description()
     }
-
+    pub fn server_origin(&self) -> &str {
+        self.inner.server_origin()
+    }
     fn decode(envelope: Envelope) -> Result<Self> {
         if envelope.schema != 1
             || routing::normalize(&envelope.network)? != envelope.network
@@ -99,16 +72,18 @@ impl Profile {
             return Err(Error::config("Invalid public profile envelope"));
         }
         // Decode the strict native DTO before canonicalization can collapse duplicate fields.
-        let (description, binding) =
-            vendors::decode_profile(&envelope.network, envelope.descriptor.get().as_bytes())?;
+        let (description, binding) = plugins::for_network(&envelope.network)?
+            .decode_profile(&envelope.network, envelope.descriptor.get().as_bytes())?;
         let version = allowit_core::digest(&canonical(&envelope)?);
         Ok(Self {
-            description,
-            binding,
             version,
-            backend: envelope.backend,
-            descriptor: envelope.descriptor,
-            authority: None,
+            inner: allowit_core::vendor::profiles::Profile {
+                description,
+                binding,
+                backend: envelope.backend,
+                descriptor: envelope.descriptor,
+                authority: None,
+            },
         })
     }
     pub fn document(&self) -> Result<serde_json::Value> {
@@ -126,7 +101,6 @@ impl Profile {
         value["version"] = self.version.clone().into();
         Ok(value)
     }
-    #[cfg_attr(not(feature = "stellar"), allow(dead_code))]
     fn envelope(&self) -> Result<Envelope> {
         Ok(Envelope {
             schema: 1,
@@ -145,7 +119,6 @@ impl Cache {
         })
     }
     /// Install only a descriptor returned by the checked owner export capability.
-    #[cfg_attr(not(feature = "stellar"), allow(dead_code))]
     pub(crate) fn install(
         &self,
         network: &str,
@@ -178,9 +151,9 @@ impl Cache {
         bytes: &[u8],
     ) -> Result<Profile> {
         let network = authority.network();
-        let (_, binding) = vendors::decode_profile(network, bytes)?;
-        vendors::verify_server_role(&binding, authority.public_key())?;
-        vendors::verify_profile_import(&binding, endpoint)?;
+        let (_, binding) = plugins::for_network(network)?.decode_profile(network, bytes)?;
+        binding.verify_server_role(authority.public_key())?;
+        binding.verify_import(endpoint)?;
         let raw = RawValue::from_string(
             std::str::from_utf8(bytes)
                 .map_err(|_| Error::usage("Public profile must use UTF-8"))?
@@ -193,7 +166,12 @@ impl Cache {
     pub fn resolve(&self, selector: &Selector) -> Result<Profile> {
         let network = routing::normalize(&selector.network)?;
         let mut found = Vec::new();
-        for envelope in self.versions.entries::<Envelope>()? {
+        for envelope in self
+            .versions
+            .entries::<Envelope>()?
+            .into_iter()
+            .filter(|envelope| envelope.network == network)
+        {
             let p = Profile::decode(envelope)?;
             let d = &p.description;
             if d.network == network
@@ -247,4 +225,46 @@ fn selection_key(s: &Selector) -> Result<String> {
         &s.agent,
         &s.policy_id,
     ))?))
+}
+
+#[cfg(all(test, unix))]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn resolving_a_profile_ignores_descriptors_from_other_networks() {
+        let dir = tempfile::tempdir().unwrap();
+        let cache = Cache::open(&dir.path().canonicalize().unwrap()).unwrap();
+        let rail = plugins::rails()[0];
+        let support = rail.test_support();
+        let backend = "http://localhost:8080";
+        let descriptor = String::from_utf8((support.fixtures)().public_profile).unwrap();
+        let installed = cache
+            .install(
+                support.network,
+                backend,
+                RawValue::from_string(descriptor).unwrap(),
+            )
+            .unwrap();
+        let mut other = Envelope {
+            schema: 1,
+            network: "example:unregistered".into(),
+            backend: backend.into(),
+            descriptor: RawValue::from_string("{}".into()).unwrap(),
+        };
+        cache.versions.save("other-network", &other).unwrap();
+
+        let selector = Selector {
+            network: support.network.into(),
+            ..Default::default()
+        };
+        assert_eq!(cache.resolve(&selector).unwrap().version, installed.version);
+
+        other.network = support.network.into();
+        cache
+            .versions
+            .save("selected-network-invalid", &other)
+            .unwrap();
+        assert!(cache.resolve(&selector).is_err());
+    }
 }

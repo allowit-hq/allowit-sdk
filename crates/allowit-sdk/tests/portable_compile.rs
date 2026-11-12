@@ -1,69 +1,64 @@
 #![cfg(unix)]
-//! The public authoring path must execute the pinned real compiler and bound its subprocess tree.
+//! The public authoring path must execute the real compiler directly and bound its subprocess tree.
 use allowit_sdk::authoring::{HostTools, check, compile};
-use std::{os::unix::fs::PermissionsExt, time::Duration};
+use std::{os::unix::fs::PermissionsExt, path::Path, time::Duration};
 const VALID: &str = include_str!("fixtures/portable-policy.rs");
+
+/// An executable shell script at `path`.
+fn script(path: &Path, body: &str) {
+    std::fs::write(path, format!("#!/bin/sh\n{body}\n")).unwrap();
+    std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o700)).unwrap();
+}
 
 #[test]
 fn actual_embedded_core_compile_accepts_portable_rust_and_rejects_type_errors() {
-    if std::env::var_os("ALLOWIT_TEST_COMPILER_CHILD").is_some() {
-        compile(
-            VALID,
-            &HostTools {
-                python: std::env::var_os("ALLOWIT_TEST_PYTHON").unwrap().into(),
-                rustc: std::env::var_os("ALLOWIT_TEST_RUSTC").unwrap().into(),
-                ..Default::default()
-            },
-        )
-        .unwrap();
+    if let Some(rustc) = std::env::var_os("ALLOWIT_TEST_RUSTC") {
+        let tools = HostTools {
+            rustc: rustc.into(),
+            ..Default::default()
+        };
+        compile(VALID, &tools).unwrap();
         return;
     }
+    // The compiler inherits no provider secret and no tool override.
     let probe = tempfile::tempdir().unwrap();
     let names = [
         "ANTHROPIC_API_KEY",
         "OPENAI_API_KEY",
         "ALLOWIT_PROVIDER_TOKEN",
         "ALLOWIT_OWNER_SECRET",
-        "PYTHONPATH",
         "RUSTFLAGS",
+        "RUSTC_WRAPPER",
     ];
-    for (kind, tool) in [("python", "python3"), ("rustc", "rustc")] {
-        let marker =
-            serde_json::to_string(probe.path().join(format!("{kind}.json")).to_str().unwrap())
-                .unwrap();
-        let keys = serde_json::to_string(&names).unwrap();
-        let script = format!(
-            "#!/usr/bin/env python3\nimport os,sys,json\nfrom pathlib import Path\nPath({marker}).write_text(json.dumps({{k:k in os.environ for k in {keys}}}))\nos.execvp('{tool}',['{tool}']+sys.argv[1:])\n"
-        );
-        let path = probe.path().join(kind);
-        std::fs::write(&path, script).unwrap();
-        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o700)).unwrap();
-    }
+    let (seen, leaked) = (probe.path().join("seen"), probe.path().join("leaked"));
+    let checks: String = names
+        .iter()
+        .map(|name| format!("[ -z \"${{{name}+set}}\" ] || : > '{}'\n", leaked.display()))
+        .collect();
+    script(
+        &probe.path().join("rustc"),
+        &format!("{checks}: > '{}'\nexec rustc \"$@\"", seen.display()),
+    );
     let mut child = std::process::Command::new(std::env::current_exe().unwrap());
     child
         .args([
             "--exact",
             "actual_embedded_core_compile_accepts_portable_rust_and_rejects_type_errors",
         ])
-        .env("ALLOWIT_TEST_COMPILER_CHILD", "1")
-        .env("ALLOWIT_TEST_PYTHON", probe.path().join("python"))
         .env("ALLOWIT_TEST_RUSTC", probe.path().join("rustc"));
     for name in names {
         child.env(name, "synthetic-compiler-canary");
     }
-    let output = child.output().unwrap();
-    assert!(output.status.success(), "compiler probe child failed");
-    for kind in ["python", "rustc"] {
-        let values: std::collections::BTreeMap<String, bool> = serde_json::from_slice(
-            &std::fs::read(probe.path().join(format!("{kind}.json"))).unwrap(),
-        )
-        .unwrap();
-        assert!(
-            values.values().all(|v| !*v),
-            "{kind} inherited a synthetic secret/tool override"
-        );
-    }
-    compile(VALID, &HostTools::default()).unwrap();
+    assert!(
+        child.output().unwrap().status.success(),
+        "compiler probe child failed"
+    );
+    assert!(seen.exists(), "the probe compiler did not run");
+    assert!(
+        !leaked.exists(),
+        "rustc inherited a synthetic secret or tool override"
+    );
+    // The source gate admits this source; only the compiler finds its type error.
     let invalid = "use allowit::prelude::*; pub fn execute(ctx: &AllowitContext) -> allowit::Result { let value: i128 = true; let _ = value; let _ = ctx; Ok(()) }";
     check(invalid).unwrap();
     let error = compile(invalid, &HostTools::default()).unwrap_err();
@@ -73,11 +68,6 @@ fn actual_embedded_core_compile_accepts_portable_rust_and_rejects_type_errors() 
         "{}",
         error.message
     );
-    let missing = HostTools {
-        python: "allowit-python-tool-does-not-exist".into(),
-        ..HostTools::default()
-    };
-    assert_eq!(compile(VALID, &missing).unwrap_err().code, 3);
     let missing = HostTools {
         rustc: "allowit-rustc-tool-does-not-exist".into(),
         ..HostTools::default()
@@ -89,14 +79,14 @@ fn actual_embedded_core_compile_accepts_portable_rust_and_rejects_type_errors() 
 fn wall_limit_kills_compiler_descendants_and_a_noop_tool_cannot_confirm_compilation() {
     let directory = tempfile::tempdir().unwrap();
     let marker = directory.path().join("escaped");
-    let script = directory.path().join("slow-rustc");
-    let marker_literal = serde_json::to_string(marker.to_str().unwrap()).unwrap();
-    std::fs::write(&script,format!("#!/usr/bin/env python3\nimport time\nfrom pathlib import Path\ntime.sleep(1)\nPath({marker_literal}).write_text('escaped')\n")).unwrap();
-    std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o700)).unwrap();
+    let slow = directory.path().join("slow-rustc");
+    script(
+        &slow,
+        &format!("(/bin/sleep 1; : > '{}') &\nwait", marker.display()),
+    );
     let tools = HostTools {
-        rustc: script,
+        rustc: slow,
         timeout: Duration::from_millis(150),
-        ..HostTools::default()
     };
     let error = compile(VALID, &tools).unwrap_err();
     assert!(error.message.contains("timed out"), "{}", error.message);
@@ -106,7 +96,7 @@ fn wall_limit_kills_compiler_descendants_and_a_noop_tool_cannot_confirm_compilat
         "compiler descendant outlived the bounded operation"
     );
     let noop = HostTools {
-        python: "/usr/bin/true".into(),
+        rustc: "/usr/bin/true".into(),
         ..HostTools::default()
     };
     let error = compile(VALID, &noop).unwrap_err();
@@ -115,18 +105,12 @@ fn wall_limit_kills_compiler_descendants_and_a_noop_tool_cannot_confirm_compilat
         "{}",
         error.message
     );
-}
-
-#[test]
-fn exited_tool_cannot_leave_unbounded_descendant_output_readers() {
-    let directory = tempfile::tempdir().unwrap();
-    let script = directory.path().join("exiting-python");
-    std::fs::write(&script, "#!/bin/sh\n/bin/sleep 2 &\nexit 0\n").unwrap();
-    std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o700)).unwrap();
+    // A tool that exits while a descendant holds its output stays within the same limit.
+    let exiting = directory.path().join("exiting-rustc");
+    script(&exiting, "/bin/sleep 2 &\nexit 0");
     let tools = HostTools {
-        python: script,
+        rustc: exiting,
         timeout: Duration::from_millis(150),
-        ..HostTools::default()
     };
     let start = std::time::Instant::now();
     let error = compile(VALID, &tools).unwrap_err();

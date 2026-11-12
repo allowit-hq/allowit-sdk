@@ -1,6 +1,6 @@
 //! Address format checks. A wallet is identified only by its address, so
-//! every command checks that an address matches the rail. Each rail defines
-//! its formats in `vendors/<rail>/formats.rs`.
+//! every command checks that an address matches the rail. The selected rail
+//! crate supplies the formats.
 use super::{Check, formats};
 use crate::{
     error::{Error, Result, quoted},

@@ -13,10 +13,10 @@ pub fn execute(ctx: &AllowitContext) -> allowit::Result {
 }
 ```
 
-The `allowit` package lives in [Allowit core](https://github.com/allowit-hq/allowit-core/tree/v0.3.1/crates/allowit).
+The `allowit` package is the portable module of [Allowit core](https://github.com/allowit-hq/allowit-core).
 Its `std` feature enables host evaluation. Native adapters bind the portable source to contract backends.
 The shared Core source gate admits only the portable vocabulary and one `execute` entrypoint.
-Host compilation uses the same exact Core revision as the gate and portable library.
+Host compilation calls `rustc` directly. It uses the same exact Core revision as the gate and portable library.
 
 ## Authoring order
 
@@ -42,14 +42,14 @@ Trusted hosts supply enrichment and application accounting; request JSON cannot 
 
 ## Native binding
 
-The Stellar rail derives the exact native request, effect and fee bounds, authorizers, simulation and settlement rules.
+The selected rail derives the exact native request, effect and fee bounds, authorizers, simulation and settlement rules.
 Its Simple, Common and Custom wallet implementations bind source, code and owner configuration.
 Common uses the owner-approved leading canonical rule calls. Custom compiles the complete portable source.
 Simple requires full trusted host evaluation before the server authorizes execution.
 Simple and Common reject bespoke state writes.
 
-Classic custody requires a canonical-only policy because its current signing path has no compiled custom evaluator.
-Historical compiler-language packets remain readable for verification and status recovery.
+Classic custody requires a canonical-only policy. Its signing path has no compiled custom evaluator.
+Compiler-language packets serve only verification and status recovery.
 They cannot authorize new preparation, signatures or a replacement payment.
 
 The server binds source and compiled code to the owner's approved record and supplies trusted context, its signing authority, reservations and durable accounting.

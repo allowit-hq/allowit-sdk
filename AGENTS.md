@@ -17,9 +17,29 @@ path and are never pinned. Select the SDK with `-p allowit-sdk@0.5.0`. The `allo
 Core's released `allowit-sdk` package.
 
 Dependencies point one way. This SDK depends on Allowit core (repository
-allowit-core, packages `allowit-sdk` and portable `allowit`) and on the Stellar
-rail package from allowit-contracts-stellar.
-The rail crates depend on Allowit core. Never move core or rail code into this
-repository, and never add a `[patch]` section. Each git dependency names a
-release tag `vX.Y.Z` in the root `[workspace.dependencies]`. Every crate in the build must name the same core tag:
-release the rail repositories on a new core tag before this SDK moves to it.
+allowit-core, package `allowit-core`) and on each registered rail package. The rail
+crates depend on Allowit core. Never move core or rail code into this repository, and
+never commit a `[patch]` section. Each git dependency names a release tag `vX.Y.Z` or an
+exact reviewed commit in the root `[workspace.dependencies]`. Every crate in the build
+must name the same core revision, so the plugin trait objects match.
+
+## Vendor boundary
+
+Only five files may name a vendor, and only on import or dependency lines:
+`Cargo.toml`, `crates/allowit-sdk/Cargo.toml`, `crates/allowit-sdk/src/plugins/registered.rs`,
+`npm/package.json` and `npm/src/registered.js`. Everything else reaches vendors through
+`plugins` (Rust) or `@allowit/sdk` (JavaScript). Maintainers check this boundary in the
+allowit-project review before merge.
+
+A policy package registers with one dependency line per manifest and one import line in
+`registered.rs`, `use <crate>::PACKAGE as PACKAGE_<n>;`, plus its alias in `PACKAGES`. Its namespace
+is the crate name. `plugins::policy_registry` composes rail evidence functions and package
+functions, reserves `allowit` and every rail id, and checks the complete list against the
+policy-source gate. Hosts call that function and `plugins::invoke_policy_function`.
+
+SDK tests are vendor neutral. They run on every registered rail through
+`plugins::testkit::each` (Rust) or `for (const rail of rails())` (JavaScript) and take values
+from each rail's fixtures. A rail declares the features it skips, with a reason. Package tests run
+on every registered policy package through `plugins::testkit::each_package` with the package's
+samples; a package declares the features it skips, with a reason. Vendor
+protocol, codec and RPC tests live in the vendor repository.
