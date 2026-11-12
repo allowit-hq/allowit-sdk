@@ -124,6 +124,21 @@ export function limitsOf(document) {
 }
 
 /**
+ * The per-payment limits of a limits, receipt or wallet document: `{param, limit}` per limit on one operation.
+ * Such a limit keeps no counter. Null when the document reports none or one entry is malformed; an empty list is
+ * a report of no such limit.
+ */
+export function paymentLimitsOf(document) {
+  const list = record(document)?.paymentLimits;
+  if (!Array.isArray(list)) return null;
+  const valid = list.every((entry) => {
+    const item = record(entry);
+    return item && typeof item.param === 'string' && item.param && quantity(item.limit);
+  });
+  return valid ? list : null;
+}
+
+/**
  * The typed wallet-kind refusal of a rejected generate or adopt request, or null. `error` is the rejection of
  * the host transport, or the parsed error body: `{code, error, details: {walletKind, network, reason}}`.
  */

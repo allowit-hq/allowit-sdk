@@ -47,6 +47,8 @@ are listed in the [Core README](https://github.com/allowit-hq/allowit-core/blob/
 | Settled operation | `execution::Settlement::of(&outcome.document)` | `settlementOf(document)` |
 | Fee that the limits count | `execution::fee_charged(&outcome.document)` | `feeChargedOf(document)` |
 | Spent and remaining per limit | `execution::Limits::of(&outcome.document)`, `execution::limits(profile, signer, root, rpc)` | `limitsOf(document)` |
+| Limit of each payment | `execution::payment_limits(&profile)`, `execution::payment_limits_of(network, document)`, `execution::WalletLimits::payment_of(&document)` | `paymentLimitsOf(document)` |
+| All limits of a wallet | `execution::wallet_limits(profile, signer, root, rpc)` returns `WalletLimits { limits, payment_limits }` | `limitsOf(document)` with `paymentLimitsOf(document)` |
 | Explorer link of an operation | `execution::explorer(&outcome.document)` | the `explorer` text of the document |
 | Choose a wallet kind | `generation::GenerateRequest.wallet_kind`, `GeneratedDraft::wallet_kind()`, `generation::wallet_kind_of(document)` | `walletKindIdOf(document)`, the `walletKind` field of a generate or adopt request |
 | Refused wallet kind | `error.api_code`, `error.details`, `error.detail("reason")` | `walletKindRefusal(error)` |

@@ -90,9 +90,82 @@ pub fn status(
         wait,
     )
 }
+/// A limit on the amount of one operation, such as the limit of each payment. The policy checks
+/// it against one request, so it keeps no counter and has no spent or remaining amount.
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PaymentLimit {
+    /// The policy param that holds the limit, such as `payment_limit`.
+    pub param: String,
+    /// What one operation may move, in the installed asset.
+    pub limit: Quantity,
+}
+/// The limits of a wallet: the counted spending limits and the limits on one operation.
+#[derive(Clone, Debug, Default, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WalletLimits {
+    /// What each counted limit allows, what the policy has spent and what remains, as the
+    /// backend reports them. `None` means that the backend reported no counters: an unread
+    /// counter is never shown as unused.
+    pub limits: Option<Vec<LimitReport>>,
+    /// The limits on one operation, from the params of the verified wallet profile.
+    pub payment_limits: Vec<PaymentLimit>,
+}
+impl WalletLimits {
+    /// The key of the per-payment limits in a document, beside [`Limits::KEY`].
+    pub const PAYMENT_KEY: &'static str = "paymentLimits";
+    /// The per-payment limits that a document carries, if it has them.
+    pub fn payment_of(document: &serde_json::Value) -> Option<Vec<PaymentLimit>> {
+        serde_json::from_value(document.get(Self::PAYMENT_KEY)?.clone()).ok()
+    }
+}
+/// The canonical params that limit one operation. Each is an amount of the installed asset.
+const PER_PAYMENT: &[&str] = &[allowit_core::PAYMENT_LIMIT];
+/// The per-payment limits among the params of a draft, a policy, a public wallet profile or an
+/// installation document of the rail of `network`. The rail reads its own document and names
+/// the installed asset; a document without such a param has none.
+pub fn payment_limits_of(network: &str, document: &serde_json::Value) -> Result<Vec<PaymentLimit>> {
+    let network = crate::routing::normalize(network)?;
+    let read = for_network(network)?.draft_params(network, document)?;
+    Ok(read
+        .params
+        .iter()
+        .filter(|(key, _)| PER_PAYMENT.contains(&key.as_str()))
+        .filter_map(|(key, value)| {
+            // The `PolicyValue` JSON of an integer: `{"Int": "5"}` or `{"Int": 5}`.
+            let units = match value.get("Int")? {
+                serde_json::Value::String(text) => text.parse::<i128>().ok()?,
+                number => i128::from(number.as_i64()?),
+            };
+            Some(PaymentLimit {
+                param: key.clone(),
+                limit: Quantity::new(units, read.asset.clone()),
+            })
+        })
+        .collect())
+}
+/// The per-payment limits of an imported wallet profile. See [`payment_limits_of`].
+pub fn payment_limits(profile: &Profile) -> Result<Vec<PaymentLimit>> {
+    payment_limits_of(&profile.description().network, &profile.document()?)
+}
+/// The limits of the profile's wallet: the counted limits as [`limits`] reads them from the
+/// backend, and the per-payment limits of the profile. A wallet that has executed nothing
+/// reports both. A profile whose params the rail cannot read has no per-payment limit.
+pub fn wallet_limits(
+    profile: Profile,
+    signer: LocalSigner,
+    root: &Path,
+    rpc: Option<String>,
+) -> Result<WalletLimits> {
+    let payment_limits = payment_limits(&profile).unwrap_or_default();
+    Ok(WalletLimits {
+        limits: limits(profile, signer, root, rpc)?,
+        payment_limits,
+    })
+}
 /// The spending limits of the profile's wallet as the backend reports them: what each limit
-/// allows, what the policy has spent and what remains. `None` means that the rail holds no
-/// report for this wallet yet. The read needs the agent key, as a status read does.
+/// allows, what the policy has spent and what remains. `None` means that the backend reported
+/// no counters for this wallet. The read needs the agent key, as a status read does.
 pub fn limits(
     profile: Profile,
     signer: LocalSigner,

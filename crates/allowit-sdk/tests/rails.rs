@@ -481,6 +481,58 @@ fn an_imported_profile_prints_its_params_in_human_units() {
 }
 
 #[test]
+fn a_profile_document_gives_its_per_payment_limits_in_the_installed_asset() {
+    testkit::each(Feature::DraftDisplay, |rail, fx| {
+        let network = rail.test_support().network;
+        if rail.decode_profile(network, &fx.public_profile).is_err() {
+            eprintln!("skip {}: no public profile fixture", rail.id());
+            return;
+        }
+        let document: serde_json::Value = serde_json::from_slice(&fx.public_profile).unwrap();
+        let read = rail.draft_params(network, &document).unwrap();
+        let limits = execution::payment_limits_of(network, &document).unwrap();
+        // One entry for each per-payment param of the document, and no counted limit.
+        let expected: Vec<_> = read
+            .params
+            .iter()
+            .filter(|(key, _)| key == "payment_limit")
+            .collect();
+        assert_eq!(limits.len(), expected.len());
+        for (limit, (key, value)) in limits.iter().zip(expected) {
+            assert_eq!(&limit.param, key);
+            assert_eq!(limit.limit.asset, read.asset);
+            let units = &value["Int"];
+            assert_eq!(
+                limit.limit.units,
+                units
+                    .as_str()
+                    .map_or_else(|| units.to_string(), String::from)
+            );
+            assert!(
+                limit
+                    .limit
+                    .text
+                    .ends_with(&format!(" {}", read.asset.symbol)),
+                "{limit:?}"
+            );
+        }
+        // A document carries them under their own key, beside the counted limits.
+        let report = execution::WalletLimits {
+            limits: None,
+            payment_limits: limits.clone(),
+        };
+        let document = serde_json::to_value(&report).unwrap();
+        assert_eq!(document[execution::Limits::KEY], serde_json::Value::Null);
+        assert_eq!(execution::WalletLimits::payment_of(&document), Some(limits));
+        assert_eq!(execution::Limits::of(&document), None);
+        let plain = serde_json::json!({"limits": []});
+        assert_eq!(execution::WalletLimits::payment_of(&plain), None);
+        assert!(execution::payment_limits_of(network, &serde_json::json!({})).is_err());
+        assert!(execution::payment_limits_of("unknown:network", &plain).is_err());
+    });
+}
+
+#[test]
 fn an_outcome_document_gives_its_limits_charged_fee_and_explorer_link() {
     testkit::each(Feature::Limits, |rail, fx| {
         let network = rail.test_support().network;

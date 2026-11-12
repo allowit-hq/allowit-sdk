@@ -78,13 +78,31 @@ export interface LimitReport {
   spent: Quantity;
   remaining: Quantity;
 }
+/**
+ * One limit on the amount of one operation: an entry of the top-level `paymentLimits` of a limits, receipt or
+ * wallet document. The policy checks it against each request, so it has no spent or remaining amount.
+ */
+export interface PaymentLimit {
+  /** The policy param that holds the limit, such as `payment_limit`. */
+  param: string;
+  limit: Quantity;
+}
 /** The reports that a status or receipt document may carry at its top level. */
 export interface OperationReports {
   settlement?: Settlement;
   /** The fee that the spending limits count, in the installed asset. */
   feeCharged?: Quantity;
   limits?: LimitReport[];
+  /** The limits on one operation. They keep no counter. */
+  paymentLimits?: PaymentLimit[];
   explorer?: string;
+}
+/** The limits of a wallet: a limits document, or the limit fields of a receipt or wallet document. */
+export interface WalletLimits {
+  /** The counted spending limits. Absent when their counters could not be read. */
+  limits?: LimitReport[];
+  /** The limits on one operation. Absent when the document reports none. */
+  paymentLimits?: PaymentLimit[];
 }
 /** The reply of `GET /api/wallet-kinds?network=<CAIP-2>`. */
 export interface WalletKindsReply {
@@ -249,6 +267,7 @@ export function walletKindIdOf(document: unknown): WalletKindId | null;
 export function settlementOf(document: unknown): Settlement | null;
 export function feeChargedOf(document: unknown): Quantity | null;
 export function limitsOf(document: unknown): LimitReport[] | null;
+export function paymentLimitsOf(document: unknown): PaymentLimit[] | null;
 export function walletKindRefusal(error: unknown): WalletKindRefusal | null;
 export function nativeAsset(network: string): AssetDisplay | null;
 export function assetDisplay(network: string, asset: string): AssetDisplay | null;
