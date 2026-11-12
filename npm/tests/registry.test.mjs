@@ -279,6 +279,14 @@ test('server documents give their wallet kind, settlement, charged fee and limit
     assert.deepEqual(sdk.feeChargedOf(document), quantity('7'));
     assert.deepEqual(sdk.limitsOf(document), limits);
     assert.deepEqual(sdk.limitsOf({limits: []}), []);
+    // A limit on one operation has no counter, so it is a separate list.
+    const paymentLimits = [{param: 'payment_limit', limit: quantity('50')}];
+    assert.equal(sdk.paymentLimitsOf(document), null);
+    assert.deepEqual(sdk.paymentLimitsOf({...document, paymentLimits}), paymentLimits);
+    assert.deepEqual(sdk.limitsOf({...document, paymentLimits}), limits);
+    assert.deepEqual(sdk.paymentLimitsOf({walletKind: 'standard', paymentLimits}), paymentLimits);
+    assert.deepEqual(sdk.paymentLimitsOf({paymentLimits: []}), []);
+    assert.equal(sdk.paymentLimitsOf({paymentLimits: [{param: 'payment_limit', limit: {units: '50'}}]}), null);
   }
   // An absent or malformed value is null; it never reads as zero or as an empty report.
   for (const document of [null, 'text', [], {}, {walletKind: 'common', settlement: {height: 1}, feeCharged: '7', limits: [{param: 'p'}]}]) {
@@ -286,10 +294,13 @@ test('server documents give their wallet kind, settlement, charged fee and limit
     assert.equal(sdk.settlementOf(document), null);
     assert.equal(sdk.feeChargedOf(document), null);
     assert.equal(sdk.limitsOf(document), null);
+    assert.equal(sdk.paymentLimitsOf(document), null);
   }
   const unit = {symbol: 'XYZ', decimals: 2, name: 'Example', native: false};
   assert.equal(sdk.feeChargedOf({feeCharged: {units: '1.5', asset: unit, text: '1.5 XYZ'}}), null);
   assert.equal(sdk.limitsOf({limits: [{param: '', limit: {}, spent: {}, remaining: {}}]}), null);
+  assert.equal(sdk.paymentLimitsOf({paymentLimits: [{param: '', limit: {}}]}), null);
+  assert.equal(sdk.paymentLimitsOf({paymentLimits: {param: 'payment_limit'}}), null);
 });
 
 test('a wallet-kind refusal keeps its code and details', async () => {
