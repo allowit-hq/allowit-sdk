@@ -47,8 +47,8 @@ protocol, codec and RPC tests live in the vendor repository.
 ## Branches
 
 `main` builds from public repositories only. No manifest or lockfile on `main` names a private
-repository; the `Public sources` CI job (`tools/public-sources.sh`) reads each Git source without a
-credential and fails on one that is not public.
+repository; the `Public sources` CI job (`tools/public-sources.sh`) fetches every locked source
+without a credential and fails on one that is not public.
 
 `staging` is `main` plus the registration commits of private policy packages: the dependency lines
 in `Cargo.toml` and `crates/allowit-sdk/Cargo.toml`, the import line and its `PACKAGES` alias in
