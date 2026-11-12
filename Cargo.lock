@@ -24,6 +24,7 @@ version = "0.5.0"
 dependencies = [
  "allowit-core",
  "allowit-stellar",
+ "allowit-vendor-etherfuse",
  "chrono",
  "getrandom 0.3.4",
  "libc",
@@ -52,6 +53,16 @@ dependencies = [
  "stellar-xdr",
  "time",
  "zeroize",
+]
+
+[[package]]
+name = "allowit-vendor-etherfuse"
+version = "0.2.0"
+source = "git+https://github.com/allowit-hq/vendor-etherfuse.git?rev=055379b0821531a3935449ff9b58661ce4d54f1d#055379b0821531a3935449ff9b58661ce4d54f1d"
+dependencies = [
+ "allowit-core",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]
