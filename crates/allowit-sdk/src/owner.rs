@@ -141,6 +141,15 @@ pub fn update_params(cx: &Context<'_>, request: UpdateParams<'_>) -> Result<serd
         .owner()
         .update_params(&cx.provider_context(&store), request)
 }
+/// The owner's view of the build of a Custom policy on the backend: the server presignature,
+/// the build ticket and the build that the backend holds.
+pub fn custom_build(cx: &Context<'_>, policy_id: &str) -> Result<serde_json::Value> {
+    cx.check()?;
+    let store = || owner_store(cx.root, cx.network);
+    for_network(cx.network)?
+        .owner()
+        .custom_build(&cx.provider_context(&store), policy_id)
+}
 /// Compare the owner's installation document with the ledger and read the wallet state back.
 /// `Verification::matches` is true only when every comparison matches.
 pub fn verify(cx: &Context<'_>, document: &[u8]) -> Result<Verification> {
