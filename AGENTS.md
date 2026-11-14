@@ -43,3 +43,32 @@ from each rail's fixtures. A rail declares the features it skips, with a reason.
 on every registered policy package through `plugins::testkit::each_package` with the package's
 samples; a package declares the features it skips, with a reason. Vendor
 protocol, codec and RPC tests live in the vendor repository.
+
+## Branches
+
+`main` builds from public repositories only. No manifest or lockfile on `main` names a private
+repository; the `Public sources` CI job (`tools/public-sources.sh`) fetches every locked source
+without a credential and fails on one that is not public.
+
+`staging` is `main` plus the registration commits of private policy packages: the dependency lines
+in `Cargo.toml` and `crates/allowit-sdk/Cargo.toml`, the import line and its `PACKAGES` alias in
+`registered.rs`, and the matching `Cargo.lock` entries. Staging deployments build from it. Never
+merge `staging` into `main`, never open a pull request from it and never force-push it. Refresh it
+after `main` changes:
+
+```sh
+git fetch origin && git switch staging && git merge --ff-only origin/staging
+git merge origin/main                      # keep both sides of the registration lines
+git checkout origin/main -- Cargo.lock     # only when Cargo.lock conflicts
+cargo metadata --format-version 1 >/dev/null   # adds only the lock entries of the registered packages
+git add Cargo.lock && git commit           # only when the merge stopped or the lockfile changed
+cargo fmt --all --check
+cargo test --locked -p allowit-sdk@0.5.0 --features testkit
+cargo clippy --locked -p allowit-sdk@0.5.0 --all-targets --features testkit -- -D warnings
+git push origin HEAD:refs/heads/staging
+```
+
+Every crate in the `staging` build names the Core revision of `main`: move a private package to
+that revision in its own repository first, then pin its new commit on `staging`. CI on `staging`
+reads private sources through `.github/actions/private-dependency` and runs the SDK tests, which
+loop over the registered packages with `plugins::testkit::each_package`.
