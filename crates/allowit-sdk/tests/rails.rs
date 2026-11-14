@@ -6,7 +6,7 @@ use allowit_sdk::{
     generation::{self, GenerateRequest, Target},
     input::address,
     kinds::{self, WalletKind},
-    owner,
+    owner, paid_service,
     plugins::{self, Feature, LinkKind, testkit},
     routing,
     runtime::{self, Runtime},
@@ -588,4 +588,58 @@ fn every_registered_policy_package_answers_its_samples() {
             );
         });
     }
+}
+
+#[test]
+fn a_rail_reads_no_challenge_from_a_reply_that_is_none() {
+    testkit::each(Feature::PaidService, |rail, _| {
+        let network = rail.test_support().network;
+        assert!(paid_service::supported(network), "{}", rail.id());
+        let resource = "https://seller.example/report";
+        let reply = |status, body: &'static [u8]| paid_service::SellerReply {
+            status,
+            headers: &[],
+            body,
+        };
+        // A delivered resource, an empty challenge and text that is no challenge.
+        // Each is the seller's failure: its own code, apart from usage and payment errors.
+        for (status, body) in [(200, &b"{}"[..]), (402, b""), (402, b"<html>pay</html>")] {
+            let error = paid_service::challenge(network, resource, &reply(status, body));
+            assert_eq!(
+                error.unwrap_err().code,
+                paid_service::SELLER_FAILED,
+                "{} {status}",
+                rail.id()
+            );
+        }
+        // A resource that is no http or https URL never reaches the rail.
+        for resource in [
+            "file:///etc/passwd",
+            "javascript:alert(1)",
+            "seller.example",
+        ] {
+            let error = paid_service::challenge(network, resource, &reply(402, b"{}"));
+            assert_eq!(error.unwrap_err().code, 2, "{} {resource}", rail.id());
+        }
+    });
+}
+
+#[test]
+fn a_rail_skips_paid_services_exactly_when_it_has_no_hook() {
+    for rail in plugins::rails() {
+        let support = rail.test_support();
+        assert_eq!(
+            support.skip(Feature::PaidService).is_some(),
+            rail.paid_service().is_none(),
+            "{}",
+            rail.id()
+        );
+        assert_eq!(
+            paid_service::supported(support.network),
+            rail.paid_service().is_some(),
+            "{}",
+            rail.id()
+        );
+    }
+    assert!(!paid_service::supported("unknown:network"));
 }

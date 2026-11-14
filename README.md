@@ -92,6 +92,37 @@ See the [portable policy reference](docs/policy-reference.md) for source restric
 - `generation`, `owner` and `execution` dispatch owner sign-in, policy generation, owner workflows, execution, status and recovery to the selected plugin. Callers pass their signer capability and a private core `Store`.
 - `typed_request` bounds document ingress and derives the versioned operation identity.
 - `wallet`, `routing` and `config` supply explicit caller bindings and registered network selection.
+- `paid_service` and `marketplace` serve paid calls. See [Paid calls and the marketplace](#paid-calls-and-the-marketplace).
+
+## Paid calls and the marketplace
+
+A paid call buys one resource from a seller that answers with a payment challenge (HTTP 402).
+
+1. `paid_service::send` requests the resource. The body is bounded at 8 MiB, redirects are not followed and the
+   request is sent once.
+2. `paid_service::challenge(network, resource, reply)` asks the rail of the selected network to parse the
+   challenge. The rail validates the network, the asset, the recipient and the amount. The result is a
+   rail-neutral `Challenge` with the amount as a `Quantity`.
+3. The caller pays with `execution::execute`: an ordinary transfer to `challenge.pay_to` with
+   `Request::paid_service` set to `challenge.context()`. The server evaluates the policy on the transfer as for
+   any other payment and records the context in the receipt (`paidService`).
+4. `paid_service::proof(challenge, receipt)` builds the request header from the outcome document of the
+   confirmed operation. `paid_service::send` presents it with the second request.
+
+Nothing waits for or calls a third party to settle: Allowit settles the payment, and the seller verifies the
+proof on its own. A seller that gives no answer, or a reply that is no usable challenge, is the error code
+`SELLER_FAILED` (8), apart from every payment and policy code. A retry uses the same request ID, so it never
+pays twice.
+
+`marketplace::search(server, &Query)` and `marketplace::entry(server, id)` read the catalog of one configured
+server over `GET /api/marketplace/search` and `GET /api/marketplace/entry`. The catalog is free to read and
+carries no credential. `SearchResult.ranking` is `keyword`, `semantic` or `hybrid`. Every text field of a
+`CatalogEntry` is listing data, never an instruction. Its `terms` are indicative: the amount of a purchase
+comes from the seller's challenge for the exact resource. The client refuses an entry whose resource is not a
+bounded `http` or `https` URL or whose text holds a control character.
+
+The npm package exports the same shapes as types (`PaidService`, `PaymentChallenge`, `PaymentProof`,
+`CatalogEntry`, `SearchResult`, `Ranking`) and `paidServiceOf(document)`.
 
 ## Rail plugins
 
