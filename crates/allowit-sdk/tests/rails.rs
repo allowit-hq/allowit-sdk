@@ -643,3 +643,211 @@ fn a_rail_skips_paid_services_exactly_when_it_has_no_hook() {
     }
     assert!(!paid_service::supported("unknown:network"));
 }
+
+/// The owner context of a rail's test network with a new local owner key. The clock panics:
+/// a refusal of an invalid document must precede owner authentication.
+fn with_owner_context(network: &str, run: impl FnOnce(&owner::Context<'_>, &std::path::Path)) {
+    let dir = tempfile::tempdir().unwrap();
+    let directory = dir.path().canonicalize().unwrap();
+    let path = directory.join("keys").join("owner.key");
+    let public = wallet::generate_wallet(network, &path).unwrap();
+    let signer = wallet::local_signer(network, &path).unwrap();
+    let root = directory.join("unopened");
+    let authority =
+        ServerAuthority::new(network, "http://localhost:8080", &public.address).unwrap();
+    let cx = owner::Context {
+        network,
+        backend: authority.origin(),
+        authority: &authority,
+        origin: "http://localhost:5173",
+        rpc_url: "http://localhost:8000",
+        root: &root,
+        signer: &signer,
+        clock: &|| panic!("Invalid documents must not start owner authentication"),
+    };
+    run(&cx, &root);
+}
+
+#[test]
+fn an_invalid_document_stops_a_params_update_before_the_store_opens() {
+    testkit::each(Feature::UpdateParams, |rail, _| {
+        with_owner_context(rail.test_support().network, |cx, root| {
+            let changes = std::collections::BTreeMap::new();
+            let request = |document| owner::UpdateParams {
+                document,
+                changes: &changes,
+                request_id: "invalid-doc-002",
+                expected_revision: None,
+                fee_limit: "100",
+            };
+            assert!(owner::update_params(cx, request(b"{}")).is_err());
+            assert!(owner::update_params(cx, request(b"not json")).is_err());
+            assert!(!root.exists(), "native preflight precedes storage effects");
+        });
+    });
+}
+
+#[test]
+fn an_invalid_document_is_not_verified_and_an_invalid_draft_is_not_edited() {
+    testkit::each(Feature::Verify, |rail, _| {
+        with_owner_context(rail.test_support().network, |cx, root| {
+            assert!(owner::verify(cx, b"{}").is_err());
+            assert!(!root.exists());
+        });
+    });
+    testkit::each(Feature::EditParams, |rail, _| {
+        with_owner_context(rail.test_support().network, |cx, root| {
+            let changes = std::collections::BTreeMap::new();
+            let edit = owner::EditParams {
+                draft: b"{}",
+                changes: &changes,
+            };
+            assert!(owner::edit_params(cx, edit).is_err());
+            let revise = owner::Revise {
+                draft: b"{}",
+                instruction: "Lower the daily limit to 2",
+            };
+            assert!(owner::revise(cx, revise).is_err());
+            assert!(!root.exists());
+        });
+    });
+}
+
+/// The generated policy of a rail's owner-generation fixture, as the draft document.
+fn generated_draft(fx: &allowit_sdk::plugins::Fixtures) -> serde_json::Value {
+    fx.owner_generation
+        .get("policy")
+        .unwrap_or(&fx.owner_generation)
+        .clone()
+}
+
+#[test]
+fn a_paired_export_separates_the_host_placement_from_the_native_placement() {
+    use allowit_sdk::kinds::WalletKind as Kind;
+    testkit::each(Feature::PairedExport, |rail, fx| {
+        let network = rail.test_support().network;
+        let draft = generated_draft(fx);
+        let pair = owner::paired_export(network, &serde_json::to_vec(&draft).unwrap())
+            .unwrap_or_else(|e| panic!("{}: {e}", rail.id()));
+        assert_eq!(pair.network, routing::normalize(network).unwrap());
+        assert!(
+            rail.wallet_kinds(network)
+                .contains(&pair.native.wallet_kind)
+        );
+        assert_eq!(
+            pair.host.source_hash,
+            allowit_sdk::digest(pair.host.source.as_bytes())
+        );
+        // The server evaluates every rule and every param in each placement.
+        assert!(!pair.host.rules.is_empty(), "{}", rail.id());
+        assert!(!pair.host.params.is_empty(), "{}", rail.id());
+        match pair.native.wallet_kind {
+            Kind::Native | Kind::Simple => {
+                assert!(pair.native.rules.is_empty() && pair.native.params.is_empty());
+                assert_eq!(pair.native.source, None);
+            }
+            Kind::Standard => {
+                // The wallet enforces an ordered subset of the rules the server evaluates.
+                assert!(
+                    pair.native
+                        .rules
+                        .iter()
+                        .all(|r| pair.host.rules.contains(r))
+                );
+                assert!(
+                    pair.native
+                        .params
+                        .iter()
+                        .all(|(k, v)| pair.host.params.get(k) == Some(v))
+                );
+                assert_eq!(pair.native.source, None);
+            }
+            Kind::Custom => {
+                assert_eq!(
+                    pair.native.source.as_deref(),
+                    Some(pair.host.source.as_str())
+                );
+                assert_eq!(pair.native.params, pair.host.params);
+            }
+        }
+        // The pair has a stable wire form.
+        let wire = serde_json::to_value(&pair).unwrap();
+        assert_eq!(
+            serde_json::from_value::<owner::PairedExport>(wire).unwrap(),
+            pair
+        );
+        assert!(owner::paired_export(network, b"{}").is_err());
+    });
+}
+
+#[test]
+fn typed_changes_parse_owner_text_and_refuse_an_invalid_or_unknown_value() {
+    testkit::each(Feature::EditParams, |rail, fx| {
+        let network = rail.test_support().network;
+        let draft = generated_draft(fx);
+        let lines = kinds::param_lines(network, &draft).unwrap();
+        let edit = |key: &str, text: &str| {
+            owner::typed_changes(
+                network,
+                &draft,
+                &[(key.to_owned(), text.to_owned())].into(),
+                1_700_000_000,
+            )
+        };
+        // A key that the policy does not read is refused on every rail.
+        assert!(edit("not_a_param_of_this_policy", "1").is_err());
+        let Some(line) = lines
+            .iter()
+            .find(|line| line.key == allowit_sdk::portable::PAYMENT_LIMIT)
+        else {
+            eprintln!("skip {}: the fixture has no per-payment limit", rail.id());
+            return;
+        };
+        let (typed, changes) = edit(&line.key, "0.75").unwrap();
+        assert_eq!(changes.len(), 1);
+        assert_eq!(typed.len(), 1);
+        assert!(matches!(
+            typed[&line.key].0,
+            allowit_sdk::portable::AllowitValue::Int(units) if units > 0
+        ));
+        // Text that is no amount, and a negative amount, are refused with the owner's message.
+        for refused in ["much", "-1"] {
+            assert!(edit(&line.key, refused).is_err(), "{refused}");
+        }
+        // The outcome of an owner step holds its policy under `selection`. Its edits are the
+        // same typed values.
+        let outcome = serde_json::json!({"requestId": "r", "state": "installed",
+            "selection": {"policy": draft}});
+        let edits = [(line.key.clone(), "0.75".to_owned())].into();
+        let (from_outcome, _) =
+            owner::typed_changes(network, &outcome, &edits, 1_700_000_000).unwrap();
+        assert_eq!(from_outcome, typed);
+        // A param that is not canonical keeps the kind that its policy declares: an amount
+        // parses in the unit of the asset, in a draft and in an outcome.
+        let mut custom = draft.clone();
+        custom["code"] = "use allowit::prelude::*;\npub fn execute(ctx: &AllowitContext) -> allowit::Result {\n    let reserve: i128 = allowit::param(ctx, \"reserve_amount\");\n    if ctx.request.amount > reserve {\n        return Err(AllowitError::PaymentLimitExceeded);\n    }\n    Ok(())\n}\n".into();
+        let portable = &mut custom["runtime"]["instanceBinding"]["portable"];
+        if portable.is_object() {
+            portable["params"]["reserve_amount"] = serde_json::json!({"Int": "10"});
+            portable["kinds"] = serde_json::json!({"reserve_amount": "amount"});
+            let read = rail.draft_params(network, &custom).unwrap();
+            let unit = 10i128.pow(u32::from(read.asset.decimals));
+            let reserve = [("reserve_amount".to_owned(), "0.75".to_owned())].into();
+            for document in [
+                custom.clone(),
+                serde_json::json!({"requestId": "r", "selection": {"policy": custom}}),
+            ] {
+                let (typed, _) =
+                    owner::typed_changes(network, &document, &reserve, 1_700_000_000).unwrap();
+                assert!(matches!(
+                    typed["reserve_amount"].0,
+                    allowit_sdk::portable::AllowitValue::Int(units) if units == unit * 3 / 4
+                ));
+            }
+        }
+        // A document without a policy source has nothing to edit.
+        assert!(
+            owner::typed_changes(network, &serde_json::json!({}), &edits, 1_700_000_000).is_err()
+        );
+    });
+}

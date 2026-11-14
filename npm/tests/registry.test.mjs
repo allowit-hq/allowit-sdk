@@ -194,6 +194,7 @@ test('amounts print exact decimals with the given unit and never a placeholder',
 
 test('the owner workflow rejects an unknown network', async () => {
   await assert.rejects(sdk.installAndFund('unknown:none', {}), /No rail is registered/);
+  await assert.rejects(sdk.updateParams('unknown:none', {}), /No rail is registered/);
 });
 
 for (const rail of sdk.rails()) {
@@ -256,6 +257,23 @@ for (const rail of sdk.rails()) {
     await assert.rejects(sdk.installAndFund(network, input), (error) => error === offline);
     for (const alias of rail.networks.find((n) => n.id === network).aliases) {
       await assert.rejects(sdk.installAndFund(alias, input), (error) => error === offline);
+    }
+    assert.deepEqual([signed.length, journal.size], [0, 0]);
+
+    // The params update dispatches the same way. A rail without the workflow rejects with a typed code.
+    const change = {ask: input.ask, sign: input.sign, journal: input.journal, key: 'u', policyId: 'p', params: {daily_spending_limit: {Int: '1'}}, onStep() {}};
+    if (rail.test.skips['update-params'] || typeof rail.ownerWorkflow.updateParams !== 'function') {
+      await assert.rejects(sdk.updateParams(network, change), (error) => error.code === 'update_unavailable');
+    } else {
+      // The transport failure reaches the host as the rail's typed owner-flow error, with the cause kept.
+      await assert.rejects(sdk.updateParams(network, change), (error) => error === offline || error.cause === offline);
+      for (const alias of rail.networks.find((n) => n.id === network).aliases) {
+        await assert.rejects(sdk.updateParams(alias, change), (error) => error === offline || error.cause === offline);
+      }
+      // No change, or an untyped set, never reaches the transport.
+      let asked = 0;
+      await assert.rejects(sdk.updateParams(network, {...change, ask: async () => { asked++; throw offline; }, params: {}}), (error) => error.code === 'param_invalid');
+      assert.equal(asked, 0);
     }
     assert.deepEqual([signed.length, journal.size], [0, 0]);
   });
