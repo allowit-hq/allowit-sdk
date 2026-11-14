@@ -79,6 +79,14 @@ impl Configuration {
             .with_policy(&self.0, identity)
             .map(Configuration)
     }
+    /// The installation after a confirmed params update: the same wallet, source and identity
+    /// with the update applied. Store it only after the owner step settled.
+    pub fn with_params(&self, update: &crate::runtime::ParamsUpdate) -> Result<Self> {
+        crate::plugins::for_network(&self.network)?
+            .owner_runtime()
+            .with_params(&self.0, update)
+            .map(Configuration)
+    }
 }
 impl crate::runtime::Installation {
     /// Restore an already admitted opaque configuration for read/owner operations.

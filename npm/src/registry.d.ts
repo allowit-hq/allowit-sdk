@@ -16,7 +16,8 @@ export type Feature =
   | 'fund'
   | 'activate'
   | 'binding-review'
-  | 'explorer-links';
+  | 'explorer-links'
+  | 'update-params';
 export type LinkKind = 'address' | 'tx' | 'contract';
 export interface RailNetwork {
   id: string;
@@ -241,13 +242,38 @@ export interface InstallAndFundInput {
   amount: string;
   onStep: (text: string) => void;
 }
+/** One typed param value: the JSON of a policy value. An integer is canonical decimal text. */
+export type ParamValue =
+  | {Int: string}
+  | {Bool: boolean}
+  | {Str: string}
+  | {Addr: string}
+  | {List: ParamValue[]};
+export interface UpdateParamsInput {
+  ask: OwnerAsk;
+  /** Shows one step in the `owner-sign` element and resolves with the exact signed payload. */
+  sign: (step: OwnerStep) => Promise<string>;
+  journal: OwnerJournal;
+  /** One journal key per change: a confirmed change is never prepared or signed again under its key. */
+  key: string;
+  policyId: string;
+  /** Each changed param with its complete new typed value. */
+  params: Record<string, ParamValue>;
+  /** The configuration revision that the owner reviewed, when the host shows one. */
+  expectedRevision?: number;
+  onStep: (text: string) => void;
+}
 /** Typed codes of the owner workflow. `OwnerFlowFailure.code` holds one, another server code or null. */
 export type OwnerFlowCode =
   | 'owner_transaction_expired'
   | 'owner_transaction_pending'
   | 'owner_transaction_settled'
-  | 'network_unavailable';
-/** The error that `installAndFund` rejects with. */
+  | 'network_unavailable'
+  | 'param_invalid'
+  | 'param_out_of_range'
+  | 'update_unavailable'
+  | 'revision_changed';
+/** The error that `installAndFund` and `updateParams` reject with. */
 export interface OwnerFlowFailure extends Error {
   code: OwnerFlowCode | string | null;
   /** True when Resume can send the same saved step, or prepare a new one, without a risk of a second payment. */
@@ -281,6 +307,8 @@ export interface RailPlugin {
   readonly ownerWorkflow: {
     /** `network` is the canonical network id that the SDK resolved. */
     installAndFund(input: InstallAndFundInput & {network: string}): Promise<{wallet: string; receipts: OwnerReceipt[]}>;
+    /** The owner-signed update of installed params on an active wallet. A rail without it omits the function. */
+    updateParams?(input: UpdateParamsInput & {network: string}): Promise<{receipts: OwnerReceipt[]; done: boolean}>;
   };
   readonly test: {
     network: string;
@@ -346,6 +374,11 @@ export function parseReviewLink(fragment: string): ReviewLink;
 export function reviewAgentPrompt(link: ReviewLink, origin: string, policyId: string, wallet: string, agent: string): string;
 export function reviewParamLines(network: string, params: ReviewProposal['params']): ReviewParamLine[];
 export function installAndFund(network: string, input: InstallAndFundInput): Promise<{wallet: string; receipts: OwnerReceipt[]}>;
+/**
+ * Change installed params on an active wallet with one owner signature. `done` is true when the change is
+ * confirmed; `receipts` is empty when an earlier run under the same journal key confirmed it.
+ */
+export function updateParams(network: string, input: UpdateParamsInput): Promise<{receipts: OwnerReceipt[]; done: boolean}>;
 
 export class AllowitRail extends HTMLElement {
   data: ElementData[ElementKind] | undefined;

@@ -55,6 +55,19 @@ are listed in the [Core README](https://github.com/allowit-hq/allowit-core/blob/
 | Print the params of a draft or profile | `kinds::param_lines(network, document)`, `kinds::profile_param_lines(&profile)` | `reviewParamLines(network, params)` |
 | Review and sign | | `parseReviewLink`, `reviewAgentPrompt`, `reviewParamLines`, `installAndFund(network, input)` |
 | Kind that a Review and sign link names | | the `walletKind` field of `parseReviewLink(fragment)`, beside `proposal` |
+| Typed values of the owner's text | `owner::typed_changes(network, document, edits, now)`, `parameters::set_all` | the typed editors of the host |
+| Change the params of a draft | `owner::edit_params(cx, EditParams)`, `owner::revise(cx, Revise)` | the `micro/params` and `micro/revise` owner routes |
+| Change the params of an active wallet | `owner::update_params(cx, UpdateParams)`; server: `Runtime::prepare_params_update`, `Configuration::with_params` | `updateParams(network, input)` |
+| Verify an installation on the ledger | `owner::verify(cx, document)` returns `Verification { matches, comparisons, state }` | |
+| Host and native placements | `owner::paired_export(network, document)` returns `PairedExport { host, native }` | |
+
+An owner changes installed params on an active wallet with one signature. The server prepares the owner step
+with `Runtime::prepare_params_update` and stores `Configuration::with_params` after the step settles; the wallet
+keeps its recorded usage and its request nonce. `owner::update_params` and `updateParams` are resume-safe under
+their request ID or journal key. `owner::verify` compares the owner's document with the ledger and reads the
+state back; `Verification::matches` is true only when every comparison matches. A rail without a call declares
+`Feature::EditParams`, `UpdateParams`, `Verify` or `PairedExport` skipped, and npm rejects `updateParams` with
+the code `update_unavailable`.
 
 A host never prints a unit of its own. An asset without a known unit is an error in Rust and `null` in npm.
 `npm/src/wallet-kinds.js` is generated from Core by the test `npm_wallet_kinds_equal_the_core_description`;

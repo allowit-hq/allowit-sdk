@@ -266,6 +266,21 @@ export async function installAndFund(network, input) {
   return hit.rail.ownerWorkflow.installAndFund({...input, network: hit.network.id});
 }
 
+/**
+ * Change installed params on an active wallet with one owner signature. `input.params` maps each changed
+ * param to its complete typed value. The rail settles a saved signed step before it signs another one,
+ * and the service saves the new params of the installation and of the policy when the network confirms
+ * the step. A rail without the workflow rejects with the code `update_unavailable`. An unknown network rejects.
+ */
+export async function updateParams(network, input) {
+  const hit = hitOf(network);
+  const run = hit.rail.ownerWorkflow.updateParams;
+  if (typeof run !== 'function') {
+    throw Object.assign(new Error('This network has no owner-signed update of installed params.'), {code: 'update_unavailable', retry: false});
+  }
+  return run({...input, network: hit.network.id});
+}
+
 const Base = globalThis.HTMLElement ?? class {};
 
 /**
