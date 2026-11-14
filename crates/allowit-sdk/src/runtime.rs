@@ -108,6 +108,9 @@ pub struct PreparedMetadata {
     pub debit_units: i128,
     pub request_hash: [u8; 32],
     pub debit: Debit,
+    /// The operation signs a payment authorization that the seller submits: the host sends
+    /// nothing, and `transaction_hash` identifies the authorization, not a transaction.
+    pub seller_settles: bool,
 }
 impl OwnerPacket {
     pub fn info(&self) -> Result<OwnerInfo> {
@@ -130,6 +133,7 @@ impl Prepared {
             debit_units: m.debit_units,
             request_hash: m.request_hash,
             debit: m.debit,
+            seller_settles: m.seller_settles,
         })
     }
 }
