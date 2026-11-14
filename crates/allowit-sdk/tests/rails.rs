@@ -814,5 +814,17 @@ fn typed_changes_parse_owner_text_and_refuse_an_invalid_or_unknown_value() {
         for refused in ["much", "-1"] {
             assert!(edit(&line.key, refused).is_err(), "{refused}");
         }
+        // The outcome of an owner step holds its policy under `selection`. Its edits are the
+        // same typed values.
+        let outcome = serde_json::json!({"requestId": "r", "state": "installed",
+            "selection": {"policy": draft}});
+        let edits = [(line.key.clone(), "0.75".to_owned())].into();
+        let (from_outcome, _) =
+            owner::typed_changes(network, &outcome, &edits, 1_700_000_000).unwrap();
+        assert_eq!(from_outcome, typed);
+        // A document without a policy source has nothing to edit.
+        assert!(
+            owner::typed_changes(network, &serde_json::json!({}), &edits, 1_700_000_000).is_err()
+        );
     });
 }

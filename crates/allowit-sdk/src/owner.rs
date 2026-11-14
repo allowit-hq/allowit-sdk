@@ -158,10 +158,12 @@ pub fn paired_export(network: &str, document: &[u8]) -> Result<PairedExport> {
         .owner()
         .paired_export(network, document)
 }
-/// The typed values of the owner's text edits for a draft or installation document of the rail
-/// of `network`, with each change as the owner reads it. `edits` maps a param key to text in
-/// human units, such as `3.5` for an amount or `2026-12-31` for an expiry. The checks are those
-/// of [`crate::parameters::set_all`]: type, range, a future expiry and limits that fit each
+/// The typed values of the owner's text edits for a draft, or for the outcome of a deployment,
+/// funding or params update, of the rail of `network`, with each change as the owner reads it.
+/// An outcome holds its policy and installation under `selection`; its installed params are
+/// the ones that are edited. `edits` maps a param key to text in human units, such as `3.5`
+/// for an amount or `2026-12-31` for an expiry. The checks are those of
+/// [`crate::parameters::set_all`]: type, range, a future expiry and limits that fit each
 /// other. The backend checks the values again.
 pub fn typed_changes(
     network: &str,
@@ -173,12 +175,23 @@ pub fn typed_changes(
     Vec<crate::parameters::Change>,
 )> {
     let network = routing::normalize(network)?;
-    let read = for_network(network)?.draft_params(network, document)?;
-    // A deployment, funding or update outcome selects its policy; a draft is the policy.
-    let code = document
-        .pointer("/selection/policy/code")
-        .or_else(|| document.get("code"))
-        .and_then(serde_json::Value::as_str)
+    let rail = for_network(network)?;
+    // The document itself, the selection of an outcome, or the policy of that selection:
+    // the first one whose params the rail reads.
+    let selection = document.get("selection");
+    let policy = selection.and_then(|selection| selection.get("policy"));
+    let mut read = rail.draft_params(network, document);
+    for candidate in [selection, policy].into_iter().flatten() {
+        if read.is_ok() {
+            break;
+        }
+        read = rail.draft_params(network, candidate);
+    }
+    let read = read?;
+    let code = [Some(document), policy, selection]
+        .into_iter()
+        .flatten()
+        .find_map(|part| part.get("code").and_then(serde_json::Value::as_str))
         .ok_or_else(|| Error::usage("The document holds no policy source"))?;
     let known = crate::parameters::known_assets(network)?;
     let draft = crate::parameters::Parameters {
