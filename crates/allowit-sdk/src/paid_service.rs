@@ -51,7 +51,7 @@ pub fn supported(network: &str) -> bool {
 
 /// Parse the seller's challenge for `resource` on `network`. An unknown network, a rail without
 /// the hook and a resource that is no URL keep their own codes; a reply that the rail refuses
-/// is [`SELLER_FAILED`].
+/// is [`SELLER_FAILED`], and so is a challenge that has already expired.
 pub fn challenge(network: &str, resource: &str, reply: &SellerReply<'_>) -> Result<Challenge> {
     let (network, hook) = hook(network)?;
     resource_url(resource)?;
@@ -74,7 +74,23 @@ pub fn challenge(network: &str, resource: &str, reply: &SellerReply<'_>) -> Resu
     }
     challenge.units()?;
     challenge.context().validate()?;
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_err(|_| Error::config("The system clock is before 1970."))?
+        .as_secs();
+    unexpired(&challenge, now)?;
     Ok(challenge)
+}
+
+/// Refuse a challenge that the seller no longer accepts at `now`, in Unix seconds. A payment
+/// for it would buy nothing, so it is refused before anything is paid.
+pub fn unexpired(challenge: &Challenge, now: u64) -> Result<()> {
+    match challenge.expires_at {
+        Some(expires_at) if expires_at <= now => Err(seller_failed(
+            "The seller's payment challenge has expired. Request the resource again.",
+        )),
+        _ => Ok(()),
+    }
 }
 
 /// Build the proof that the client presents for `challenge` from the outcome document of the
@@ -339,6 +355,37 @@ mod tests {
         assert_eq!(error.code, SELLER_FAILED);
         assert_ne!(error.code, crate::transport_failure::NETWORK_UNAVAILABLE);
         assert_eq!(seller_failed("x").code, 8);
+    }
+
+    #[test]
+    fn an_expired_challenge_is_a_seller_failure_before_any_payment() {
+        let challenge = |expires_at| Challenge {
+            id: None,
+            resource: "https://seller.example/report".into(),
+            network: "example:testnet".into(),
+            scheme: "exact".into(),
+            pay_to: "RECIPIENT".into(),
+            amount: crate::execution::Quantity::new(
+                25,
+                crate::input::asset::AssetDisplay {
+                    symbol: "XYZ".into(),
+                    decimals: 2,
+                    name: "Example".into(),
+                    native: true,
+                },
+            ),
+            asset: "XYZ".into(),
+            expires_at,
+            terms: serde_json::Value::Null,
+        };
+        let now = 1_800_000_000;
+        // A seller that states no expiry, and one that expires later, are payable.
+        unexpired(&challenge(None), now).unwrap();
+        unexpired(&challenge(Some(now + 1)), now).unwrap();
+        for expired in [1, now - 1, now] {
+            let error = unexpired(&challenge(Some(expired)), now).unwrap_err();
+            assert_eq!(error.code, SELLER_FAILED, "{expired}");
+        }
     }
 
     #[test]

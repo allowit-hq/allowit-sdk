@@ -167,6 +167,10 @@ pub fn validate_entry(entry: &CatalogEntry) -> Result<()> {
                 .all(|value| !value.is_empty() && text(value, max))
     };
     crate::paid_service::resource_url(&entry.resource).map_err(|_| invalid())?;
+    // The seller transport requests no URL with a fragment, so no entry offers one.
+    if entry.resource.contains('#') {
+        return Err(invalid());
+    }
     if entry.id.is_empty()
         || entry.id.len() > MAX_ENTRY_ID_BYTES
         || !entry.id.bytes().all(|byte| byte.is_ascii_graphic())
@@ -373,6 +377,7 @@ mod tests {
         validate_entry(&serde_json::from_value(sample()).unwrap()).unwrap();
         refused(&|e| e["resource"] = json!("javascript:alert(1)"));
         refused(&|e| e["resource"] = json!("file:///etc/passwd"));
+        refused(&|e| e["resource"] = json!("https://seller.example/report#fragment"));
         refused(&|e| e["name"] = json!("Report\u{1b}[2J"));
         refused(&|e| e["name"] = json!(""));
         refused(&|e| e["description"] = json!("a".repeat(2001)));
