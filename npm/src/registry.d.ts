@@ -248,7 +248,7 @@ export type ParamValue =
   | {Bool: boolean}
   | {Str: string}
   | {Addr: string}
-  | {List: ParamValue[]};
+  | {List: readonly ParamValue[]};
 export interface UpdateParamsInput {
   ask: OwnerAsk;
   /** Shows one step in the `owner-sign` element and resolves with the exact signed payload. */
