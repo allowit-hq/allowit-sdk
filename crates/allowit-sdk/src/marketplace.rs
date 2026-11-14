@@ -198,7 +198,7 @@ mod tests {
         let handle = thread::spawn(move || {
             let (mut stream, _) = listener.accept().unwrap();
             stream
-                .set_read_timeout(Some(Duration::from_secs(3)))
+                .set_read_timeout(Some(std::time::Duration::from_secs(3)))
                 .unwrap();
             let mut received = Vec::new();
             let mut buffer = [0u8; 4096];
