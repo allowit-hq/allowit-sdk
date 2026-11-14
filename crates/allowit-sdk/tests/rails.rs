@@ -2,7 +2,7 @@
 //! from each rail's fixtures, and a rail skips a feature it declares unsupported.
 use allowit_sdk::{
     config::ServerAuthority,
-    execution,
+    custom_build, execution,
     generation::{self, GenerateRequest, Target},
     input::address,
     kinds::{self, WalletKind},
@@ -883,5 +883,121 @@ fn typed_changes_parse_owner_text_and_refuse_an_invalid_or_unknown_value() {
         assert!(
             owner::typed_changes(network, &serde_json::json!({}), &edits, 1_700_000_000).is_err()
         );
+    });
+}
+
+/// A local key of a rail as the signer of a build statement.
+struct StatementKey {
+    network: &'static str,
+    key: Box<dyn allowit_sdk::portable::vendor::PrivateSigner>,
+}
+impl StatementKey {
+    fn of(rail: &dyn plugins::RailPlugin, seed: u8) -> Self {
+        let entropy = vec![seed; rail.keys().entropy_bytes()];
+        Self {
+            network: rail.test_support().network,
+            key: rail.keys().derive(&entropy).unwrap(),
+        }
+    }
+}
+impl custom_build::Signer for StatementKey {
+    fn network(&self) -> &str {
+        self.network
+    }
+    fn address(&self) -> &str {
+        self.key.address()
+    }
+    fn sign_hash(&self, digest: &[u8]) -> allowit_sdk::error::Result<Vec<u8>> {
+        self.key.sign_hash(digest)
+    }
+}
+
+#[test]
+fn a_rail_skips_the_custom_build_exactly_when_it_has_no_hook() {
+    for rail in plugins::rails() {
+        let support = rail.test_support();
+        assert_eq!(
+            support.skip(Feature::CustomBuild).is_some(),
+            rail.custom_wallet_build().is_none(),
+            "{}",
+            rail.id()
+        );
+        assert_eq!(
+            custom_build::supported(support.network),
+            rail.custom_wallet_build().is_some(),
+            "{}",
+            rail.id()
+        );
+    }
+    assert!(!custom_build::supported("unknown:network"));
+}
+
+#[test]
+fn a_rail_binds_a_build_to_its_presignature_owner_and_code() {
+    use custom_build::{Admitted, code};
+    testkit::each(Feature::CustomBuild, |rail, fx| {
+        let network = rail.test_support().network;
+        let (server, owner, stranger) = (
+            StatementKey::of(rail, 1),
+            StatementKey::of(rail, 2),
+            StatementKey::of(rail, 3),
+        );
+        use custom_build::Signer as _;
+        let source = "pub fn execute() {}\n";
+        let presignature = custom_build::presign(&server, "policy-1", source).unwrap();
+        let admitted = Admitted {
+            network,
+            policy_id: "policy-1",
+            source,
+            server: server.address(),
+        };
+        custom_build::verify_presignature(&presignature, &admitted).unwrap();
+        let refused = |result: allowit_sdk::error::Result<()>| result.unwrap_err().api_code;
+        // Another policy, altered source and an untrusted server key.
+        for other in [
+            Admitted {
+                policy_id: "policy-2",
+                ..admitted
+            },
+            Admitted {
+                source: "pub fn execute() { /* altered */ }\n",
+                ..admitted
+            },
+            Admitted {
+                server: stranger.address(),
+                ..admitted
+            },
+        ] {
+            assert_eq!(
+                refused(custom_build::verify_presignature(&presignature, &other)).as_deref(),
+                Some(code::PRESIGNATURE_MISMATCH),
+                "{}",
+                rail.id()
+            );
+        }
+        // The rail hashes the fixture wallet code; the owner attests that hash.
+        assert!(!fx.wallet_code.is_empty(), "{}", rail.id());
+        let hash = custom_build::code_hash(network, &fx.wallet_code).unwrap();
+        let attestation = custom_build::attest(&owner, &presignature, &hash).unwrap();
+        custom_build::verify_attestation(&attestation, &admitted, owner.address()).unwrap();
+        custom_build::check_code_hash(&attestation, &hash).unwrap();
+        // Another signer, and code with another hash.
+        let by_stranger = custom_build::attest(&stranger, &presignature, &hash).unwrap();
+        assert_eq!(
+            refused(custom_build::verify_attestation(
+                &by_stranger,
+                &admitted,
+                owner.address()
+            ))
+            .as_deref(),
+            Some(code::ATTESTATION_INVALID)
+        );
+        let mut other = hash;
+        other[0] ^= 1;
+        assert_eq!(
+            refused(custom_build::check_code_hash(&attestation, &other)).as_deref(),
+            Some(code::CODE_HASH_MISMATCH)
+        );
+        assert!(custom_build::code_hash(network, b"no wallet code").is_err());
     });
 }
