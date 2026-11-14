@@ -24,6 +24,7 @@ pub mod policy_metadata {
 }
 pub mod authoring;
 pub mod config;
+pub mod custom_build;
 pub mod execution;
 pub mod generation;
 pub mod input;
@@ -41,6 +42,7 @@ pub mod request;
 mod request_proof;
 pub mod routing;
 pub mod runtime;
+mod server;
 pub mod transport_failure;
 pub mod typed_request;
 pub mod wallet;

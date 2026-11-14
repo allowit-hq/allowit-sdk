@@ -4,17 +4,14 @@
 //! amount of a purchase comes from the seller's challenge for the exact resource.
 use crate::{
     error::{Error, Result},
-    transport::{
-        http::{HttpClient, Method, Request},
-        rpc::Options,
-    },
+    server::component,
+    transport::http::Method,
 };
 pub use allowit_core::vendor::paid_service::{
     CatalogEntry, IndicativeTerms, MARKETPLACE_SEARCH, MAX_QUERY_BYTES, MAX_SEARCH_LIMIT, Ranking,
     SearchResult,
 };
 use serde::Deserialize;
-use std::time::Duration;
 
 /// The search route of a server, relative to its origin.
 pub const SEARCH_PATH: &str = "/api/marketplace/search";
@@ -85,73 +82,15 @@ impl Query {
     }
 }
 
-/// Percent-encode one URL query value. Only unreserved characters stay as they are.
-fn component(value: &str) -> String {
-    let mut encoded = String::with_capacity(value.len());
-    for byte in value.bytes() {
-        if byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'.' | b'_' | b'~') {
-            encoded.push(char::from(byte));
-        } else {
-            encoded.push_str(&format!("%{byte:02X}"));
-        }
-    }
-    encoded
-}
-
-/// A typed server refusal `{error, code}`.
-#[derive(Deserialize)]
-struct Refusal {
-    #[serde(default)]
-    error: Option<String>,
-    #[serde(default)]
-    code: Option<String>,
-}
-
 fn get(server: &str, path: &str, query: &str) -> Result<Vec<u8>> {
-    let origin = crate::config::parse_origin(server)?;
-    let url = format!("{origin}{path}?{query}");
-    let client = HttpClient::new(Options {
-        timeout: Duration::from_secs(20),
-        max_response_bytes: MAX_REPLY_BYTES,
-        no_proxy: false,
-        connect_timeout: Some(Duration::from_secs(10)),
-    })
-    .map_err(|_| Error::config("Cannot configure the server request"))?;
-    let response = client
-        .send_refusal_body(
-            Request {
-                method: Method::Get,
-                url: &url,
-                headers: &[("accept".into(), "application/json".into())],
-                body: None,
-            },
-            None,
-        )
-        .map_err(|_| crate::transport_failure::network_unavailable("Allowit server"))?;
-    if !(200..300).contains(&response.status) {
-        let refusal: Option<Refusal> = serde_json::from_slice(&response.body).ok();
-        let (message, code) = refusal
-            .map(|refusal| (refusal.error, refusal.code))
-            .unwrap_or_default();
-        // Server text is data: one bounded line with no control character.
-        let message: String = message
-            .unwrap_or_else(|| "the marketplace request was refused".into())
-            .chars()
-            .filter(|c| !c.is_control())
-            .take(300)
-            .collect();
-        return Err(
-            match code.filter(|code| {
-                !code.is_empty()
-                    && code.len() <= 64
-                    && code.bytes().all(|b| b.is_ascii_lowercase() || b == b'_')
-            }) {
-                Some(code) => Error::refused(response.status, code, message),
-                None => Error::api(response.status, message),
-            },
-        );
-    }
-    Ok(response.body)
+    crate::server::send(
+        server,
+        Method::Get,
+        &format!("{path}?{query}"),
+        None,
+        MAX_REPLY_BYTES,
+        "the marketplace request was refused",
+    )
 }
 
 /// Check an entry that a server returned. A server is configured, not trusted with the shape
@@ -259,7 +198,7 @@ mod tests {
         let handle = thread::spawn(move || {
             let (mut stream, _) = listener.accept().unwrap();
             stream
-                .set_read_timeout(Some(Duration::from_secs(3)))
+                .set_read_timeout(Some(std::time::Duration::from_secs(3)))
                 .unwrap();
             let mut received = Vec::new();
             let mut buffer = [0u8; 4096];
