@@ -113,9 +113,10 @@ pub fn verify_attestation(
     )
 }
 
-/// The build that a server holds for a policy.
+/// The build that a server holds for a policy. A reply may carry more fields: a later server
+/// can add facts.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[serde(rename_all = "camelCase")]
 pub struct BuildState {
     /// The identity of the built wallet code.
     pub code_hash: String,
@@ -125,7 +126,7 @@ pub struct BuildState {
 
 /// A policy that awaits its build: the admitted source with the server presignature.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[serde(rename_all = "camelCase")]
 pub struct Admission {
     pub policy_id: String,
     /// The CAIP-2 network of the policy.
@@ -141,7 +142,7 @@ pub struct Admission {
 
 /// The server's answer to built code: its hash and the attestation text for the owner to sign.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[serde(rename_all = "camelCase")]
 pub struct Submitted {
     pub policy_id: String,
     pub code_hash: String,
