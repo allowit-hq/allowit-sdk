@@ -64,6 +64,40 @@ fn every_rail_advertises_wallet_kinds_and_reports_the_kind_of_its_profile() {
     assert_eq!(WalletKind::parse("standard"), Some(WalletKind::Standard));
 }
 
+/// A keypair wallet is the agent's own account. A rail that sets one up advertises the kind on
+/// its network with no precondition for an owner, and its installation names a wallet that is
+/// neither its owner nor its agent nor its server: one account per agent, never a shared one.
+#[test]
+fn a_keypair_wallet_is_its_own_account_on_every_rail_that_sets_one_up() {
+    testkit::each(Feature::OwnerSetup, |rail, f| {
+        let network = rail.test_support().network;
+        let advertised: Vec<_> = kinds::wallet_kinds(network)
+            .unwrap()
+            .into_iter()
+            .map(|info| info.id)
+            .collect();
+        assert!(
+            advertised.contains(&WalletKind::Native),
+            "{} sets up owner wallets without the kind",
+            rail.id()
+        );
+        if kinds::wallet_kind(network, &f.public_profile).unwrap() != WalletKind::Native {
+            return;
+        }
+        let profile: serde_json::Value = serde_json::from_slice(&f.public_profile).unwrap();
+        let configuration: runtime::owner::Configuration =
+            serde_json::from_value(profile["config"].clone()).unwrap();
+        assert_eq!(configuration.custody, runtime::owner::Custody::Owner);
+        for role in [
+            &configuration.owner,
+            &configuration.agent,
+            &configuration.server,
+        ] {
+            assert_ne!(&configuration.wallet, role, "{}", rail.id());
+        }
+    });
+}
+
 #[test]
 fn every_rail_supplies_the_unit_of_its_native_asset_and_tokens() {
     for rail in plugins::rails() {
