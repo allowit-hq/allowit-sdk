@@ -111,10 +111,19 @@ export function paidServiceOf(document) {
   const item = record(record(document)?.paidService);
   const text = (value, max) => typeof value === 'string' && value.length > 0 && value.length <= max
     && /^[\x21-\x7e]+$/.test(value);
-  if (!item || !text(item.resource, 2048) || !/^https?:\/\//.test(item.resource)) return null;
-  if (!text(item.payTo, 128) || !text(item.asset, 128) || !/^[1-9][0-9]{0,38}$/.test(String(item.amount))) return null;
-  if (typeof item.amount !== 'string') return null;
-  if (item.challengeId !== undefined && !/^[A-Za-z0-9._:-]{1,128}$/.test(String(item.challengeId))) return null;
+  if (!item || !text(item.resource, 2048)) return null;
+  // The resource parses as an http or https URL with a host and no credentials.
+  let url;
+  try {
+    url = new URL(item.resource);
+  } catch {
+    return null;
+  }
+  if (!['http:', 'https:'].includes(url.protocol) || !url.hostname || url.username || url.password) return null;
+  if (!text(item.payTo, 128) || !text(item.asset, 128)) return null;
+  if (typeof item.amount !== 'string' || !/^[1-9][0-9]{0,38}$/.test(item.amount)) return null;
+  if (item.challengeId !== undefined
+    && (typeof item.challengeId !== 'string' || !/^[A-Za-z0-9._:-]{1,128}$/.test(item.challengeId))) return null;
   if (Object.keys(item).some((key) => !['resource', 'challengeId', 'payTo', 'amount', 'asset'].includes(key))) return null;
   return item;
 }

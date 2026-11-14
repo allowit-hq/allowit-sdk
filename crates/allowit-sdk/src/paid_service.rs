@@ -49,7 +49,9 @@ pub fn supported(network: &str) -> bool {
     hook(network).is_ok()
 }
 
-/// Parse the seller's challenge for `resource` on `network`.
+/// Parse the seller's challenge for `resource` on `network`. An unknown network, a rail without
+/// the hook and a resource that is no URL keep their own codes; a reply that the rail refuses
+/// is [`SELLER_FAILED`].
 pub fn challenge(network: &str, resource: &str, reply: &SellerReply<'_>) -> Result<Challenge> {
     let (network, hook) = hook(network)?;
     resource_url(resource)?;
@@ -58,7 +60,12 @@ pub fn challenge(network: &str, resource: &str, reply: &SellerReply<'_>) -> Resu
             "The seller's payment challenge is too large.",
         ));
     }
-    let challenge = hook.challenge(network, resource, reply)?;
+    // What the rail refuses here is the seller's reply: malformed, of another scheme or
+    // network, or with terms that this rail cannot settle. It is a seller failure, apart from
+    // the caller's own input above and from every payment and policy error.
+    let challenge = hook
+        .challenge(network, resource, reply)
+        .map_err(|error| seller_failed(error.message))?;
     // The rail answers for the selected network and resource only.
     if challenge.network != network || challenge.resource != resource {
         return Err(Error::config(

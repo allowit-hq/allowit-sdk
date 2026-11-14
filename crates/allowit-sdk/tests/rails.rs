@@ -602,9 +602,15 @@ fn a_rail_reads_no_challenge_from_a_reply_that_is_none() {
             body,
         };
         // A delivered resource, an empty challenge and text that is no challenge.
+        // Each is the seller's failure: its own code, apart from usage and payment errors.
         for (status, body) in [(200, &b"{}"[..]), (402, b""), (402, b"<html>pay</html>")] {
             let error = paid_service::challenge(network, resource, &reply(status, body));
-            assert!(error.is_err(), "{} {status}", rail.id());
+            assert_eq!(
+                error.unwrap_err().code,
+                paid_service::SELLER_FAILED,
+                "{} {status}",
+                rail.id()
+            );
         }
         // A resource that is no http or https URL never reaches the rail.
         for resource in [
