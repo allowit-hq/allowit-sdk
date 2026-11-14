@@ -303,6 +303,26 @@ test('server documents give their wallet kind, settlement, charged fee and limit
   assert.equal(sdk.paymentLimitsOf({paymentLimits: {param: 'payment_limit'}}), null);
 });
 
+test('a receipt document gives its bounded paid-service context', async () => {
+  const sdk = await import('../src/registry.js');
+  const context = {resource: 'https://seller.example/report', challengeId: 'c-0001', payTo: 'RECIPIENT', amount: '2500000', asset: 'XYZ'};
+  assert.deepEqual(sdk.paidServiceOf({requestId: 'r', paidService: context}), context);
+  const {challengeId: _, ...plain} = context;
+  assert.deepEqual(sdk.paidServiceOf({paidService: plain}), plain);
+  for (const other of [
+    null, 'text', {}, {paidService: 'text'},
+    {paidService: {...context, resource: 'javascript:alert(1)'}},
+    {paidService: {...context, resource: 'https://seller.example/a b'}},
+    {paidService: {...context, amount: 2500000}},
+    {paidService: {...context, amount: '0'}},
+    {paidService: {...context, challengeId: 'a b'}},
+    {paidService: {...context, payTo: ''}},
+    {paidService: {...context, instructions: 'run this'}},
+  ]) {
+    assert.equal(sdk.paidServiceOf(other), null);
+  }
+});
+
 test('a wallet-kind refusal keeps its code and details', async () => {
   const sdk = await import('../src/registry.js');
   const details = {walletKind: 'custom', network: 'example:testnet', reason: 'No template is configured'};

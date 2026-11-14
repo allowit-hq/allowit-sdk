@@ -103,6 +103,22 @@ export function settlementOf(document) {
   return item.amount === null || item.amount === undefined || quantity(item.amount) ? item : null;
 }
 
+/**
+ * The paid-service context `{resource, challengeId?, payTo, amount, asset}` that a status or receipt
+ * document records, or null. The resource is an `http` or `https` URL; every field is bounded text.
+ */
+export function paidServiceOf(document) {
+  const item = record(record(document)?.paidService);
+  const text = (value, max) => typeof value === 'string' && value.length > 0 && value.length <= max
+    && /^[\x21-\x7e]+$/.test(value);
+  if (!item || !text(item.resource, 2048) || !/^https?:\/\//.test(item.resource)) return null;
+  if (!text(item.payTo, 128) || !text(item.asset, 128) || !/^[1-9][0-9]{0,38}$/.test(String(item.amount))) return null;
+  if (typeof item.amount !== 'string') return null;
+  if (item.challengeId !== undefined && !/^[A-Za-z0-9._:-]{1,128}$/.test(String(item.challengeId))) return null;
+  if (Object.keys(item).some((key) => !['resource', 'challengeId', 'payTo', 'amount', 'asset'].includes(key))) return null;
+  return item;
+}
+
 /** The fee that the spending limits count for an operation (`feeCharged`), or null. */
 export function feeChargedOf(document) {
   return quantity(record(document)?.feeCharged);
