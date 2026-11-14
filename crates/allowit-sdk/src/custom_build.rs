@@ -162,10 +162,33 @@ fn reply<T: serde::de::DeserializeOwned>(body: &[u8]) -> Result<T> {
 }
 const REFUSED: &str = "the custom build request was refused";
 
-/// Read the admitted source of a policy and verify its presignature against `server_key`, the
-/// server key that the caller trusts. The reply is returned only when that key signed exactly
-/// this policy id, the reply's network and the reply's source.
-pub fn fetch(server: &str, policy_id: &str, ticket: &str, server_key: &str) -> Result<Admission> {
+/// A build reply whose presignature is not verified yet. It opens only with the server key
+/// that the caller trusts.
+pub struct Sealed(Admission);
+impl Sealed {
+    /// The network that the reply names. The caller selects its trusted server key with it.
+    pub fn network(&self) -> &str {
+        &self.0.network
+    }
+    /// Open the reply: it is returned only when `server_key` signed exactly the requested
+    /// policy id, the reply's network and the reply's source.
+    pub fn verify(self, server_key: &str) -> Result<Admission> {
+        verify_presignature(
+            &self.0.presignature,
+            &Admitted {
+                network: &self.0.network,
+                policy_id: &self.0.policy_id,
+                source: &self.0.source,
+                server: server_key,
+            },
+        )?;
+        Ok(self.0)
+    }
+}
+
+/// Read the admitted source of a policy with its presignature. [`Sealed::verify`] checks the
+/// presignature against the server key that the caller trusts.
+pub fn fetch(server: &str, policy_id: &str, ticket: &str) -> Result<Sealed> {
     token("policy id", policy_id)?;
     token("build ticket", ticket)?;
     let body = send(
@@ -181,21 +204,63 @@ pub fn fetch(server: &str, policy_id: &str, ticket: &str, server_key: &str) -> R
         REFUSED,
     )?;
     let admission: Admission = reply(&body)?;
+    if admission.policy_id != policy_id {
+        return Err(Error::uncertain("The server returned another policy"));
+    }
     if admission.source.len() > MAX_SOURCE_BYTES {
         return Err(Error::uncertain(
             "The server returned a policy source over the build limit",
         ));
     }
-    verify_presignature(
-        &admission.presignature,
-        &Admitted {
-            network: &admission.network,
-            policy_id,
-            source: &admission.source,
-            server: server_key,
-        },
-    )?;
-    Ok(admission)
+    Ok(Sealed(admission))
+}
+
+/// The owner's view of a build on the server: the build ticket of the policy.
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OwnerView {
+    pub policy_id: String,
+    pub network: String,
+    /// The capability of the build routes of this policy.
+    pub ticket: String,
+    #[serde(default)]
+    pub build: Option<BuildState>,
+}
+
+/// Read the build ticket of a Custom policy with the owner's session.
+pub fn owner_view(cx: &crate::owner::Context<'_>, policy_id: &str) -> Result<OwnerView> {
+    token("policy id", policy_id)?;
+    let value = crate::owner::custom_build(cx, policy_id)?;
+    #[derive(Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    struct View {
+        policy_id: String,
+        network: String,
+        ticket: String,
+        #[serde(default)]
+        build: Option<serde_json::Value>,
+    }
+    let view: View = serde_json::from_value(value)
+        .map_err(|_| Error::uncertain("The server returned an invalid custom build reply"))?;
+    if view.policy_id != policy_id {
+        return Err(Error::uncertain("The server returned another policy"));
+    }
+    // The owner's view adds the attestation text and document; a host needs the state only.
+    let build = view
+        .build
+        .filter(|build| !build.is_null())
+        .and_then(|build| {
+            Some(BuildState {
+                code_hash: build.get("codeHash")?.as_str()?.to_owned(),
+                attested: build.get("attested")?.as_bool()?,
+            })
+        });
+    Ok(OwnerView {
+        policy_id: view.policy_id,
+        network: view.network,
+        ticket: view.ticket,
+        build,
+    })
 }
 
 /// Hand built wallet code to the server. The server keeps it for the owner's code upload; it
