@@ -2,7 +2,7 @@ name: Focused CI
 on:
   pull_request:
   push:
-    branches: [main, prod]
+    branches: [main, prod, staging]
   workflow_dispatch:
 permissions:
   contents: read
@@ -10,6 +10,25 @@ concurrency:
   group: focused-${{ github.repository }}-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 jobs:
+  public-sources:
+    name: Public sources
+    # The main branch builds from public repositories only. The staging branch registers private
+    # packages, so this check runs on every other branch and on pull requests to them.
+    if: github.ref != 'refs/heads/staging' && github.base_ref != 'staging'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@5059963b1731bf1580991b5f3b1eecfb5da406c0 # 1.98.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 22
+      # Corepack reads the pnpm version from the package in the working directory.
+      - run: corepack enable
+      # This job names no secret. The script fetches every locked source with no credential.
+      - run: tools/public-sources.sh
   build:
     name: Build
     runs-on: ubuntu-24.04
