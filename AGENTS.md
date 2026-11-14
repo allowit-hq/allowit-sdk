@@ -1,15 +1,15 @@
 # allowit-sdk
 
-## Artifact storage
+## Repository scope
 
-Keep code, required build/test inputs and concise API/usage documentation in this repository. Keep plans in the canonical `allowit-hq/allowit-project` knowledge repository under `.agents/4-plans/`. Keep design reports, reviews, run evidence, demo recordings and screenshots in its `.agents/artifacts/`. Never commit those artifacts in this subproject or its feature branches. Link to the retained artifact in that project.
+Keep code, required build/test inputs and concise API/usage documentation in this repository. Never commit plans, design reports, reviews, run evidence, demo recordings or screenshots in this repository or its feature branches.
 
 ## Before pushing
 
 Read the affected workflows in `.github/workflows/`. Run their affected test and
 validation commands locally, including their feature flags and selectors. Include
 workflow and test-input changes when selecting checks. Resolve failures before
-pushing. Preserve existing reviews and deployment restrictions.
+pushing.
 
 All packages share one Cargo workspace, one `Cargo.lock` and one version
 (`[workspace.package]`). Packages in this repository depend on each other by
@@ -28,8 +28,8 @@ must name the same core revision, so the plugin trait objects match.
 Only five files may name a vendor, and only on import or dependency lines:
 `Cargo.toml`, `crates/allowit-sdk/Cargo.toml`, `crates/allowit-sdk/src/plugins/registered.rs`,
 `npm/package.json` and `npm/src/registered.js`. Everything else reaches vendors through
-`plugins` (Rust) or `@allowit/sdk` (JavaScript). Maintainers check this boundary in the
-allowit-project review before merge.
+`plugins` (Rust) or `@allowit/sdk` (JavaScript). Maintainers check this boundary before
+merge.
 
 A policy package registers with one dependency line per manifest and one import line in
 `registered.rs`, `use <crate>::PACKAGE as PACKAGE_<n>;`, plus its alias in `PACKAGES`. Its namespace
