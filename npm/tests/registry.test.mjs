@@ -260,6 +260,20 @@ for (const rail of sdk.rails()) {
     }
     assert.deepEqual([signed.length, journal.size], [0, 0]);
 
+    // The fee account dispatches the same way. A document that names none reads no ledger, and a rail
+    // without fee accounts has none to read or refill.
+    assert.equal(await sdk.feeAccount(network, {}), null);
+    await assert.rejects(sdk.feeAccount('unknown:none', {}), /No rail is registered/);
+    const refill = {owner: fixtures.address, feeAccount: fixtures.address, amount: '1', sign: input.sign, onStep() {}};
+    if (typeof rail.ownerWorkflow.refillFees !== 'function') {
+      await assert.rejects(sdk.refillFees(network, refill), (error) => error.code === 'refill_unavailable');
+    } else {
+      // An owner that is its own fee account is refused before any read or signature.
+      await assert.rejects(sdk.refillFees(network, refill));
+    }
+    await assert.rejects(sdk.refillFees('unknown:none', refill), /No rail is registered/);
+    assert.equal(signed.length, 0);
+
     // The params update dispatches the same way. A rail without the workflow rejects with a typed code.
     const change = {ask: input.ask, sign: input.sign, journal: input.journal, key: 'u', policyId: 'p', params: {daily_spending_limit: {Int: '1'}}, onStep() {}};
     if (rail.test.skips['update-params'] || typeof rail.ownerWorkflow.updateParams !== 'function') {

@@ -281,6 +281,32 @@ export async function updateParams(network, input) {
   return run({...input, network: hit.network.id});
 }
 
+/**
+ * The fee account of a wallet: the account that sends the agent's operations and pays their network fees,
+ * with what the ledger holds for it. `document` is an installation, a wallet profile or a policy of the
+ * network. Null when the document names no fee account or the rail has none: the wallet pays its own fees.
+ * The rail reads the public ledger itself. An unknown network rejects.
+ */
+export async function feeAccount(network, document) {
+  const hit = hitOf(network);
+  const read = hit.rail.ownerWorkflow.feeAccount;
+  return typeof read === 'function' ? read({network: hit.network.id, document}) : null;
+}
+
+/**
+ * Refill a fee account with one payment from the owner's account, which the owner's wallet signs. The rail
+ * builds the payment and sends the signed bytes to the network itself. A rail without fee accounts rejects
+ * with the code `refill_unavailable`. An unknown network rejects.
+ */
+export async function refillFees(network, input) {
+  const hit = hitOf(network);
+  const run = hit.rail.ownerWorkflow.refillFees;
+  if (typeof run !== 'function') {
+    throw Object.assign(new Error('This network has no fee account to refill.'), {code: 'refill_unavailable', retry: false});
+  }
+  return run({...input, network: hit.network.id});
+}
+
 const Base = globalThis.HTMLElement ?? class {};
 
 /**
