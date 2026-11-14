@@ -1,7 +1,13 @@
 //! Paid calls: a seller's payment challenge, the bounded seller request and the proof of the
-//! settled payment. The rail of the selected network reads the challenge and builds the proof.
+//! payment. The rail of the selected network reads the challenge and builds the proof.
 //! The payment itself is an ordinary operation: [`crate::execution::execute`] with
 //! `Request::paid_service` set to [`Challenge::context`]. Nothing here pays.
+//!
+//! A challenge states who settles ([`SettledBy`]). When the payer settles, the proof names the
+//! confirmed transaction. When the seller settles, the operation signs a payment authorization
+//! and submits nothing: its outcome is `submitted`, the proof carries the authorization, and
+//! the status of the same request ID later reports the settlement that the server read from
+//! the ledger.
 use crate::{
     error::{Error, Result},
     plugins::for_network,
@@ -11,8 +17,8 @@ use crate::{
     },
 };
 pub use allowit_core::vendor::paid_service::{
-    Challenge, MAX_CHALLENGE_BYTES, MAX_CHALLENGE_ID_BYTES, MAX_RESOURCE_BYTES, PaidService,
-    PaidServiceProvider, Proof, SellerReply, challenge_id, resource_url,
+    Challenge, MAX_CHALLENGE_BYTES, MAX_CHALLENGE_ID_BYTES, MAX_RESOURCE_BYTES, MAX_SETTLE_WITHIN,
+    PaidService, PaidServiceProvider, Proof, SellerReply, SettledBy, challenge_id, resource_url,
 };
 use std::time::Duration;
 
@@ -94,7 +100,8 @@ pub fn unexpired(challenge: &Challenge, now: u64) -> Result<()> {
 }
 
 /// Build the proof that the client presents for `challenge` from the outcome document of the
-/// confirmed operation that paid it.
+/// operation that paid it: confirmed when the payer settles, or holding the signed payment
+/// authorization when the seller settles.
 pub fn proof(challenge: &Challenge, receipt: &serde_json::Value) -> Result<Proof> {
     let (_, hook) = hook(&challenge.network)?;
     let proof = hook.proof(challenge, receipt)?;
@@ -376,6 +383,8 @@ mod tests {
             ),
             asset: "XYZ".into(),
             expires_at,
+            settled_by: SettledBy::Payer,
+            settle_within: None,
             terms: serde_json::Value::Null,
         };
         let now = 1_800_000_000;

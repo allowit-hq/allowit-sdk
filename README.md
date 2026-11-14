@@ -143,12 +143,27 @@ A paid call buys one resource from a seller that answers with a payment challeng
    `Request::paid_service` set to `challenge.context()`. The server evaluates the policy on the transfer as for
    any other payment and records the context in the receipt (`paidService`).
 4. `paid_service::proof(challenge, receipt)` builds the request header from the outcome document of the
-   confirmed operation. `paid_service::send` presents it with the second request.
+   operation. `paid_service::send` presents it with the second request.
 
-Nothing waits for or calls a third party to settle: Allowit settles the payment, and the seller verifies the
-proof on its own. A seller that gives no answer, or a reply that is no usable challenge, is the error code
-`SELLER_FAILED` (8), apart from every payment and policy code. A retry uses the same request ID, so it never
-pays twice.
+`Challenge::settled_by` states who settles the payment:
+
+- `SettledBy::Payer`: the operation settles the payment, and the proof names the confirmed transaction. The
+  seller verifies the proof on its own.
+- `SettledBy::Seller`: the operation signs a payment authorization for exactly the challenge and submits
+  nothing. Its outcome is `submitted`, and the proof carries the authorization. The seller, or the service
+  that it names, submits it and pays the network fee. The server reserves the payment when it signs and reads
+  the settlement from the ledger: the status of the same request ID becomes `confirmed` with the settling
+  transaction, or `failed` when the authorization expired unused. `Challenge::settle_within` is the seller's
+  bound on the time to settlement; the authorization expires no later.
+
+Nothing waits for or calls a third party to settle. A seller that gives no answer, or a reply that is no usable
+challenge, is the error code `SELLER_FAILED` (8), apart from every payment and policy code. A retry uses the
+same request ID, so it never pays twice.
+
+`settlement_service` serves a host that sellers name as their settlement service. `verify` checks one payment
+authorization against the ledger and submits nothing. `settle` checks it again, submits it with the service's
+own key as the source of the transaction and its fee, and reads the settlement from the ledger.
+`Limits::max_fee` bounds the network fee of one settlement. The rail of each network implements the hook.
 
 `marketplace::search(server, &Query)` and `marketplace::entry(server, id)` read the catalog of one configured
 server over `GET /api/marketplace/search` and `GET /api/marketplace/entry`. The catalog is free to read and

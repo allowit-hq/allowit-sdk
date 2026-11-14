@@ -43,6 +43,7 @@ mod request_proof;
 pub mod routing;
 pub mod runtime;
 mod server;
+pub mod settlement_service;
 pub mod transport_failure;
 pub mod typed_request;
 pub mod wallet;
