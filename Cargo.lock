@@ -40,7 +40,7 @@ dependencies = [
 [[package]]
 name = "allowit-stellar"
 version = "0.4.0"
-source = "git+https://github.com/allowit-hq/allowit-contracts-stellar.git?rev=9b75a45da23c43ce4f5a7f53d1a36ddcb7d53f31#9b75a45da23c43ce4f5a7f53d1a36ddcb7d53f31"
+source = "git+https://github.com/allowit-hq/allowit-contracts-stellar.git?rev=ce3af2694e63b96cad5fbef028f438430ff22668#ce3af2694e63b96cad5fbef028f438430ff22668"
 dependencies = [
  "allowit-core",
  "base64 0.22.1",
