@@ -18,9 +18,11 @@ use base64::{Engine as _, engine::general_purpose::STANDARD};
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 
-/// The build route of a server, relative to its origin. `GET` reads the admitted source with its
-/// presignature; `POST` hands the built code to the server.
+/// The route of a server that reads the admitted source of a policy with its presignature,
+/// relative to its origin.
 pub const BUILD_PATH: &str = "/api/custom/build";
+/// The route that hands the built code to the server.
+pub const CODE_PATH: &str = "/api/custom/build/code";
 /// The route that registers the owner's attestation of a build.
 pub const ATTEST_PATH: &str = "/api/custom/build/attest";
 /// The largest wallet code that a host sends or stores.
@@ -65,7 +67,14 @@ pub fn presign(signer: &dyn Signer, policy_id: &str, source: &str) -> Result<Pre
 /// key. See [`allowit_core::vendor::custom_build::verify_presignature`].
 pub fn verify_presignature(presignature: &Presignature, admitted: &Admitted<'_>) -> Result<()> {
     let (network, hook) = hook(admitted.network)?;
-    core::verify_presignature(hook, presignature, &Admitted { network, ..*admitted })
+    core::verify_presignature(
+        hook,
+        presignature,
+        &Admitted {
+            network,
+            ..*admitted
+        },
+    )
 }
 
 /// Sign the owner attestation of a build. `signer` is the owner key. Verify the presignature
@@ -93,7 +102,15 @@ pub fn verify_attestation(
     owner: &str,
 ) -> Result<()> {
     let (network, hook) = hook(admitted.network)?;
-    core::verify_attestation(hook, attestation, &Admitted { network, ..*admitted }, owner)
+    core::verify_attestation(
+        hook,
+        attestation,
+        &Admitted {
+            network,
+            ..*admitted
+        },
+        owner,
+    )
 }
 
 /// The build that a server holds for a policy.
@@ -184,7 +201,12 @@ pub fn fetch(server: &str, policy_id: &str, ticket: &str, server_key: &str) -> R
 /// Hand built wallet code to the server. The server keeps it for the owner's code upload; it
 /// does not accept or vouch for the build. The reply names the hash that the server computed,
 /// which must be the hash of `built`.
-pub fn submit(server: &str, policy_id: &str, ticket: &str, built: &WalletCode) -> Result<Submitted> {
+pub fn submit(
+    server: &str,
+    policy_id: &str,
+    ticket: &str,
+    built: &WalletCode,
+) -> Result<Submitted> {
     token("policy id", policy_id)?;
     token("build ticket", ticket)?;
     if built.code.is_empty() || built.code.len() > MAX_CODE_BYTES {
@@ -198,7 +220,7 @@ pub fn submit(server: &str, policy_id: &str, ticket: &str, built: &WalletCode) -
     let body = send(
         server,
         Method::Post,
-        BUILD_PATH,
+        CODE_PATH,
         Some(request.to_string().as_bytes()),
         MAX_REPLY_BYTES,
         REFUSED,
