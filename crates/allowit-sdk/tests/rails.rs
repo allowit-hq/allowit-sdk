@@ -822,6 +822,29 @@ fn typed_changes_parse_owner_text_and_refuse_an_invalid_or_unknown_value() {
         let (from_outcome, _) =
             owner::typed_changes(network, &outcome, &edits, 1_700_000_000).unwrap();
         assert_eq!(from_outcome, typed);
+        // A param that is not canonical keeps the kind that its policy declares: an amount
+        // parses in the unit of the asset, in a draft and in an outcome.
+        let mut custom = draft.clone();
+        custom["code"] = "use allowit::prelude::*;\npub fn execute(ctx: &AllowitContext) -> allowit::Result {\n    let reserve: i128 = allowit::param(ctx, \"reserve_amount\");\n    if ctx.request.amount > reserve {\n        return Err(AllowitError::PaymentLimitExceeded);\n    }\n    Ok(())\n}\n".into();
+        let portable = &mut custom["runtime"]["instanceBinding"]["portable"];
+        if portable.is_object() {
+            portable["params"]["reserve_amount"] = serde_json::json!({"Int": "10"});
+            portable["kinds"] = serde_json::json!({"reserve_amount": "amount"});
+            let read = rail.draft_params(network, &custom).unwrap();
+            let unit = 10i128.pow(u32::from(read.asset.decimals));
+            let reserve = [("reserve_amount".to_owned(), "0.75".to_owned())].into();
+            for document in [
+                custom.clone(),
+                serde_json::json!({"requestId": "r", "selection": {"policy": custom}}),
+            ] {
+                let (typed, _) =
+                    owner::typed_changes(network, &document, &reserve, 1_700_000_000).unwrap();
+                assert!(matches!(
+                    typed["reserve_amount"].0,
+                    allowit_sdk::portable::AllowitValue::Int(units) if units == unit * 3 / 4
+                ));
+            }
+        }
         // A document without a policy source has nothing to edit.
         assert!(
             owner::typed_changes(network, &serde_json::json!({}), &edits, 1_700_000_000).is_err()

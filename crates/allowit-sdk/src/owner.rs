@@ -194,9 +194,21 @@ pub fn typed_changes(
         .find_map(|part| part.get("code").and_then(serde_json::Value::as_str))
         .ok_or_else(|| Error::usage("The document holds no policy source"))?;
     let known = crate::parameters::known_assets(network)?;
+    // The portable binding of the policy declares the kind of each param that is not canonical,
+    // such as an amount. Without it such a value would parse as a plain number.
+    let kinds = [Some(document), policy]
+        .into_iter()
+        .flatten()
+        .find_map(|part| part.pointer("/runtime/instanceBinding/portable/kinds"))
+        .map(|kinds| {
+            serde_json::from_value(kinds.clone())
+                .map_err(|_| Error::usage("The document declares invalid param kinds"))
+        })
+        .transpose()?
+        .unwrap_or_default();
     let draft = crate::parameters::Parameters {
         params: read.params.iter().cloned().collect(),
-        kinds: Default::default(),
+        kinds,
         asset: crate::parameters::Asset {
             address: known
                 .iter()
