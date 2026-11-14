@@ -49,7 +49,11 @@ impl Context<'_> {
         Ok(())
     }
 }
-pub use allowit_core::vendor::owner::{Activate, Deploy, Setup};
+pub use allowit_core::vendor::owner::{
+    Activate, Comparison, Counters, Deploy, EditParams, HostPlacement, NativePlacement,
+    PairedExport, Revise, Setup, StateReadback, UpdateParams, Verification,
+};
+pub use allowit_core::vendor::runtime::ParamsUpdate;
 pub fn deploy(cx: &Context<'_>, request: Deploy<'_>) -> Result<serde_json::Value> {
     cx.check()?;
     let store = || owner_store(cx.root, cx.network);
@@ -109,4 +113,128 @@ pub fn status(root: &Path, network: &str, rpc_url: &str, id: &str) -> Result<ser
     for_network(network)?
         .owner()
         .status(&store, network, rpc_url, id)
+}
+/// Change typed params of an unsigned draft through the backend. The reply is the next
+/// revision of the draft. The backend refuses a value outside the param's type or range.
+pub fn edit_params(cx: &Context<'_>, request: EditParams<'_>) -> Result<serde_json::Value> {
+    cx.check()?;
+    let store = || owner_store(cx.root, cx.network);
+    for_network(cx.network)?
+        .owner()
+        .edit_params(&cx.provider_context(&store), request)
+}
+/// Revise an unsigned draft in the owner's words. The reply is the next revision.
+pub fn revise(cx: &Context<'_>, request: Revise<'_>) -> Result<serde_json::Value> {
+    cx.check()?;
+    let store = || owner_store(cx.root, cx.network);
+    for_network(cx.network)?
+        .owner()
+        .revise(&cx.provider_context(&store), request)
+}
+/// Change installed params on an active wallet with one owner signature. The workflow is
+/// resume-safe under its request ID, as `deploy` and `fund` are. The outcome selects the
+/// updated installation.
+pub fn update_params(cx: &Context<'_>, request: UpdateParams<'_>) -> Result<serde_json::Value> {
+    cx.check()?;
+    let store = || owner_store(cx.root, cx.network);
+    for_network(cx.network)?
+        .owner()
+        .update_params(&cx.provider_context(&store), request)
+}
+/// Compare the owner's installation document with the ledger and read the wallet state back.
+/// `Verification::matches` is true only when every comparison matches.
+pub fn verify(cx: &Context<'_>, document: &[u8]) -> Result<Verification> {
+    cx.check()?;
+    let store = || owner_store(cx.root, cx.network);
+    for_network(cx.network)?
+        .owner()
+        .verify(&cx.provider_context(&store), document)
+}
+/// The host and native placements of a draft or installed policy document: what the server
+/// evaluates and what the wallet enforces.
+pub fn paired_export(network: &str, document: &[u8]) -> Result<PairedExport> {
+    let network = routing::normalize(network)?;
+    for_network(network)?
+        .owner()
+        .paired_export(network, document)
+}
+/// The typed values of the owner's text edits for a draft, or for the outcome of a deployment,
+/// funding or params update, of the rail of `network`, with each change as the owner reads it.
+/// An outcome holds its policy and installation under `selection`; its installed params are
+/// the ones that are edited. `edits` maps a param key to text in human units, such as `3.5`
+/// for an amount or `2026-12-31` for an expiry. The checks are those of
+/// [`crate::parameters::set_all`]: type, range, a future expiry and limits that fit each
+/// other. The backend checks the values again.
+pub fn typed_changes(
+    network: &str,
+    document: &serde_json::Value,
+    edits: &std::collections::BTreeMap<String, String>,
+    now: i64,
+) -> Result<(
+    std::collections::BTreeMap<String, crate::PolicyValue>,
+    Vec<crate::parameters::Change>,
+)> {
+    let network = routing::normalize(network)?;
+    let rail = for_network(network)?;
+    // The document itself, the selection of an outcome, or the policy of that selection:
+    // the first one whose params the rail reads.
+    let selection = document.get("selection");
+    let policy = selection.and_then(|selection| selection.get("policy"));
+    let mut read = rail.draft_params(network, document);
+    for candidate in [selection, policy].into_iter().flatten() {
+        if read.is_ok() {
+            break;
+        }
+        read = rail.draft_params(network, candidate);
+    }
+    let read = read?;
+    let code = [Some(document), policy, selection]
+        .into_iter()
+        .flatten()
+        .find_map(|part| part.get("code").and_then(serde_json::Value::as_str))
+        .ok_or_else(|| Error::usage("The document holds no policy source"))?;
+    let known = crate::parameters::known_assets(network)?;
+    // The portable binding of the policy declares the kind of each param that is not canonical,
+    // such as an amount. Without it such a value would parse as a plain number.
+    let kinds = [Some(document), policy]
+        .into_iter()
+        .flatten()
+        .find_map(|part| part.pointer("/runtime/instanceBinding/portable/kinds"))
+        .map(|kinds| {
+            serde_json::from_value(kinds.clone())
+                .map_err(|_| Error::usage("The document declares invalid param kinds"))
+        })
+        .transpose()?
+        .unwrap_or_default();
+    let draft = crate::parameters::Parameters {
+        params: read.params.iter().cloned().collect(),
+        kinds,
+        asset: crate::parameters::Asset {
+            address: known
+                .iter()
+                .find(|asset| asset.symbol == read.asset.symbol)
+                .map(|asset| asset.address.clone())
+                .unwrap_or_default(),
+            symbol: read.asset.symbol.clone(),
+            decimals: u32::from(read.asset.decimals),
+        },
+        known,
+        unresolved: Vec::new(),
+    };
+    let (next, changes) =
+        crate::parameters::set_all(&draft, code, edits, now).map_err(Error::usage)?;
+    let typed = changes
+        .iter()
+        .map(|change| {
+            let value = next
+                .params
+                .get(&change.key)
+                .cloned()
+                .ok_or_else(|| Error::config("The edit dropped a param"))?;
+            serde_json::from_value(value)
+                .map(|value| (change.key.clone(), value))
+                .map_err(|_| Error::config("The edit produced an untyped value"))
+        })
+        .collect::<Result<_>>()?;
+    Ok((typed, changes))
 }

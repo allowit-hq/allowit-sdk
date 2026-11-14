@@ -42,6 +42,8 @@ Rail packages can use common core primitives directly. Core has no dependency on
 | `request`, `typed_request` | Bounded request identifiers, input documents and operation identities |
 | `config`, `routing`, `wallet` | Configuration, registered network selection and caller-owned opaque signers |
 | `output` | Shared printable values |
+| `paid_service` | Paid calls: the seller request, the rail's challenge parser and the proof of the settled payment; `seller_failed` (code 8) |
+| `marketplace` | The catalog client of one configured server: `search` and `entry` |
 | `transport_failure` | Class of a failed rail call: `network_unavailable` (code 7), unknown outcome (code 5) or other |
 | `error` | The error type from `allowit_core::client::error` |
 

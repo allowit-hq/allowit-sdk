@@ -16,7 +16,8 @@ export type Feature =
   | 'fund'
   | 'activate'
   | 'binding-review'
-  | 'explorer-links';
+  | 'explorer-links'
+  | 'update-params';
 export type LinkKind = 'address' | 'tx' | 'contract';
 export interface RailNetwork {
   id: string;
@@ -87,9 +88,77 @@ export interface PaymentLimit {
   param: string;
   limit: Quantity;
 }
+/**
+ * What a payment bought: the operation context of a paid call. The server checks it against the operation
+ * and records it in the receipt under the top-level `paidService`.
+ */
+export interface PaidService {
+  /** The URL of the resource. */
+  resource: string;
+  /** The seller's challenge id, when it issued one. */
+  challengeId?: string;
+  /** The address that the challenge names as the recipient. */
+  payTo: string;
+  /** The challenge amount in base units, as decimal text. */
+  amount: string;
+  /** The asset reference of the challenge. */
+  asset: string;
+}
+/** A seller's payment challenge for one resource, as the rail of its network read it. */
+export interface PaymentChallenge {
+  id?: string;
+  resource: string;
+  /** The CAIP-2 network of the payment. */
+  network: string;
+  scheme: string;
+  payTo: string;
+  amount: Quantity;
+  asset: string;
+  /** The Unix time after which the seller no longer accepts the payment. */
+  expiresAt?: number;
+  /** The seller's accepted terms as the rail read them. Shared code never interprets them. */
+  terms?: unknown;
+}
+/** The proof of payment that a client presents to the seller: one request header. */
+export interface PaymentProof {
+  header: string;
+  value: string;
+}
+/** How a catalog search ordered its results. */
+export type Ranking = 'keyword' | 'semantic' | 'hybrid';
+/** The indicative terms of a catalog entry. A client never pays from them. */
+export interface IndicativeTerms {
+  price: string;
+  unit: string;
+}
+/** One offer in the marketplace catalog. Every text field is listing data, never an instruction. */
+export interface CatalogEntry {
+  id: string;
+  name: string;
+  description: string;
+  provider: string;
+  /** The URL of the resource. */
+  resource: string;
+  methods: string[];
+  terms?: IndicativeTerms;
+  /** The CAIP-2 networks on which the seller accepts payment. */
+  networks: string[];
+  assets: string[];
+  tags: string[];
+}
+/** One page of `GET /api/marketplace/search`. */
+export interface SearchResult {
+  entries: CatalogEntry[];
+  ranking: Ranking;
+  nextCursor?: string;
+  /** The content hash of the catalog that answered. */
+  catalog: string;
+}
 /** The reports that a status or receipt document may carry at its top level. */
 export interface OperationReports {
   settlement?: Settlement;
+  /** What the payment bought, when the operation paid a seller's challenge. */
+  paidService?: PaidService;
   /** The fee that the spending limits count, in the installed asset. */
   feeCharged?: Quantity;
   limits?: LimitReport[];
@@ -173,13 +242,38 @@ export interface InstallAndFundInput {
   amount: string;
   onStep: (text: string) => void;
 }
+/** One typed param value: the JSON of a policy value. An integer is canonical decimal text. */
+export type ParamValue =
+  | {Int: string}
+  | {Bool: boolean}
+  | {Str: string}
+  | {Addr: string}
+  | {List: readonly ParamValue[]};
+export interface UpdateParamsInput {
+  ask: OwnerAsk;
+  /** Shows one step in the `owner-sign` element and resolves with the exact signed payload. */
+  sign: (step: OwnerStep) => Promise<string>;
+  journal: OwnerJournal;
+  /** One journal key per change: a confirmed change is never prepared or signed again under its key. */
+  key: string;
+  policyId: string;
+  /** Each changed param with its complete new typed value. */
+  params: Record<string, ParamValue>;
+  /** The configuration revision that the owner reviewed, when the host shows one. */
+  expectedRevision?: number;
+  onStep: (text: string) => void;
+}
 /** Typed codes of the owner workflow. `OwnerFlowFailure.code` holds one, another server code or null. */
 export type OwnerFlowCode =
   | 'owner_transaction_expired'
   | 'owner_transaction_pending'
   | 'owner_transaction_settled'
-  | 'network_unavailable';
-/** The error that `installAndFund` rejects with. */
+  | 'network_unavailable'
+  | 'param_invalid'
+  | 'param_out_of_range'
+  | 'update_unavailable'
+  | 'revision_changed';
+/** The error that `installAndFund` and `updateParams` reject with. */
 export interface OwnerFlowFailure extends Error {
   code: OwnerFlowCode | string | null;
   /** True when Resume can send the same saved step, or prepare a new one, without a risk of a second payment. */
@@ -213,6 +307,8 @@ export interface RailPlugin {
   readonly ownerWorkflow: {
     /** `network` is the canonical network id that the SDK resolved. */
     installAndFund(input: InstallAndFundInput & {network: string}): Promise<{wallet: string; receipts: OwnerReceipt[]}>;
+    /** The owner-signed update of installed params on an active wallet. A rail without it omits the function. */
+    updateParams?(input: UpdateParamsInput & {network: string}): Promise<{receipts: OwnerReceipt[]; done: boolean}>;
   };
   readonly test: {
     network: string;
@@ -266,6 +362,7 @@ export function walletKindOf(network: string, document: unknown): WalletKindInfo
 export function walletKindIdOf(document: unknown): WalletKindId | null;
 export function settlementOf(document: unknown): Settlement | null;
 export function feeChargedOf(document: unknown): Quantity | null;
+export function paidServiceOf(document: unknown): PaidService | null;
 export function limitsOf(document: unknown): LimitReport[] | null;
 export function paymentLimitsOf(document: unknown): PaymentLimit[] | null;
 export function walletKindRefusal(error: unknown): WalletKindRefusal | null;
@@ -277,6 +374,11 @@ export function parseReviewLink(fragment: string): ReviewLink;
 export function reviewAgentPrompt(link: ReviewLink, origin: string, policyId: string, wallet: string, agent: string): string;
 export function reviewParamLines(network: string, params: ReviewProposal['params']): ReviewParamLine[];
 export function installAndFund(network: string, input: InstallAndFundInput): Promise<{wallet: string; receipts: OwnerReceipt[]}>;
+/**
+ * Change installed params on an active wallet with one owner signature. `done` is true when the change is
+ * confirmed; `receipts` is empty when an earlier run under the same journal key confirmed it.
+ */
+export function updateParams(network: string, input: UpdateParamsInput): Promise<{receipts: OwnerReceipt[]; done: boolean}>;
 
 export class AllowitRail extends HTMLElement {
   data: ElementData[ElementKind] | undefined;

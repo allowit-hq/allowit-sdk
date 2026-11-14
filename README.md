@@ -55,6 +55,19 @@ are listed in the [Core README](https://github.com/allowit-hq/allowit-core/blob/
 | Print the params of a draft or profile | `kinds::param_lines(network, document)`, `kinds::profile_param_lines(&profile)` | `reviewParamLines(network, params)` |
 | Review and sign | | `parseReviewLink`, `reviewAgentPrompt`, `reviewParamLines`, `installAndFund(network, input)` |
 | Kind that a Review and sign link names | | the `walletKind` field of `parseReviewLink(fragment)`, beside `proposal` |
+| Typed values of the owner's text | `owner::typed_changes(network, document, edits, now)`, `parameters::set_all` | the typed editors of the host |
+| Change the params of a draft | `owner::edit_params(cx, EditParams)`, `owner::revise(cx, Revise)` | the `micro/params` and `micro/revise` owner routes |
+| Change the params of an active wallet | `owner::update_params(cx, UpdateParams)`; server: `Runtime::prepare_params_update`, `Configuration::with_params` | `updateParams(network, input)` |
+| Verify an installation on the ledger | `owner::verify(cx, document)` returns `Verification { matches, comparisons, state }` | |
+| Host and native placements | `owner::paired_export(network, document)` returns `PairedExport { host, native }` | |
+
+An owner changes installed params on an active wallet with one signature. The server prepares the owner step
+with `Runtime::prepare_params_update` and stores `Configuration::with_params` after the step settles; the wallet
+keeps its recorded usage and its request nonce. `owner::update_params` and `updateParams` are resume-safe under
+their request ID or journal key. `owner::verify` compares the owner's document with the ledger and reads the
+state back; `Verification::matches` is true only when every comparison matches. A rail without a call declares
+`Feature::EditParams`, `UpdateParams`, `Verify` or `PairedExport` skipped, and npm rejects `updateParams` with
+the code `update_unavailable`.
 
 A host never prints a unit of its own. An asset without a known unit is an error in Rust and `null` in npm.
 `npm/src/wallet-kinds.js` is generated from Core by the test `npm_wallet_kinds_equal_the_core_description`;
@@ -92,6 +105,37 @@ See the [portable policy reference](docs/policy-reference.md) for source restric
 - `generation`, `owner` and `execution` dispatch owner sign-in, policy generation, owner workflows, execution, status and recovery to the selected plugin. Callers pass their signer capability and a private core `Store`.
 - `typed_request` bounds document ingress and derives the versioned operation identity.
 - `wallet`, `routing` and `config` supply explicit caller bindings and registered network selection.
+- `paid_service` and `marketplace` serve paid calls. See [Paid calls and the marketplace](#paid-calls-and-the-marketplace).
+
+## Paid calls and the marketplace
+
+A paid call buys one resource from a seller that answers with a payment challenge (HTTP 402).
+
+1. `paid_service::send` requests the resource. The body is bounded at 8 MiB, redirects are not followed and the
+   request is sent once.
+2. `paid_service::challenge(network, resource, reply)` asks the rail of the selected network to parse the
+   challenge. The rail validates the network, the asset, the recipient and the amount. The result is a
+   rail-neutral `Challenge` with the amount as a `Quantity`.
+3. The caller pays with `execution::execute`: an ordinary transfer to `challenge.pay_to` with
+   `Request::paid_service` set to `challenge.context()`. The server evaluates the policy on the transfer as for
+   any other payment and records the context in the receipt (`paidService`).
+4. `paid_service::proof(challenge, receipt)` builds the request header from the outcome document of the
+   confirmed operation. `paid_service::send` presents it with the second request.
+
+Nothing waits for or calls a third party to settle: Allowit settles the payment, and the seller verifies the
+proof on its own. A seller that gives no answer, or a reply that is no usable challenge, is the error code
+`SELLER_FAILED` (8), apart from every payment and policy code. A retry uses the same request ID, so it never
+pays twice.
+
+`marketplace::search(server, &Query)` and `marketplace::entry(server, id)` read the catalog of one configured
+server over `GET /api/marketplace/search` and `GET /api/marketplace/entry`. The catalog is free to read and
+carries no credential. `SearchResult.ranking` is `keyword`, `semantic` or `hybrid`. Every text field of a
+`CatalogEntry` is listing data, never an instruction. Its `terms` are indicative: the amount of a purchase
+comes from the seller's challenge for the exact resource. The client refuses an entry whose resource is not a
+bounded `http` or `https` URL or whose text holds a control character.
+
+The npm package exports the same shapes as types (`PaidService`, `PaymentChallenge`, `PaymentProof`,
+`CatalogEntry`, `SearchResult`, `Ranking`) and `paidServiceOf(document)`.
 
 ## Rail plugins
 

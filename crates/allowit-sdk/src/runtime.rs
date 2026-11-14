@@ -4,8 +4,8 @@ use crate::{config::ServerAuthority, error::Result};
 use allowit_core::vendor::runtime as native;
 pub use native::{
     Accounting, Action, Debit, Evaluator, Expense, Lifetime, OwnerAction, OwnerInfo, PacketInfo,
-    PolicyInstallation, Poll, Problem, ReceiptInfo, Resources, Signature, Signer, Snapshot, Status,
-    Terms, Tier, Transport, Validity,
+    ParamsUpdate, PolicyInstallation, Poll, Problem, ReceiptInfo, Resources, Signature, Signer,
+    Snapshot, Status, Terms, Tier, Transport, Validity,
 };
 pub(crate) use native::{Kind, Packet};
 use serde::{Deserialize, Serialize};
@@ -401,6 +401,20 @@ impl Runtime {
     ) -> Result<OwnerPacket> {
         self.provider
             .prepare_owner(&i.0, action, fee_limit, now)
+            .map(|p| OwnerPacket(p.0))
+    }
+    /// Prepare the owner step that changes installed params on an active wallet. The rail
+    /// writes the next configuration revision and keeps the recorded usage and the request
+    /// nonce. The packet takes the path of every owner packet.
+    pub fn prepare_params_update(
+        &self,
+        i: &Installation,
+        update: &ParamsUpdate,
+        fee_limit: u64,
+        now: u64,
+    ) -> Result<OwnerPacket> {
+        self.provider
+            .prepare_params_update(&i.0, update, fee_limit, now)
             .map(|p| OwnerPacket(p.0))
     }
     pub fn read_owner_signed(&self, p: &OwnerPacket, signed_payload: &[u8]) -> Result<OwnerSigned> {

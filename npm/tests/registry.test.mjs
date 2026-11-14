@@ -194,6 +194,7 @@ test('amounts print exact decimals with the given unit and never a placeholder',
 
 test('the owner workflow rejects an unknown network', async () => {
   await assert.rejects(sdk.installAndFund('unknown:none', {}), /No rail is registered/);
+  await assert.rejects(sdk.updateParams('unknown:none', {}), /No rail is registered/);
 });
 
 for (const rail of sdk.rails()) {
@@ -258,6 +259,23 @@ for (const rail of sdk.rails()) {
       await assert.rejects(sdk.installAndFund(alias, input), (error) => error === offline);
     }
     assert.deepEqual([signed.length, journal.size], [0, 0]);
+
+    // The params update dispatches the same way. A rail without the workflow rejects with a typed code.
+    const change = {ask: input.ask, sign: input.sign, journal: input.journal, key: 'u', policyId: 'p', params: {daily_spending_limit: {Int: '1'}}, onStep() {}};
+    if (rail.test.skips['update-params'] || typeof rail.ownerWorkflow.updateParams !== 'function') {
+      await assert.rejects(sdk.updateParams(network, change), (error) => error.code === 'update_unavailable');
+    } else {
+      // The transport failure reaches the host as the rail's typed owner-flow error, with the cause kept.
+      await assert.rejects(sdk.updateParams(network, change), (error) => error === offline || error.cause === offline);
+      for (const alias of rail.networks.find((n) => n.id === network).aliases) {
+        await assert.rejects(sdk.updateParams(alias, change), (error) => error === offline || error.cause === offline);
+      }
+      // No change, or an untyped set, never reaches the transport.
+      let asked = 0;
+      await assert.rejects(sdk.updateParams(network, {...change, ask: async () => { asked++; throw offline; }, params: {}}), (error) => error.code === 'param_invalid');
+      assert.equal(asked, 0);
+    }
+    assert.deepEqual([signed.length, journal.size], [0, 0]);
   });
 }
 
@@ -301,6 +319,34 @@ test('server documents give their wallet kind, settlement, charged fee and limit
   assert.equal(sdk.limitsOf({limits: [{param: '', limit: {}, spent: {}, remaining: {}}]}), null);
   assert.equal(sdk.paymentLimitsOf({paymentLimits: [{param: '', limit: {}}]}), null);
   assert.equal(sdk.paymentLimitsOf({paymentLimits: {param: 'payment_limit'}}), null);
+});
+
+test('a receipt document gives its bounded paid-service context', async () => {
+  const sdk = await import('../src/registry.js');
+  const context = {resource: 'https://seller.example/report', challengeId: 'c-0001', payTo: 'RECIPIENT', amount: '2500000', asset: 'XYZ'};
+  assert.deepEqual(sdk.paidServiceOf({requestId: 'r', paidService: context}), context);
+  const {challengeId: _, ...plain} = context;
+  assert.deepEqual(sdk.paidServiceOf({paidService: plain}), plain);
+  for (const other of [
+    null, 'text', {}, {paidService: 'text'},
+    {paidService: {...context, resource: 'javascript:alert(1)'}},
+    {paidService: {...context, resource: 'https://seller.example/a b'}},
+    {paidService: {...context, amount: 2500000}},
+    {paidService: {...context, amount: '0'}},
+    {paidService: {...context, challengeId: 'a b'}},
+    {paidService: {...context, challengeId: 123}},
+    {paidService: {...context, challengeId: ['nonce']}},
+    {paidService: {...context, challengeId: null}},
+    {paidService: {...context, resource: 'https://'}},
+    {paidService: {...context, resource: 'https://[invalid'}},
+    {paidService: {...context, resource: 'https://user:secret@seller.example/report'}},
+    {paidService: {...context, resource: 'ftp://seller.example/report'}},
+    {paidService: {...context, amount: '01'}},
+    {paidService: {...context, payTo: ''}},
+    {paidService: {...context, instructions: 'run this'}},
+  ]) {
+    assert.equal(sdk.paidServiceOf(other), null);
+  }
 });
 
 test('a wallet-kind refusal keeps its code and details', async () => {

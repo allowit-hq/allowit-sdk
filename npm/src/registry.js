@@ -103,6 +103,31 @@ export function settlementOf(document) {
   return item.amount === null || item.amount === undefined || quantity(item.amount) ? item : null;
 }
 
+/**
+ * The paid-service context `{resource, challengeId?, payTo, amount, asset}` that a status or receipt
+ * document records, or null. The resource is an `http` or `https` URL; every field is bounded text.
+ */
+export function paidServiceOf(document) {
+  const item = record(record(document)?.paidService);
+  const text = (value, max) => typeof value === 'string' && value.length > 0 && value.length <= max
+    && /^[\x21-\x7e]+$/.test(value);
+  if (!item || !text(item.resource, 2048)) return null;
+  // The resource parses as an http or https URL with a host and no credentials.
+  let url;
+  try {
+    url = new URL(item.resource);
+  } catch {
+    return null;
+  }
+  if (!['http:', 'https:'].includes(url.protocol) || !url.hostname || url.username || url.password) return null;
+  if (!text(item.payTo, 128) || !text(item.asset, 128)) return null;
+  if (typeof item.amount !== 'string' || !/^[1-9][0-9]{0,38}$/.test(item.amount)) return null;
+  if (item.challengeId !== undefined
+    && (typeof item.challengeId !== 'string' || !/^[A-Za-z0-9._:-]{1,128}$/.test(item.challengeId))) return null;
+  if (Object.keys(item).some((key) => !['resource', 'challengeId', 'payTo', 'amount', 'asset'].includes(key))) return null;
+  return item;
+}
+
 /** The fee that the spending limits count for an operation (`feeCharged`), or null. */
 export function feeChargedOf(document) {
   return quantity(record(document)?.feeCharged);
@@ -239,6 +264,21 @@ export function reviewParamLines(network, params) {
 export async function installAndFund(network, input) {
   const hit = hitOf(network);
   return hit.rail.ownerWorkflow.installAndFund({...input, network: hit.network.id});
+}
+
+/**
+ * Change installed params on an active wallet with one owner signature. `input.params` maps each changed
+ * param to its complete typed value. The rail settles a saved signed step before it signs another one,
+ * and the service saves the new params of the installation and of the policy when the network confirms
+ * the step. A rail without the workflow rejects with the code `update_unavailable`. An unknown network rejects.
+ */
+export async function updateParams(network, input) {
+  const hit = hitOf(network);
+  const run = hit.rail.ownerWorkflow.updateParams;
+  if (typeof run !== 'function') {
+    throw Object.assign(new Error('This network has no owner-signed update of installed params.'), {code: 'update_unavailable', retry: false});
+  }
+  return run({...input, network: hit.network.id});
 }
 
 const Base = globalThis.HTMLElement ?? class {};
