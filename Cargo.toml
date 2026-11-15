@@ -12,7 +12,7 @@ repository = "https://github.com/allowit-hq/allowit-sdk"
 # revision, so Cargo builds one copy of core and the plugin trait objects match.
 [workspace.dependencies]
 allowit-core = { git = "https://github.com/allowit-hq/allowit-core.git", rev = "452ec4f8c6b23c52f878b8710a3ce80f72b5d603", default-features = false }
-allowit-stellar = { git = "https://github.com/allowit-hq/allowit-contracts-stellar.git", rev = "7e694eae0efd4f543d6ee11d464eb5bbc23cd9ce" }
+allowit-stellar = { git = "https://github.com/allowit-hq/allowit-contracts-stellar.git", rev = "3805986a064666cadd0057d42d25facca16bef5e" }
 
 # Every Allowit workspace uses this profile block, so a shared target directory
 # builds each shared crate once. Release builds keep overflow checks, which the
