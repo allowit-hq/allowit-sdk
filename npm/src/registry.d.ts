@@ -259,6 +259,8 @@ export interface FeeAccountState {
   low: boolean;
   /** `spendable` with its unit, such as `4.2 XYZ`. */
   text: string;
+  /** The refill that a page offers: a decimal amount of the fee asset, and the same with its unit. */
+  refill: {amount: string; text: string};
 }
 export interface RefillFeesInput {
   /** The owner's account, which pays. */
