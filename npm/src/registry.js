@@ -295,7 +295,8 @@ export async function feeAccount(network, document) {
 
 /**
  * Refill a fee account with one payment from the owner's account, which the owner's wallet signs. The rail
- * builds the payment and sends the signed bytes to the network itself. A rail without fee accounts rejects
+ * builds the payment and sends the signed bytes to the network itself. With `journal` and `key` the signed payment
+ * stays saved until the network settles it, so an unknown result never leads to a second payment. A rail without fee accounts rejects
  * with the code `refill_unavailable`. An unknown network rejects.
  */
 export async function refillFees(network, input) {

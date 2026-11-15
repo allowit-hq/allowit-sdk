@@ -271,6 +271,13 @@ export interface RefillFeesInput {
   /** Shows the payment in the `owner-sign` element and resolves with the exact signed payload. */
   sign: (step: OwnerStep) => Promise<string>;
   onStep: (text: string) => void;
+  /**
+   * Keeps the signed payment until the network settles it. A refill whose result is unknown rejects with `retry`
+   * set and stays saved; the next call under the same key settles it before it signs anything.
+   */
+  journal?: OwnerJournal;
+  /** The journal key of this fee account's refill. */
+  key?: string;
 }
 /** One typed param value: the JSON of a policy value. An integer is canonical decimal text. */
 export type ParamValue =
