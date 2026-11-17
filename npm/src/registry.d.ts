@@ -5,6 +5,7 @@ export type ElementKind =
   | 'wallet-sign-in'
   | 'owner-sign'
   | 'build-attest'
+  | 'owner-answer'
   | 'receipt'
   | 'binding-review';
 export type Feature =
@@ -243,6 +244,42 @@ export interface InstallAndFundInput {
   amount: string;
   onStep: (text: string) => void;
 }
+/**
+ * What the ledger holds for the fee account of a wallet: the account that sends the agent's operations and pays
+ * their network fees. Its owner creates, funds and refills it; the agent holds a key and no account.
+ */
+export interface FeeAccountState {
+  address: string;
+  /** False when the ledger holds no such account. */
+  exists: boolean;
+  /** Base units of the fee asset, as decimal text. */
+  balance: string;
+  /** The base units that can pay fees: the balance above what the network locks. */
+  spendable: string;
+  /** True when the owner should refill the account before the agent's operations fail. */
+  low: boolean;
+  /** `spendable` with its unit, such as `4.2 XYZ`. */
+  text: string;
+  /** The refill that a page offers: a decimal amount of the fee asset, and the same with its unit. */
+  refill: {amount: string; text: string};
+}
+export interface RefillFeesInput {
+  /** The owner's account, which pays. */
+  owner: string;
+  feeAccount: string;
+  /** The amount of the fee asset, as decimal text. */
+  amount: string;
+  /** Shows the payment in the `owner-sign` element and resolves with the exact signed payload. */
+  sign: (step: OwnerStep) => Promise<string>;
+  onStep: (text: string) => void;
+  /**
+   * Keeps the signed payment until the network settles it. A refill whose result is unknown rejects with `retry`
+   * set and stays saved; the next call under the same key settles it before it signs anything.
+   */
+  journal?: OwnerJournal;
+  /** The journal key of this fee account's refill. */
+  key?: string;
+}
 /** One typed param value: the JSON of a policy value. An integer is canonical decimal text. */
 export type ParamValue =
   | {Int: string}
@@ -310,6 +347,10 @@ export interface RailPlugin {
     installAndFund(input: InstallAndFundInput & {network: string}): Promise<{wallet: string; receipts: OwnerReceipt[]}>;
     /** The owner-signed update of installed params on an active wallet. A rail without it omits the function. */
     updateParams?(input: UpdateParamsInput & {network: string}): Promise<{receipts: OwnerReceipt[]; done: boolean}>;
+    /** The fee account that `document` names, read from the ledger, or null. A rail without fee accounts omits it. */
+    feeAccount?(input: {network: string; document: unknown}): Promise<FeeAccountState | null>;
+    /** The owner's refill of a fee account. A rail without fee accounts omits it. */
+    refillFees?(input: RefillFeesInput & {network: string}): Promise<{transactionHash: string; ledger: number}>;
   };
   readonly test: {
     network: string;
@@ -336,6 +377,11 @@ export interface ElementData {
   'owner-sign': {network: string; step: OwnerStep; summary: {label: string; value: string}[]};
   /** The owner's attestation of a custom wallet build: the exact attestation message that the wallet signs. */
   'build-attest': {network: string; message: string; summary?: {label: string; value: string}[]};
+  /**
+   * The owner's answer to a held request: the exact owner review answer message that the wallet of `owner` signs.
+   * The element shows the fields of the message.
+   */
+  'owner-answer': {network: string; owner: string; message: string};
   receipt: {
     network: string;
     receipt: {hash: string; status: string; fee: {native: string; charged: string}; debits: unknown[]};
@@ -346,8 +392,15 @@ export interface ElementData {
 /** Events that vendor elements emit; all bubble and are composed. */
 export interface RailEvents {
   'allowit-signed-in': CustomEvent<{address: string; signature: string}>;
-  /** `owner-sign` reports the signed payload; `build-attest` reports the message signature as hexadecimal text. */
-  'allowit-signed': CustomEvent<{signedPayload: string; hash: string} | {signature: string; codeHash: string}>;
+  /**
+   * `owner-sign` reports the signed payload; `build-attest` reports the message signature as hexadecimal text;
+   * `owner-answer` reports the message signature as base64 text, with the answer and the snapshot hash of the message.
+   */
+  'allowit-signed': CustomEvent<
+    | {signedPayload: string; hash: string}
+    | {signature: string; codeHash: string}
+    | {signature: string; answer: 'allow' | 'deny'; snapshot: string}
+  >;
   'allowit-verified': CustomEvent<{ok: boolean; detail: string}>;
   'allowit-cancel': CustomEvent<void>;
   'allowit-error': CustomEvent<{code: string; message: string}>;
@@ -383,6 +436,14 @@ export function installAndFund(network: string, input: InstallAndFundInput): Pro
  * confirmed; `receipts` is empty when an earlier run under the same journal key confirmed it.
  */
 export function updateParams(network: string, input: UpdateParamsInput): Promise<{receipts: OwnerReceipt[]; done: boolean}>;
+
+/**
+ * The fee account of a wallet with what the ledger holds for it, or null when `document` names none: the wallet
+ * pays its own fees.
+ */
+export function feeAccount(network: string, document: unknown): Promise<FeeAccountState | null>;
+/** Refill a fee account with one owner-signed payment. A rail without fee accounts rejects with `refill_unavailable`. */
+export function refillFees(network: string, input: RefillFeesInput): Promise<{transactionHash: string; ledger: number}>;
 
 export class AllowitRail extends HTMLElement {
   data: ElementData[ElementKind] | undefined;
