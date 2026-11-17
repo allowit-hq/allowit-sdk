@@ -1,6 +1,8 @@
 #![cfg(unix)]
 //! The public authoring path must execute the real compiler directly and bound its subprocess tree.
-use allowit_sdk::authoring::{HostTools, check, compile, compile_server};
+use allowit_sdk::authoring::{
+    HostTools, SERVER_FUNCTIONS, check, check_server, compile, compile_server,
+};
 use std::{os::unix::fs::PermissionsExt, path::Path, time::Duration};
 const VALID: &str = include_str!("fixtures/portable-policy.rs");
 const SERVER: &str = include_str!("fixtures/server-policy.rs");
@@ -30,6 +32,36 @@ fn server_policy_source_compiles_after_the_server_profile() {
         "{}",
         failed.message
     );
+    // A function that a rail or a package registers takes the context and one value. The
+    // compile declares each registered function, so a policy that calls one type-checks.
+    let registered = allowit_sdk::plugins::policy_registry(&SERVER_FUNCTIONS)
+        .unwrap()
+        .host_calls;
+    assert!(
+        !registered.is_empty(),
+        "this build registers an evidence function"
+    );
+    for (namespace, name) in registered {
+        let calls = |argument: &str| {
+            SERVER.replace(
+                "    Ok(())\n}",
+                &format!("    {namespace}::{name}(ctx, {argument})?;\n    Ok(())\n}}"),
+            )
+        };
+        let source = calls("&ctx.params[allowit::PAYMENT_LIMIT]");
+        assert_ne!(source, SERVER);
+        let checked = check_server(&source).unwrap();
+        assert!(checked.functions.contains(&format!("{namespace}::{name}")));
+        compile_server(&source, &tools).unwrap();
+        // The portable profile knows no such namespace.
+        assert!(check(&source).is_err());
+        let failed = compile_server(&calls("&true"), &tools).unwrap_err();
+        assert!(
+            failed.message.contains("mismatched types"),
+            "{}",
+            failed.message
+        );
+    }
 }
 
 /// An executable shell script at `path`.

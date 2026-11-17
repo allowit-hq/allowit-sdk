@@ -54,16 +54,22 @@ pub struct ServerShape {
     pub functions: Vec<String>,
 }
 
+/// The registry of the server policy profile: Core's server functions, then the evidence and
+/// package functions that this build registers.
+fn server_registry() -> Result<Vec<(&'static str, &'static str)>> {
+    Ok(SERVER_FUNCTIONS
+        .into_iter()
+        .chain(crate::plugins::policy_registry(&SERVER_FUNCTIONS)?.host_calls)
+        .collect())
+}
+
 /// Check server policy source as a server of this build checks it: with Core's server policy
 /// profile, against [`SERVER_FUNCTIONS`] and the evidence and package functions that this build
 /// registers ([`crate::plugins::policy_registry`]). Beside the portable vocabulary, that
 /// profile admits a call of a registered function and the text of an owner param, read with
 /// `as_str()`. A server decides which of the functions its build fills.
 pub fn check_server(source: &str) -> Result<ServerShape> {
-    let registry: Vec<(&str, &str)> = SERVER_FUNCTIONS
-        .into_iter()
-        .chain(crate::plugins::policy_registry(&SERVER_FUNCTIONS)?.host_calls)
-        .collect();
+    let registry = server_registry()?;
     let shape =
         policy_source::source_shape_with_host_calls(source, &registry).map_err(Error::usage)?;
     // The gate refuses a function that the registry does not hold. So the source names a
@@ -99,20 +105,41 @@ const RUSTC_FLAGS: [&str; 5] = [
 #[cfg(unix)]
 pub fn compile(source: &str, tools: &HostTools) -> Result<()> {
     check(source)?;
-    build(source, tools)
+    build(source, POLICY_HOST, tools)
 }
 
 /// [`compile`] for server policy source: [`check_server`] runs first. The portable Std library
-/// declares every server function, so the policy type-checks as it does in a server's build.
+/// declares Core's server functions. A function of a rail or a package takes the context and
+/// one value and returns a value; the host crate declares each one so, as a server's build
+/// does, and the policy type-checks as it does there.
 #[cfg(unix)]
 pub fn compile_server(source: &str, tools: &HostTools) -> Result<()> {
     check_server(source)?;
-    build(source, tools)
+    let registry = server_registry()?;
+    let registered = &registry[SERVER_FUNCTIONS.len()..];
+    let mut modules = std::collections::BTreeMap::<&str, String>::new();
+    for (namespace, name) in registered {
+        modules.entry(namespace).or_default().push_str(&format!(
+            "pub fn {name}(_: &allowit::AllowitContext, _: &allowit::AllowitValue) -> allowit::Result<allowit::AllowitValue> {{ Err(allowit::AllowitError::Unsupported) }} "
+        ));
+    }
+    // The namespaces come in on the first line, so compiler lines match the source.
+    let mut policy = String::new();
+    let mut host =
+        String::from("#![no_std]\n#![allow(dead_code, unused_imports)]\nmod registered { ");
+    for (namespace, functions) in &modules {
+        host.push_str(&format!("pub mod {namespace} {{ {functions}}} "));
+        policy.push_str(&format!("use crate::registered::{namespace}; "));
+    }
+    host.push_str("}\n#[path = \"policy.rs\"]\nmod policy;\npub const EXECUTE: fn(&allowit::AllowitContext) -> allowit::Result = policy::execute;\n");
+    policy.push_str(source);
+    build(&policy, &host, tools)
 }
 
-/// Build the admitted `source` against the embedded portable Std library.
+/// Build the admitted `source` behind the host crate `host` against the embedded portable Std
+/// library.
 #[cfg(unix)]
-fn build(source: &str, tools: &HostTools) -> Result<()> {
+fn build(source: &str, host: &str, tools: &HostTools) -> Result<()> {
     if tools.timeout.is_zero() || tools.timeout > Duration::from_secs(60) {
         return Err(Error::config(
             "Host compiler timeout must be within 60 seconds",
@@ -129,7 +156,7 @@ fn build(source: &str, tools: &HostTools) -> Result<()> {
         ("allowit/core.rs", policy_source::PORTABLE_CORE_RS),
         ("allowit/LICENSE", policy_source::PORTABLE_TERMS),
         ("policy.rs", source),
-        ("policy_host.rs", POLICY_HOST),
+        ("policy_host.rs", host),
     ] {
         std::fs::write(root.join(path), bytes.as_bytes()).map_err(io_error)?;
     }
