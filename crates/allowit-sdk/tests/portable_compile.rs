@@ -1,8 +1,36 @@
 #![cfg(unix)]
 //! The public authoring path must execute the real compiler directly and bound its subprocess tree.
-use allowit_sdk::authoring::{HostTools, check, compile};
+use allowit_sdk::authoring::{HostTools, check, compile, compile_server};
 use std::{os::unix::fs::PermissionsExt, path::Path, time::Duration};
 const VALID: &str = include_str!("fixtures/portable-policy.rs");
+const SERVER: &str = include_str!("fixtures/server-policy.rs");
+
+/// A policy for a server type-checks against the same library, after the server profile
+/// admits it. The portable compile refuses it at its gate, before any compiler runs.
+#[test]
+fn server_policy_source_compiles_after_the_server_profile() {
+    let tools = HostTools {
+        rustc: std::env::var_os("ALLOWIT_TEST_RUSTC")
+            .map(Into::into)
+            .unwrap_or_else(|| "rustc".into()),
+        ..Default::default()
+    };
+    compile_server(SERVER, &tools).unwrap();
+    let refused = compile(SERVER, &tools).unwrap_err();
+    assert!(
+        refused.message.contains("the method `as_str`"),
+        "{}",
+        refused.message
+    );
+    // A type error in server policy source fails the compilation, not the gate.
+    let wrong = SERVER.replace("deny_below: 3000", "deny_below: true");
+    let failed = compile_server(&wrong, &tools).unwrap_err();
+    assert!(
+        failed.message.contains("mismatched types"),
+        "{}",
+        failed.message
+    );
+}
 
 /// An executable shell script at `path`.
 fn script(path: &Path, body: &str) {
