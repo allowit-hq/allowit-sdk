@@ -40,8 +40,14 @@ export type WalletKindId = 'native' | 'simple' | 'standard' | 'custom';
 export interface WalletKindInfo {
   id: WalletKindId;
   title: string;
-  /** One sentence that every host shows unchanged. */
+  /** What the wallet is and who enforces the policy, in the owner's words. Every host shows it unchanged. */
   explanation: string;
+  /** Hosts recommend this kind to an owner who deploys. Exactly one kind is recommended. */
+  recommended: boolean;
+  /** The sellers that a wallet of this kind pays, in the owner's words. */
+  pays: string;
+  /** What a payment costs the wallet in network fee, in the owner's words. */
+  fee: string;
   enforcement: 'offchain' | 'onchain';
   custody: 'keypair' | 'contract';
   /** The params this kind enforces onchain. Empty unless the kind has a fixed list. */
@@ -249,6 +255,11 @@ export interface InstallAndFundInput {
   policyId: string;
   agent: string;
   amount: string;
+  /**
+   * The policy that the owner reviewed: its exact source and every value, and its ordered rules and tier when the host
+   * shows them. A rail whose deployment ends with an approval of the whole policy signs only this policy.
+   */
+  reviewed?: {source: string; params: Record<string, ParamValue>; rules?: unknown; tier?: unknown};
   onStep: (text: string) => void;
 }
 /**
@@ -306,6 +317,11 @@ export interface UpdateParamsInput {
   params: Record<string, ParamValue>;
   /** The configuration revision that the owner reviewed, when the host shows one. */
   expectedRevision?: number;
+  /**
+   * The installed policy that the owner reviewed: its wallet, exact source, ordered rules and every value. A rail
+   * whose change is an approval of the whole policy signs only this policy with the changed params replaced.
+   */
+  installed?: {wallet: string; source: string; rules: unknown; params: Record<string, ParamValue>; tier?: unknown};
   onStep: (text: string) => void;
 }
 /** Typed codes of the owner workflow. `OwnerFlowFailure.code` holds one, another server code or null. */
