@@ -312,6 +312,11 @@ export interface UpdateParamsInput {
   params: Record<string, ParamValue>;
   /** The configuration revision that the owner reviewed, when the host shows one. */
   expectedRevision?: number;
+  /**
+   * The installed policy that the owner reviewed: its wallet, exact source, ordered rules and every value. A rail
+   * whose change is an approval of the whole policy signs only this policy with the changed params replaced.
+   */
+  installed?: {wallet: string; source: string; rules: unknown; params: Record<string, ParamValue>};
   onStep: (text: string) => void;
 }
 /** Typed codes of the owner workflow. `OwnerFlowFailure.code` holds one, another server code or null. */
