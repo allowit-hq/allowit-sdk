@@ -5,7 +5,7 @@ version = 4
 [[package]]
 name = "allowit-core"
 version = "0.6.0"
-source = "git+https://github.com/allowit-hq/allowit-core.git?rev=c9bcf823665297f13c4fb51793cca46b15f9b2d6#c9bcf823665297f13c4fb51793cca46b15f9b2d6"
+source = "git+https://github.com/allowit-hq/allowit-core.git?rev=f79c37dc108beccc64b5245b84b2032318bdb6da#f79c37dc108beccc64b5245b84b2032318bdb6da"
 dependencies = [
  "libc",
  "reqwest",
@@ -41,7 +41,7 @@ dependencies = [
 [[package]]
 name = "allowit-stellar"
 version = "0.4.0"
-source = "git+https://github.com/allowit-hq/allowit-contracts-stellar.git?rev=c489f4c23f7a6510b992f85678cc804da84ba31a#c489f4c23f7a6510b992f85678cc804da84ba31a"
+source = "git+https://github.com/allowit-hq/allowit-contracts-stellar.git?rev=e0ccc689a0b30ae002aa70a5374e4bbf0cbfd5b7#e0ccc689a0b30ae002aa70a5374e4bbf0cbfd5b7"
 dependencies = [
  "allowit-core",
  "base64 0.22.1",
@@ -59,7 +59,7 @@ dependencies = [
 [[package]]
 name = "allowit-vendor-etherfuse"
 version = "0.2.0"
-source = "git+https://github.com/allowit-hq/vendor-etherfuse.git?rev=ae45f5f9e450c1c8c11dce5c91462e398ae97001#ae45f5f9e450c1c8c11dce5c91462e398ae97001"
+source = "git+https://github.com/allowit-hq/vendor-etherfuse.git?rev=dbbf6cc31d944f76cd65d1b2dc229a64a21b3ae9#dbbf6cc31d944f76cd65d1b2dc229a64a21b3ae9"
 dependencies = [
  "allowit-core",
  "serde",

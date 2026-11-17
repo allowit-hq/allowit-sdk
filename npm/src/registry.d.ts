@@ -105,6 +105,13 @@ export interface PaidService {
   amount: string;
   /** The asset reference of the challenge. */
   asset: string;
+  /**
+   * Who settles the payment. `seller`: the wallet signed a payment authorization, and the seller's
+   * facilitator submits it. A document omits `payer`: Allowit settled the payment itself.
+   */
+  settledBy?: 'payer' | 'seller';
+  /** The seller's bound, in seconds, from the authorization to its settlement. Only with `seller`. */
+  settleWithin?: number;
 }
 /** A seller's payment challenge for one resource, as the rail of its network read it. */
 export interface PaymentChallenge {

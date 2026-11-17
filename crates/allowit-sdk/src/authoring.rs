@@ -30,6 +30,62 @@ impl Default for HostTools {
 }
 pub use allowit_core::vendor::authoring::{canonical_digest, check, portable_identity};
 
+/// The server functions that Core declares in the `allowit` namespace. No contract can call
+/// one: a server evaluates the policy that names one. Core keeps this list in its source gate
+/// and exports no copy, so a new Core server function must be added here. Until then the
+/// server profile refuses a policy that names it, as it refuses every function outside its
+/// registry.
+pub const SERVER_FUNCTIONS: [(&str, &str); 7] = [
+    ("allowit", "price"),
+    ("allowit", "new_decision_context"),
+    ("allowit", "decision"),
+    ("allowit", "request_screening"),
+    ("allowit", "fetch"),
+    ("allowit", "internet_search"),
+    ("allowit", "marketplace_search"),
+];
+
+/// The checked shape of server policy source, and the server functions that it names.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ServerShape {
+    pub shape: policy_source::SourceShape,
+    /// Each registered function that the source names, as `namespace::function`, in registry
+    /// order. A source that names one has a part that only a server can run.
+    pub functions: Vec<String>,
+}
+
+/// The registry of the server policy profile: Core's server functions, then the evidence and
+/// package functions that this build registers.
+fn server_registry() -> Result<Vec<(&'static str, &'static str)>> {
+    Ok(SERVER_FUNCTIONS
+        .into_iter()
+        .chain(crate::plugins::policy_registry(&SERVER_FUNCTIONS)?.host_calls)
+        .collect())
+}
+
+/// Check server policy source as a server of this build checks it: with Core's server policy
+/// profile, against [`SERVER_FUNCTIONS`] and the evidence and package functions that this build
+/// registers ([`crate::plugins::policy_registry`]). Beside the portable vocabulary, that
+/// profile admits a call of a registered function and the text of an owner param, read with
+/// `as_str()`. A server decides which of the functions its build fills.
+pub fn check_server(source: &str) -> Result<ServerShape> {
+    let registry = server_registry()?;
+    let shape =
+        policy_source::source_shape_with_host_calls(source, &registry).map_err(Error::usage)?;
+    // The gate refuses a function that the registry does not hold. So the source names a
+    // function when the registry without it no longer admits the source.
+    let functions = registry
+        .iter()
+        .filter(|function| {
+            let without: Vec<_> = registry.iter().filter(|other| other != function).collect();
+            let without: Vec<(&str, &str)> = without.into_iter().copied().collect();
+            policy_source::source_shape_with_host_calls(source, &without).is_err()
+        })
+        .map(|(namespace, name)| format!("{namespace}::{name}"))
+        .collect();
+    Ok(ServerShape { shape, functions })
+}
+
 /// The host crate of one policy: a `no_std` crate whose only dependency is `allowit`.
 const POLICY_HOST: &str = "#![no_std]\n#[path = \"policy.rs\"]\nmod policy;\npub const EXECUTE: fn(&allowit::AllowitContext) -> allowit::Result = policy::execute;\n";
 /// Flags of every compilation. Function pointer comparisons depend on code layout, so the lint is
@@ -49,6 +105,41 @@ const RUSTC_FLAGS: [&str; 5] = [
 #[cfg(unix)]
 pub fn compile(source: &str, tools: &HostTools) -> Result<()> {
     check(source)?;
+    build(source, POLICY_HOST, tools)
+}
+
+/// [`compile`] for server policy source: [`check_server`] runs first. The portable Std library
+/// declares Core's server functions. A function of a rail or a package takes the context and
+/// one value and returns a value; the host crate declares each one so, as a server's build
+/// does, and the policy type-checks as it does there.
+#[cfg(unix)]
+pub fn compile_server(source: &str, tools: &HostTools) -> Result<()> {
+    check_server(source)?;
+    let registry = server_registry()?;
+    let registered = &registry[SERVER_FUNCTIONS.len()..];
+    let mut modules = std::collections::BTreeMap::<&str, String>::new();
+    for (namespace, name) in registered {
+        modules.entry(namespace).or_default().push_str(&format!(
+            "pub fn {name}(_: &allowit::AllowitContext, _: &allowit::AllowitValue) -> allowit::Result<allowit::AllowitValue> {{ Err(allowit::AllowitError::Unsupported) }} "
+        ));
+    }
+    // The namespaces come in on the first line, so compiler lines match the source.
+    let mut policy = String::new();
+    let mut host =
+        String::from("#![no_std]\n#![allow(dead_code, unused_imports)]\nmod registered { ");
+    for (namespace, functions) in &modules {
+        host.push_str(&format!("pub mod {namespace} {{ {functions}}} "));
+        policy.push_str(&format!("use crate::registered::{namespace}; "));
+    }
+    host.push_str("}\n#[path = \"policy.rs\"]\nmod policy;\npub const EXECUTE: fn(&allowit::AllowitContext) -> allowit::Result = policy::execute;\n");
+    policy.push_str(source);
+    build(&policy, &host, tools)
+}
+
+/// Build the admitted `source` behind the host crate `host` against the embedded portable Std
+/// library.
+#[cfg(unix)]
+fn build(source: &str, host: &str, tools: &HostTools) -> Result<()> {
     if tools.timeout.is_zero() || tools.timeout > Duration::from_secs(60) {
         return Err(Error::config(
             "Host compiler timeout must be within 60 seconds",
@@ -65,7 +156,7 @@ pub fn compile(source: &str, tools: &HostTools) -> Result<()> {
         ("allowit/core.rs", policy_source::PORTABLE_CORE_RS),
         ("allowit/LICENSE", policy_source::PORTABLE_TERMS),
         ("policy.rs", source),
-        ("policy_host.rs", POLICY_HOST),
+        ("policy_host.rs", host),
     ] {
         std::fs::write(root.join(path), bytes.as_bytes()).map_err(io_error)?;
     }
@@ -260,6 +351,12 @@ impl Drop for CompilerProcess {
 }
 #[cfg(not(unix))]
 pub fn compile(_source: &str, _tools: &HostTools) -> Result<()> {
+    Err(Error::unsupported(
+        "Bounded host policy compilation requires a POSIX runtime",
+    ))
+}
+#[cfg(not(unix))]
+pub fn compile_server(_source: &str, _tools: &HostTools) -> Result<()> {
     Err(Error::unsupported(
         "Bounded host policy compilation requires a POSIX runtime",
     ))

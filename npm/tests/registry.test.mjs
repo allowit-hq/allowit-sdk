@@ -341,6 +341,24 @@ test('a receipt document gives its bounded paid-service context', async () => {
   assert.deepEqual(sdk.paidServiceOf({requestId: 'r', paidService: context}), context);
   const {challengeId: _, ...plain} = context;
   assert.deepEqual(sdk.paidServiceOf({paidService: plain}), plain);
+  // A payment that the seller settles names who settles and the seller's bound.
+  const authorized = {...context, settledBy: 'seller', settleWithin: 300};
+  assert.deepEqual(sdk.paidServiceOf({paidService: authorized}), authorized);
+  const unbounded = {...context, settledBy: 'seller'};
+  assert.deepEqual(sdk.paidServiceOf({paidService: unbounded}), unbounded);
+  for (const other of [
+    {...context, settledBy: 'facilitator'},
+    {...context, settledBy: true},
+    // A bound without a seller that settles, and a bound out of range or of another type.
+    {...context, settleWithin: 300},
+    {...context, settledBy: 'payer', settleWithin: 300},
+    {...context, settledBy: 'seller', settleWithin: 0},
+    {...context, settledBy: 'seller', settleWithin: 86401},
+    {...context, settledBy: 'seller', settleWithin: 1.5},
+    {...context, settledBy: 'seller', settleWithin: '300'},
+  ]) {
+    assert.equal(sdk.paidServiceOf({paidService: other}), null, JSON.stringify(other));
+  }
   for (const other of [
     null, 'text', {}, {paidService: 'text'},
     {paidService: {...context, resource: 'javascript:alert(1)'}},
