@@ -50,6 +50,8 @@ Simple and Common reject bespoke state writes.
 
 `authoring::check` checks source with the portable profile, which a contract compiles. `authoring::check_server` checks source that a server evaluates: it admits the server functions of the build's registry and the text of an owner param, read with `as_str()`, and it names the server functions that the source calls. `authoring::compile` and `authoring::compile_server` type-check the source after the matching profile.
 
+`authoring::onchain_part` derives the on-chain part of one policy source for a Custom wallet. The owner writes and signs one source. The server evaluates all of it before it signs. The contract of a Custom wallet compiles the part that Core derives: a statement stays when the chain can check it by itself, and it leaves when it depends on a server function or on stored state. The part never denies a request that the whole source allows, so a rule in a branch that depends on a server function leaves too; the result lists each such rule with its line, its cause and whether the owner can move it. The result also names the cumulated figures that the kept rules read, the only state that a contract wallet keeps, and a source that writes policy state is refused. A source that names no server function and reads no stored state is its own on-chain part.
+
 Classic custody runs a canonical-only policy in full on every prepare and sign path.
 Any other source, such as one that calls a server function, needs the server's compiled evaluator: the server admits each prepared operation through `authorize_preparation` before it stores and signs it.
 Classic custody rejects bespoke state writes.

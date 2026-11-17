@@ -49,7 +49,7 @@ export default Object.freeze([
   {
     "id": "custom",
     "title": "Custom",
-    "explanation": "A contract built from your policy enforces all of it on chain.",
+    "explanation": "A contract from your policy enforces each step that the chain can check. Allowit checks the rest before it co-signs.",
     "recommended": false,
     "pays": "Fewer sellers: only those that accept a settled payment as proof.",
     "fee": "Higher: each payment runs the wallet contract on chain.",
