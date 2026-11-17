@@ -48,6 +48,8 @@ Common uses the owner-approved leading canonical rule calls. Custom compiles the
 Simple requires full trusted host evaluation before the server authorizes execution.
 Simple and Common reject bespoke state writes.
 
+`authoring::check` checks source with the portable profile, which a contract compiles. `authoring::check_server` checks source that a server evaluates: it admits the server functions of the build's registry and the text of an owner param, read with `as_str()`, and it names the server functions that the source calls. `authoring::compile` and `authoring::compile_server` type-check the source after the matching profile.
+
 Classic custody runs a canonical-only policy in full on every prepare and sign path.
 Any other source, such as one that calls a server function, needs the server's compiled evaluator: the server admits each prepared operation through `authorize_preparation` before it stores and signs it.
 Classic custody rejects bespoke state writes.
