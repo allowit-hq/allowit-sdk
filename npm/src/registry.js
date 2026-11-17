@@ -104,8 +104,10 @@ export function settlementOf(document) {
 }
 
 /**
- * The paid-service context `{resource, challengeId?, payTo, amount, asset}` that a status or receipt
- * document records, or null. The resource is an `http` or `https` URL; every field is bounded text.
+ * The paid-service context `{resource, challengeId?, payTo, amount, asset, settledBy?, settleWithin?}`
+ * that a status or receipt document records, or null. The resource is an `http` or `https` URL; every
+ * text field is bounded. `settledBy` is `payer` or `seller`; a document omits `payer`. `settleWithin`
+ * is the seller's bound in seconds, 1 to 86400, and only a context that the seller settles has it.
  */
 export function paidServiceOf(document) {
   const item = record(record(document)?.paidService);
@@ -124,7 +126,12 @@ export function paidServiceOf(document) {
   if (typeof item.amount !== 'string' || !/^[1-9][0-9]{0,38}$/.test(item.amount)) return null;
   if (item.challengeId !== undefined
     && (typeof item.challengeId !== 'string' || !/^[A-Za-z0-9._:-]{1,128}$/.test(item.challengeId))) return null;
-  if (Object.keys(item).some((key) => !['resource', 'challengeId', 'payTo', 'amount', 'asset'].includes(key))) return null;
+  if (item.settledBy !== undefined && !['payer', 'seller'].includes(item.settledBy)) return null;
+  if (item.settleWithin !== undefined
+    && (item.settledBy !== 'seller' || !Number.isInteger(item.settleWithin)
+      || item.settleWithin < 1 || item.settleWithin > 86400)) return null;
+  const known = ['resource', 'challengeId', 'payTo', 'amount', 'asset', 'settledBy', 'settleWithin'];
+  if (Object.keys(item).some((key) => !known.includes(key))) return null;
   return item;
 }
 
