@@ -86,6 +86,28 @@ pub fn check_server(source: &str) -> Result<ServerShape> {
     Ok(ServerShape { shape, functions })
 }
 
+pub use policy_source::{Cause, Derived, Figure, ServerOnly};
+
+/// The on-chain part of one policy source: what the contract of a wallet that compiles its
+/// policy runs. The owner writes and signs one source, and the server evaluates all of it. The
+/// statements that the chain can check by itself stay. The statements that depend on a server
+/// function or on stored state leave: the server's signature enforces them. Core derives the
+/// part (`allowit_core::policy_source::derive`): it is a pure function of the source bytes, so
+/// every client and every server derive the same part, and it never denies a request that the
+/// whole source allows.
+///
+/// The result holds the derived source, the lines of the owner's source that left, each
+/// deterministic check that only the server enforces, with its line, its cause and whether the
+/// owner can move it so that the chain enforces it too, the checks that stay, and the
+/// cumulated figures that the kept rules read: the only state that the wallet keeps. A source
+/// that names no server function and reads no stored state is its own on-chain part. A source
+/// that writes policy state is refused: a contract wallet stores none of its own.
+///
+/// `source` is server policy source: check it with [`check_server`] first.
+pub fn onchain_part(source: &str) -> Result<Derived> {
+    policy_source::derive(source).map_err(Error::usage)
+}
+
 /// The host crate of one policy: a `no_std` crate whose only dependency is `allowit`.
 const POLICY_HOST: &str = "#![no_std]\n#[path = \"policy.rs\"]\nmod policy;\npub const EXECUTE: fn(&allowit::AllowitContext) -> allowit::Result = policy::execute;\n";
 /// Flags of every compilation. Function pointer comparisons depend on code layout, so the lint is
