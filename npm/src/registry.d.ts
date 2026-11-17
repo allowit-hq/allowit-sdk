@@ -255,6 +255,11 @@ export interface InstallAndFundInput {
   policyId: string;
   agent: string;
   amount: string;
+  /**
+   * The policy that the owner reviewed: its exact source and every value, and its ordered rules and tier when the host
+   * shows them. A rail whose deployment ends with an approval of the whole policy signs only this policy.
+   */
+  reviewed?: {source: string; params: Record<string, ParamValue>; rules?: unknown; tier?: unknown};
   onStep: (text: string) => void;
 }
 /**
@@ -316,7 +321,7 @@ export interface UpdateParamsInput {
    * The installed policy that the owner reviewed: its wallet, exact source, ordered rules and every value. A rail
    * whose change is an approval of the whole policy signs only this policy with the changed params replaced.
    */
-  installed?: {wallet: string; source: string; rules: unknown; params: Record<string, ParamValue>};
+  installed?: {wallet: string; source: string; rules: unknown; params: Record<string, ParamValue>; tier?: unknown};
   onStep: (text: string) => void;
 }
 /** Typed codes of the owner workflow. `OwnerFlowFailure.code` holds one, another server code or null. */
