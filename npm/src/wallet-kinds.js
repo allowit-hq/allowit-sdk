@@ -3,7 +3,10 @@ export default Object.freeze([
   {
     "id": "native",
     "title": "Native",
-    "explanation": "Allowit enforces the policy offchain, and a keypair account holds the funds.",
+    "explanation": "Your agent's own wallet. Allowit checks each payment against your policy before it co-signs.",
+    "recommended": true,
+    "pays": "Every x402 seller.",
+    "fee": "The lowest: none when the seller's facilitator settles the payment.",
     "enforcement": "offchain",
     "custody": "keypair",
     "supportedParams": [],
@@ -12,7 +15,10 @@ export default Object.freeze([
   {
     "id": "simple",
     "title": "Simple",
-    "explanation": "Allowit enforces the policy offchain, as for Native, and a smart-contract wallet holds the funds.",
+    "explanation": "A contract wallet holds the funds. Allowit checks each payment against your policy, as for Native.",
+    "recommended": false,
+    "pays": "Fewer sellers: only those that accept a settled payment as proof.",
+    "fee": "Higher: each payment runs the wallet contract on chain.",
     "enforcement": "offchain",
     "custody": "contract",
     "supportedParams": [],
@@ -21,7 +27,10 @@ export default Object.freeze([
   {
     "id": "standard",
     "title": "Standard",
-    "explanation": "A smart-contract wallet enforces the standard policy onchain for the supported params.",
+    "explanation": "A contract wallet enforces the standard rules of your policy on chain.",
+    "recommended": false,
+    "pays": "Fewer sellers: only those that accept a settled payment as proof.",
+    "fee": "Higher: each payment runs the wallet contract on chain.",
     "enforcement": "onchain",
     "custody": "contract",
     "supportedParams": [
@@ -40,7 +49,10 @@ export default Object.freeze([
   {
     "id": "custom",
     "title": "Custom",
-    "explanation": "A custom contract, built from the policy source, enforces the policy onchain.",
+    "explanation": "A contract built from your policy enforces all of it on chain.",
+    "recommended": false,
+    "pays": "Fewer sellers: only those that accept a settled payment as proof.",
+    "fee": "Higher: each payment runs the wallet contract on chain.",
     "enforcement": "onchain",
     "custody": "contract",
     "supportedParams": [],

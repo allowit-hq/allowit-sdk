@@ -40,8 +40,14 @@ export type WalletKindId = 'native' | 'simple' | 'standard' | 'custom';
 export interface WalletKindInfo {
   id: WalletKindId;
   title: string;
-  /** One sentence that every host shows unchanged. */
+  /** What the wallet is and who enforces the policy, in the owner's words. Every host shows it unchanged. */
   explanation: string;
+  /** Hosts recommend this kind to an owner who deploys. Exactly one kind is recommended. */
+  recommended: boolean;
+  /** The sellers that a wallet of this kind pays, in the owner's words. */
+  pays: string;
+  /** What a payment costs the wallet in network fee, in the owner's words. */
+  fee: string;
   enforcement: 'offchain' | 'onchain';
   custody: 'keypair' | 'contract';
   /** The params this kind enforces onchain. Empty unless the kind has a fixed list. */
