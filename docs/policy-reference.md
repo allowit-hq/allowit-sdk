@@ -48,7 +48,9 @@ Common uses the owner-approved leading canonical rule calls. Custom compiles the
 Simple requires full trusted host evaluation before the server authorizes execution.
 Simple and Common reject bespoke state writes.
 
-Classic custody requires a canonical-only policy. Its signing path has no compiled custom evaluator.
+Classic custody runs a canonical-only policy in full on every prepare and sign path.
+Any other source, such as one that calls a server function, needs the server's compiled evaluator: the server admits each prepared operation through `authorize_preparation` before it stores and signs it.
+Classic custody rejects bespoke state writes.
 Compiler-language packets serve only verification and status recovery.
 They cannot authorize new preparation, signatures or a replacement payment.
 
