@@ -40,11 +40,12 @@ dependencies = [
 [[package]]
 name = "allowit-stellar"
 version = "0.4.0"
-source = "git+https://github.com/allowit-hq/allowit-contracts-stellar.git?rev=8e552f0fc4873796bd3f0a650c18b6d6a32ecc31#8e552f0fc4873796bd3f0a650c18b6d6a32ecc31"
+source = "git+https://github.com/allowit-hq/allowit-contracts-stellar.git?rev=70a0e25cadd583c2396167d29bacbe41c9cc16cb#70a0e25cadd583c2396167d29bacbe41c9cc16cb"
 dependencies = [
  "allowit-core",
  "base64 0.22.1",
  "ed25519-dalek",
+ "getrandom 0.2.17",
  "serde",
  "serde_json",
  "serde_json_canonicalizer",
