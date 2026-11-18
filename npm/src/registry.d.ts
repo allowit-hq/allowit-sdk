@@ -1,4 +1,19 @@
 import type {OwnerChain, OwnerStep as CoreOwnerStep, PolicyValue as ParamValue} from '@allowit/core';
+import type {
+  WalletKindId,
+  WalletKindInfo,
+  AssetDisplay,
+  Quantity,
+  Settlement,
+  LimitReport,
+  SettledBy,
+  PaidService,
+  PaymentChallenge,
+  PaymentProof,
+  PaymentLimit,
+  WalletLimits,
+  OperationReports,
+} from '@allowit/core';
 
 export type ElementKind =
   | 'address'
@@ -36,110 +51,25 @@ export interface AssetInfo {
   stablecoin: boolean;
   label: string;
 }
-/** The stable selection id of a wallet kind. */
-export type WalletKindId = 'native' | 'simple' | 'standard' | 'custom';
-export interface WalletKindInfo {
-  id: WalletKindId;
-  title: string;
-  /** What the wallet is and who enforces the policy, in the owner's words. Every host shows it unchanged. */
-  explanation: string;
-  /** Hosts recommend this kind to an owner who deploys. Exactly one kind is recommended. */
-  recommended: boolean;
-  /** The sellers that a wallet of this kind pays, in the owner's words. */
-  pays: string;
-  /** What a payment costs the wallet in network fee, in the owner's words. */
-  fee: string;
-  enforcement: 'offchain' | 'onchain';
-  custody: 'keypair' | 'contract';
-  /** The params this kind enforces onchain. Empty unless the kind has a fixed list. */
-  supportedParams: readonly string[];
-  /** The public list of `supportedParams`, or null. */
-  paramsUrl: string | null;
-}
-/** What a host shows for an asset. The rail supplies it; shared code holds no unit. */
-export interface AssetDisplay {
-  symbol: string;
-  decimals: number;
-  name: string;
-  native: boolean;
-}
-/** Base units of an asset with the rail's display metadata and the printed text. */
-export interface Quantity {
-  /** Base units as decimal text. */
-  units: string;
-  asset: AssetDisplay;
-  /** The amount with its unit, such as `5 XYZ`. */
-  text: string;
-}
-/** What a settled operation cost: top-level `settlement` of a status or receipt document. */
-export interface Settlement {
-  /** The block or ledger that holds the transaction. */
-  height: number;
-  /** The network fee that the transaction paid, in the fee asset. */
-  fee: Quantity;
-  /** The amount that the operation moved, or null when the rail reports none. */
-  amount: Quantity | null;
-}
-/** One spending limit: an entry of the top-level `limits` of a status, receipt or wallet document. */
-export interface LimitReport {
-  /** The policy param that holds the limit, such as `daily_spending_limit`. */
-  param: string;
-  limit: Quantity;
-  spent: Quantity;
-  remaining: Quantity;
-}
 /**
- * One limit on the amount of one operation: an entry of the top-level `paymentLimits` of a limits, receipt or
- * wallet document. The policy checks it against each request, so it has no spent or remaining amount.
+ * The wallet kinds, the payment values and the reports of operation, receipt, limits and wallet documents: Core's
+ * contract. A document carries settlement, paidService, feeCharged, limits and paymentLimits at its top level.
  */
-export interface PaymentLimit {
-  /** The policy param that holds the limit, such as `payment_limit`. */
-  param: string;
-  limit: Quantity;
-}
-/**
- * What a payment bought: the operation context of a paid call. The server checks it against the operation
- * and records it in the receipt under the top-level `paidService`.
- */
-export interface PaidService {
-  /** The URL of the resource. */
-  resource: string;
-  /** The seller's challenge id, when it issued one. */
-  challengeId?: string;
-  /** The address that the challenge names as the recipient. */
-  payTo: string;
-  /** The challenge amount in base units, as decimal text. */
-  amount: string;
-  /** The asset reference of the challenge. */
-  asset: string;
-  /**
-   * Who settles the payment. `seller`: the wallet signed a payment authorization, and the seller's
-   * facilitator submits it. A document omits `payer`: Allowit settled the payment itself.
-   */
-  settledBy?: 'payer' | 'seller';
-  /** The seller's bound, in seconds, from the authorization to its settlement. Only with `seller`. */
-  settleWithin?: number;
-}
-/** A seller's payment challenge for one resource, as the rail of its network read it. */
-export interface PaymentChallenge {
-  id?: string;
-  resource: string;
-  /** The CAIP-2 network of the payment. */
-  network: string;
-  scheme: string;
-  payTo: string;
-  amount: Quantity;
-  asset: string;
-  /** The Unix time after which the seller no longer accepts the payment. */
-  expiresAt?: number;
-  /** The seller's accepted terms as the rail read them. Shared code never interprets them. */
-  terms?: unknown;
-}
-/** The proof of payment that a client presents to the seller: one request header. */
-export interface PaymentProof {
-  header: string;
-  value: string;
-}
+export type {
+  WalletKindId,
+  WalletKindInfo,
+  AssetDisplay,
+  Quantity,
+  Settlement,
+  LimitReport,
+  SettledBy,
+  PaidService,
+  PaymentChallenge,
+  PaymentProof,
+  PaymentLimit,
+  WalletLimits,
+  OperationReports,
+};
 /**
  * The marketplace catalog: Core's contract. An entry keeps the seller's listing apart from what Allowit holds about the
  * offer: its source, its access, what Allowit observed, the owners' reputation labels and its score. `Ranking` is Core's
@@ -157,25 +87,6 @@ export type {
   SearchResult,
   CatalogRanking as Ranking,
 } from '@allowit/core';
-/** The reports that a status or receipt document may carry at its top level. */
-export interface OperationReports {
-  settlement?: Settlement;
-  /** What the payment bought, when the operation paid a seller's challenge. */
-  paidService?: PaidService;
-  /** The fee that the spending limits count, in the installed asset. */
-  feeCharged?: Quantity;
-  limits?: LimitReport[];
-  /** The limits on one operation. They keep no counter. */
-  paymentLimits?: PaymentLimit[];
-  explorer?: string;
-}
-/** The limits of a wallet: a limits document, or the limit fields of a receipt or wallet document. */
-export interface WalletLimits {
-  /** The counted spending limits. Absent when their counters could not be read. */
-  limits?: LimitReport[];
-  /** The limits on one operation. Absent when the document reports none. */
-  paymentLimits?: PaymentLimit[];
-}
 /** The reply of `GET /api/wallet-kinds?network=<CAIP-2>`. */
 export interface WalletKindsReply {
   network: string;
