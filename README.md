@@ -72,7 +72,7 @@ with the code `update_unavailable` for a wallet kind without owner-signed update
 The npm owner workflows, `installAndFund` and `updateParams`, live in
 [`npm/src/owner-workflow.js`](npm/src/owner-workflow.js). They hold the journal of signed steps, the recovery of a step
 whose result is unknown, one run per journal key, and the typed errors (`OwnerFlowError` with `code` and `retry`). The
-rail supplies only `ownerChain`: the network's record of a transaction, the record of an expired signed step, the
+rail supplies only `ownerChain`, which implements Core's `OwnerChain` contract from `@allowit/core`: the network's record of a transaction, the record of an expired signed step, the
 steps of a keypair wallet's setup (build, read and send its transaction) and the check of the owner's approval
 signature. The SDK keeps each signed step and setup in the host's journal and replaces one only when the rail proves
 that it can never apply.
