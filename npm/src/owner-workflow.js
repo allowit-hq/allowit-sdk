@@ -214,6 +214,11 @@ function savedApproval(journal, key, identity) {
   return value;
 }
 
+/**
+ * The journal version of a signed step that this workflow saves. A wallet creation saved under it also funds the wallet;
+ * a creation saved without it, by an earlier version, created the wallet alone, and the funding still follows.
+ */
+const STEP_VERSION = 2;
 function saved(journal, key, identity) {
   const raw = journal.get(key);
   if (raw === null) return null;
@@ -225,7 +230,7 @@ function saved(journal, key, identity) {
   if (!object(value) || !step || typeof value.signedPayload !== 'string' || !value.signedPayload)
     throw new OwnerFlowError('The saved signed step is unreadable. It stays saved; contact support before signing again.', null, false);
   if (!sameInputs(value, identity)) throw changed(identity);
-  return {step, signedPayload: value.signedPayload};
+  return {step, signedPayload: value.signedPayload, current: value.version === STEP_VERSION};
 }
 
 /** True when the funding or the update of these inputs is confirmed. A marker of other inputs is refused. */
@@ -282,13 +287,13 @@ export function installAndFund(chain, input) {
 /** The parts of one workflow that send, settle and sign its owner steps. */
 function stepper(chain, {network, historyPauseMs, ask, sign, journal, key, policyId, onStep, identity, confirmed}) {
   const receipts = [];
-  const done = (step, receipt) => {
-    confirmed(step);
+  const done = (step, receipt, current) => {
+    confirmed(step, current);
     journal.remove(key);
     receipts.push(receipt);
   };
   /** Send a saved step. False means that it expired and the journal dropped it. */
-  const submit = async (step, signedPayload) => {
+  const submit = async (step, signedPayload, current) => {
     let receipt;
     try {
       receipt = await ask('native/owner/submit', {policyId, payload: signedPayload});
@@ -299,7 +304,7 @@ function stepper(chain, {network, historyPauseMs, ask, sign, journal, key, polic
       const same = about.transactionHash === step.hash && (about.policyId === undefined || about.policyId === policyId);
       if (code === OWNER_TRANSACTION_SETTLED && same) {
         const ledger = await settledLedger(chain, network, step, Number.isSafeInteger(about.ledger) ? about.ledger : undefined, historyPauseMs);
-        done(step, {policyId, action: step.action, status: 'confirmed', transactionHash: step.hash, ledger});
+        done(step, {policyId, action: step.action, status: 'confirmed', transactionHash: step.hash, ledger}, current);
         return true;
       }
       if (code === OWNER_TRANSACTION_EXPIRED && same) {
@@ -307,7 +312,7 @@ function stepper(chain, {network, historyPauseMs, ask, sign, journal, key, polic
         const record = await chain.expiredRecord(network, step.hash, signedPayload).catch(() => {throw unchecked();});
         if (record) {
           // The transaction applied before its time bound, so the step is done and is never signed again.
-          done(step, {policyId, action: step.action, status: 'confirmed', transactionHash: step.hash, ledger: record.ledger});
+          done(step, {policyId, action: step.action, status: 'confirmed', transactionHash: step.hash, ledger: record.ledger}, current);
           return true;
         }
         journal.set(ownerArchiveKey(key, step.hash), JSON.stringify({step, signedPayload}));
@@ -331,7 +336,7 @@ function stepper(chain, {network, historyPauseMs, ask, sign, journal, key, polic
       || receipt.transactionHash !== step.hash)
       throw new OwnerFlowError('The network did not confirm the signed owner step.', null, false);
     const ledger = await settledLedger(chain, network, step, receipt.ledger, historyPauseMs);
-    done(step, {...receipt, ledger});
+    done(step, {...receipt, ledger}, current);
     return true;
   };
   /** Settle the saved signed step, if the journal holds one, before anything else is prepared. */
@@ -339,7 +344,7 @@ function stepper(chain, {network, historyPauseMs, ask, sign, journal, key, polic
     const pending = saved(journal, key, identity);
     if (pending) {
       onStep('Checking the saved signed step…');
-      if (!await submit(pending.step, pending.signedPayload)) onStep('The saved step can never apply. Preparing a new one…');
+      if (!await submit(pending.step, pending.signedPayload, pending.current)) onStep('The saved step can never apply. Preparing a new one…');
     }
   };
   const signAndSubmit = async step => {
@@ -347,9 +352,9 @@ function stepper(chain, {network, historyPauseMs, ask, sign, journal, key, polic
     onStep(`Sign ${step.action.replace(/_/g, ' ')} in your wallet…`);
     const signedPayload = await sign(step);
     if (typeof signedPayload !== 'string' || !signedPayload) throw new OwnerFlowError('Your wallet did not return the signed step.', null, false);
-    journal.set(key, JSON.stringify({step, signedPayload, ...identity}));
+    journal.set(key, JSON.stringify({step, signedPayload, ...identity, version: STEP_VERSION}));
     onStep('Waiting for the network to confirm…');
-    if (!await submit(step, signedPayload)) throw new OwnerFlowError('The network did not take the signed step. Resume to prepare a new one.', null, true);
+    if (!await submit(step, signedPayload, true)) throw new OwnerFlowError('The network did not take the signed step. Resume to prepare a new one.', null, true);
   };
   return {receipts, settleSaved, signAndSubmit};
 }
@@ -377,9 +382,9 @@ async function run(chain, {network, ask, sign, journal, key, policyId, agent, am
   const identity = {policyId, agent, amount};
   const {receipts, settleSaved, signAndSubmit} = stepper(chain, {network, historyPauseMs, ask, sign, journal, key, policyId, onStep, identity,
     // A confirmed funding is recorded before its signed bytes leave the journal. A contract wallet's creation funds it
-    // in the same transaction.
-    confirmed: step => {
-      if (step.action === 'fund' || step.action === 'create_wallet') journal.set(fundedKey, JSON.stringify(identity));
+    // in the same transaction, when this version saved it: an earlier version's creation funded nothing.
+    confirmed: (step, current) => {
+      if (step.action === 'fund' || step.action === 'create_wallet' && current) journal.set(fundedKey, JSON.stringify(identity));
     }});
   // A saved step or a funded marker of other inputs is refused before anything is sent.
   saved(journal, key, identity);

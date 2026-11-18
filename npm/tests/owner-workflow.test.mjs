@@ -78,6 +78,24 @@ test('the happy path installs and funds with one signature and never signs a con
   assert.deepEqual([again.wallet, again.receipts.length, signed.length], ['CWALLET', 0, 1]);
 });
 
+test('a creation that an earlier version saved funded nothing: its funding still follows', async () => {
+  // An earlier version created the wallet in one step and funded it in another. Its saved creation carries no version.
+  for (const [version, funds] of [[undefined, true], [2, false]]) {
+    const saved = {step: savedStep('create_wallet', 5), signedPayload: 'signed-create_wallet-5', policyId, agent, amount, ...(version ? {version} : {})};
+    const signed = [], journal = journalOf({[key]: JSON.stringify(saved)});
+    const {ask, calls} = service({submit: body => {
+      if (body.payload === saved.signedPayload) throw refusal('owner_transaction_settled', {policyId, action: 'create_wallet', transactionHash: hash(5), ledger: 7});
+      return confirmed(body);
+    }});
+    const result = await installAndFund({ask: async (path, body) => {
+      if (path === 'native/deploy/prepare') return (calls.push([path, body]), {policyId, installed: true, installation: {wallet: 'CWALLET'}});
+      return ask(path, body);
+    }, sign: signer(signed), journal, key, policyId, agent, amount, onStep() {}});
+    assert.deepEqual(result.receipts.map(r => r.action), funds ? ['create_wallet', 'fund'] : ['create_wallet'], String(version));
+    assert.deepEqual(signed, funds ? ['fund'] : [], String(version));
+  }
+});
+
 test('a wallet installed without funding is funded after its installation', async () => {
   const signed = [], journal = journalOf();
   const {ask, state} = service({submit: confirmed});
@@ -194,7 +212,7 @@ test('signed bytes enter the journal before the send, and a wrong receipt or rep
   const signed = [], journal = journalOf();
   const {ask} = service({submit: body => ({...confirmed(body), transactionHash: hash(8)})});
   await assert.rejects(installAndFund({ask, sign: signer(signed), journal, key, policyId, agent, amount, onStep() {}}), /did not confirm/);
-  assert.deepEqual(JSON.parse(journal.get(key)), {step: {action: 'create_wallet', payload: 'unsigned-create_wallet-1', hash: hash(1), expiresAt: JSON.parse(journal.get(key)).step.expiresAt}, signedPayload: 'signed-create_wallet-1', policyId, agent, amount});
+  assert.deepEqual(JSON.parse(journal.get(key)), {step: {action: 'create_wallet', payload: 'unsigned-create_wallet-1', hash: hash(1), expiresAt: JSON.parse(journal.get(key)).step.expiresAt}, signedPayload: 'signed-create_wallet-1', policyId, agent, amount, version: 2});
   const other = service({submit: confirmed});
   await assert.rejects(installAndFund({ask: async (path, body) => ({...await other.ask(path, body), policyId: 'other'}), sign: signer([]), journal: journalOf(), key, policyId, agent, amount, onStep() {}}), /different policy/);
   await assert.rejects(installAndFund({ask, sign: signer([]), journal: journalOf({[key]: '{bad'}), key, policyId, agent, amount, onStep() {}}), /unreadable/);
