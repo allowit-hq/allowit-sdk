@@ -1,6 +1,5 @@
 //! The SDK's owner sign-in against a fake backend, with a fake rail signature.
 use super::*;
-use serde_json::json;
 use std::{
     io::{BufRead, BufReader, Read, Write},
     net::TcpListener,
@@ -92,6 +91,7 @@ fn message(nonce: &str, issued: u64) -> String {
 struct Plan {
     challenge: Value,
     rotated: &'static str,
+    attributes: &'static str,
     route: (u16, Value),
 }
 impl Plan {
@@ -101,6 +101,7 @@ impl Plan {
             challenge: json!({"id": nonce, "message": message(&nonce, NOW), "address": OWNER,
                 "origin": ORIGIN, "expiresAt": date(NOW + 300)}),
             rotated: ROTATED,
+            attributes: "Path=/; HttpOnly; SameSite=Lax",
             route: (200, json!({"ok": true})),
         }
     }
@@ -162,7 +163,7 @@ fn backend(plan: Plan) -> (String, Seen) {
             };
             let bytes = serde_json::to_vec(&reply).unwrap();
             let set = set
-                .map(|c| format!("Set-Cookie: {c}; Path=/; HttpOnly; SameSite=Lax\r\n"))
+                .map(|c| format!("Set-Cookie: {c}; {}\r\n", plan.attributes))
                 .unwrap_or_default();
             write!(
                 stream,
@@ -273,6 +274,34 @@ fn an_empty_origin_is_refused_before_any_request() {
 }
 
 #[test]
+fn only_a_root_http_only_lax_session_cookie_is_kept() {
+    for (attributes, rotated) in [
+        ("Path=/; SameSite=Lax", ROTATED),
+        ("Path=/; HttpOnly; SameSite=None", ROTATED),
+        ("Path=/api; HttpOnly; SameSite=Lax", ROTATED),
+        (
+            "Path=/; HttpOnly; SameSite=Lax; Domain=example.org",
+            ROTATED,
+        ),
+        ("Path=/; HttpOnly; SameSite=Lax; Path=/", ROTATED),
+        ("Path=/; HttpOnly; SameSite=Lax", "allowit_session=short"),
+        (
+            "Path=/; HttpOnly; SameSite=Lax",
+            "other=ssssssssssssssssssssssssssssssss",
+        ),
+    ] {
+        let mut plan = Plan::new();
+        plan.attributes = attributes;
+        plan.rotated = rotated;
+        let (url, _) = backend(plan);
+        assert!(
+            Session::sign_in(&url, ORIGIN, NETWORK, &Owner, &Signature::default(), NOW).is_err(),
+            "{attributes} {rotated}"
+        );
+    }
+}
+
+#[test]
 fn a_session_that_the_server_did_not_rotate_is_refused() {
     let mut plan = Plan::new();
     plan.rotated = GUEST;
@@ -306,4 +335,6 @@ fn a_typed_refusal_keeps_its_code_and_details() {
     );
     assert_eq!(error.status, Some(404));
     assert_eq!(error.detail("requestId"), Some("r9"));
+    // An untyped refusal names no code.
+    assert_eq!(refusal(502, b"bad gateway").api_code, None);
 }
