@@ -2,7 +2,7 @@
 import type {OwnerChain, OwnerStep, TransactionRecord, RailPlugin, InstallAndFundInput} from '../src/registry.js';
 import type {CatalogEntry, SearchResult, Ranking, ParamValue, AccessKind} from '../src/registry.js';
 import type {Quantity, Settlement, LimitReport, PaidService, PaymentChallenge, PaymentProof, WalletKindInfo} from '../src/registry.js';
-import type {WalletKindId, AssetDisplay, PaymentLimit, OperationReports} from '../src/registry.js';
+import type {WalletKindId, AssetDisplay, PaymentLimit, WalletLimits, OperationReports} from '../src/registry.js';
 import type * as Core from '@allowit/core';
 import {installAndFund, rails, OwnerFlowError} from '../src/registry.js';
 
@@ -33,8 +33,11 @@ const sameTypes: [
   Same<PaymentProof, Core.PaymentProof>,
   Same<WalletKindId, Core.WalletKindId>,
   Same<WalletKindInfo, Core.WalletKindInfo>,
-] = [true, true, true, true, true, true, true, true, true, true, true, true, true, true];
-// A document's reports: Core's payment values, and the SDK's own limit on one operation.
+  Same<PaymentLimit, Core.PaymentLimit>,
+  Same<WalletLimits, Core.WalletLimits>,
+  Same<OperationReports, Core.OperationReports>,
+] = [true, true, true, true, true, true, true, true, true, true, true, true, true, true, true, true, true];
+// A document's reports, all Core's types.
 const five: Quantity = {units: '50000000', asset: {symbol: 'XYZ', decimals: 7, name: 'XYZ', native: true}, text: '5 XYZ'};
 const limit: PaymentLimit = {param: 'payment_limit', limit: five};
 const reports: OperationReports = {

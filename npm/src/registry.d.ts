@@ -10,6 +10,9 @@ import type {
   PaidService,
   PaymentChallenge,
   PaymentProof,
+  PaymentLimit,
+  WalletLimits,
+  OperationReports,
 } from '@allowit/core';
 
 export type ElementKind =
@@ -49,8 +52,8 @@ export interface AssetInfo {
   label: string;
 }
 /**
- * The wallet kinds and the payment values of operation, receipt and wallet documents: Core's contract. A document
- * carries settlement, limits and paidService at its top level.
+ * The wallet kinds, the payment values and the reports of operation, receipt, limits and wallet documents: Core's
+ * contract. A document carries settlement, paidService, feeCharged, limits and paymentLimits at its top level.
  */
 export type {
   WalletKindId,
@@ -63,16 +66,10 @@ export type {
   PaidService,
   PaymentChallenge,
   PaymentProof,
+  PaymentLimit,
+  WalletLimits,
+  OperationReports,
 };
-/**
- * One limit on the amount of one operation: an entry of the top-level `paymentLimits` of a limits, receipt or
- * wallet document. The policy checks it against each request, so it has no spent or remaining amount.
- */
-export interface PaymentLimit {
-  /** The policy param that holds the limit, such as `payment_limit`. */
-  param: string;
-  limit: Quantity;
-}
 /**
  * The marketplace catalog: Core's contract. An entry keeps the seller's listing apart from what Allowit holds about the
  * offer: its source, its access, what Allowit observed, the owners' reputation labels and its score. `Ranking` is Core's
@@ -90,25 +87,6 @@ export type {
   SearchResult,
   CatalogRanking as Ranking,
 } from '@allowit/core';
-/** The reports that a status or receipt document may carry at its top level. */
-export interface OperationReports {
-  settlement?: Settlement;
-  /** What the payment bought, when the operation paid a seller's challenge. */
-  paidService?: PaidService;
-  /** The fee that the spending limits count, in the installed asset. */
-  feeCharged?: Quantity;
-  limits?: LimitReport[];
-  /** The limits on one operation. They keep no counter. */
-  paymentLimits?: PaymentLimit[];
-  explorer?: string;
-}
-/** The limits of a wallet: a limits document, or the limit fields of a receipt or wallet document. */
-export interface WalletLimits {
-  /** The counted spending limits. Absent when their counters could not be read. */
-  limits?: LimitReport[];
-  /** The limits on one operation. Absent when the document reports none. */
-  paymentLimits?: PaymentLimit[];
-}
 /** The reply of `GET /api/wallet-kinds?network=<CAIP-2>`. */
 export interface WalletKindsReply {
   network: string;
