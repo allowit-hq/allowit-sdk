@@ -5,7 +5,7 @@ use allowit_core::vendor::runtime as native;
 pub use native::{
     Accounting, Action, Debit, Evaluator, Expense, Lifetime, OwnerAction, OwnerInfo, PacketInfo,
     ParamsUpdate, PolicyInstallation, Poll, Problem, ReceiptInfo, Resources, SendingAccounts,
-    Signature, Signer, Snapshot, Status, Terms, Tier, Transport, Validity,
+    Signature, Signer, Snapshot, Status, Terms, Tier, Transport, Usage, Validity,
 };
 pub(crate) use native::{Kind, Packet};
 use serde::{Deserialize, Serialize};
@@ -407,6 +407,16 @@ impl Runtime {
                     })
                     .collect()
             })
+    }
+    /// Whether the prepared operation lapsed: it did not execute, and no envelope that carries
+    /// its authorization can execute it any more. `false` means not proven.
+    pub fn lapsed(&self, p: &Prepared) -> Result<bool> {
+        self.provider.lapsed(&native::Prepared(p.0.clone()))
+    }
+    /// What the operation adds to its wallet's figures when it executes, as the wallet counts
+    /// it. `None` for a rail without such a count.
+    pub fn usage(&self, p: &Prepared) -> Result<Option<Usage>> {
+        self.provider.usage(&native::Prepared(p.0.clone()))
     }
     /// Upload the wallet code of an installation from the server's sending accounts, which pay
     /// for it. `None` when the network holds the code already.
