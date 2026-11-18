@@ -672,7 +672,10 @@ test('a deployment signs the approval only of the reviewed policy for the new wa
   for (const [owners, sign, expected, retry] of [
     [new Map(), ownerSigns([]), /could not be read/, true],
     [undefined, ownerSigns([], 'STRANGER'), /another account than the owner/, false],
-    [undefined, async () => 'short', /did not return a message signature/, false],
+    [undefined, async () => '', /did not return a message signature/, false],
+    [undefined, async () => 'not base64!', /did not return a message signature/, false],
+    // A signature of another length reaches the rail's check, which refuses it.
+    [undefined, async () => Buffer.from([1, 2, 3]).toString('base64'), /another account than the owner/, false],
   ]) {
     const {chain: other, world} = keypairRail({owners});
     const {ask, calls} = keypairService();
@@ -796,4 +799,21 @@ test('a keypair change signed by another account is refused before it is saved, 
   assert.equal(signed.length, 0);
   const result = await updateParams({...input, sign: ownerSigns(signed)}, chain);
   assert.deepEqual([result.done, signed.length, submitted.length], [true, 1, 1]);
+});
+
+test('the rail decides the shape of an approval signature: a longer signature of its owner applies and resumes', async () => {
+  const {chain} = keypairRail({owners: new Map([['WALLET-1', OWNER]])}), signed = [];
+  // A rail whose owner signatures are 96 bytes long.
+  const long = (account, digest) => [...signatureOf(account, digest), ...signatureOf(account, digest).slice(0, 32)];
+  const rail = {...chain, approval: {...chain.approval, signedBy: (account, digest, signature) => JSON.stringify(long(account, digest)) === JSON.stringify(signature)}};
+  const sign = async s => (signed.push(s.action), Buffer.from(long(OWNER, s.hash)).toString('base64'));
+  const journal = journalOf();
+  const {ask, submitted} = approvals(approvalMessage(), [() => {throw new Error('reply lost');}, done]);
+  const input = {ask, sign, journal, key: 'long', policyId, params: change, installed: installed('WALLET-1'), onStep() {}};
+  await assert.rejects(updateParams(input, rail), /reply lost/);
+  // The saved approval keeps the longer signature and is sent again unchanged.
+  assert.equal(JSON.parse(journal.get('long:approval')).signature.length, 96);
+  const result = await updateParams(input, rail);
+  assert.deepEqual([result.done, signed.length, submitted.length], [true, 1, 2]);
+  assert.equal(submitted[1].sourceApproval[0].signature.length, 96);
 });

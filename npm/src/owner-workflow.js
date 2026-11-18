@@ -84,13 +84,18 @@ async function failedOnChain(chain, network, step, ledger) {
   return object(record) && record.hash === step.hash && record.ledger === ledger && record.successful === false;
 }
 
-/** The 64 bytes of a wallet's message signature, which the wallet returns as base64 text. */
+/** The most bytes of a message signature that the workflow keeps. The rail decides the exact shape. */
+const MAX_SIGNATURE_BYTES = 1024;
+/** True for a list of bytes that can hold a message signature; the rail's `signedBy` checks the signature itself. */
+const signatureShaped = bytes => Array.isArray(bytes) && bytes.length > 0 && bytes.length <= MAX_SIGNATURE_BYTES
+  && bytes.every(b => Number.isInteger(b) && b >= 0 && b <= 255);
+/** The bytes of a wallet's message signature, which the wallet returns as base64 text. */
 function signatureBytes(signature) {
   let bytes = [];
   try {
     bytes = typeof signature === 'string' ? Array.from(atob(signature), c => c.charCodeAt(0)) : [];
   } catch { /* refused below */ }
-  if (bytes.length !== 64) throw new OwnerFlowError('Your wallet did not return a message signature.', null, false);
+  if (!signatureShaped(bytes)) throw new OwnerFlowError('Your wallet did not return a message signature.', null, false);
   return bytes;
 }
 
@@ -207,8 +212,7 @@ function savedApproval(journal, key, identity) {
   try {
     value = JSON.parse(raw);
   } catch { /* refused below */ }
-  if (!object(value) || typeof value.message !== 'string' || typeof value.signer !== 'string' || !Array.isArray(value.signature)
-    || value.signature.length !== 64 || !value.signature.every(b => Number.isInteger(b) && b >= 0 && b <= 255))
+  if (!object(value) || typeof value.message !== 'string' || typeof value.signer !== 'string' || !signatureShaped(value.signature))
     throw new OwnerFlowError('The saved signed approval is unreadable. It stays saved; contact support before signing again.', null, false);
   if (!sameInputs(value, identity)) throw changed(identity);
   return value;
