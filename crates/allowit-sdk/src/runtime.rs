@@ -413,6 +413,12 @@ impl Runtime {
     pub fn lapsed(&self, p: &Prepared) -> Result<bool> {
         self.provider.lapsed(&native::Prepared(p.0.clone()))
     }
+    /// Whether the owner transaction with hash `hash` lapsed: it never applied and can no longer
+    /// apply. The server prepared it at height `since`, valid until `expires_at`. `false` means
+    /// not proven.
+    pub fn owner_lapsed(&self, hash: &[u8; 32], expires_at: u64, since: u64) -> Result<bool> {
+        self.provider.owner_lapsed(hash, expires_at, since)
+    }
     /// What the operation adds to its wallet's figures when it executes, as the wallet counts
     /// it. `None` for a rail without such a count.
     pub fn usage(&self, p: &Prepared) -> Result<Option<Usage>> {
