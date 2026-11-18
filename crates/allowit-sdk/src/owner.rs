@@ -141,14 +141,49 @@ pub fn update_params(cx: &Context<'_>, request: UpdateParams<'_>) -> Result<serd
         .owner()
         .update_params(&cx.provider_context(&store), request)
 }
-/// The owner's view of the build of a Custom policy on the backend: the build ticket, the hash of
-/// the source that the owner signed and the build that the backend holds.
-pub fn custom_build(cx: &Context<'_>, policy_id: &str) -> Result<serde_json::Value> {
+/// One owner route that needs no rail step, such as the owner's reputation vote: the rail signs
+/// the owner in, and the SDK posts `body` to `path` under that session. `path` is an API route of
+/// the backend ([`check_route`]). The reply is the server's JSON.
+pub(crate) fn call(
+    cx: &Context<'_>,
+    path: &str,
+    body: &serde_json::Value,
+) -> Result<serde_json::Value> {
     cx.check()?;
+    check_route(path)?;
     let store = || owner_store(cx.root, cx.network);
-    for_network(cx.network)?
+    let session = for_network(cx.network)?
         .owner()
-        .custom_build(&cx.provider_context(&store), policy_id)
+        .owner_session(&cx.provider_context(&store))?;
+    session.owner_request(
+        allowit_core::transport::http::Method::Post,
+        path,
+        Some(body),
+        (cx.clock)()?,
+        false,
+    )
+}
+/// The path of an owner route: an API route of the configured backend, never another origin or
+/// another route after URL normalization. The route holds letters, digits, `_`, `-` and single
+/// `/` only, so no dot segment, encoded character or backslash can climb out of `/api/`. The
+/// query holds letters, digits and `%`, `=`, `&`, `_`, `-`, `.`, `:`.
+fn check_route(path: &str) -> Result<()> {
+    let (route, query) = path.split_once('?').unwrap_or((path, ""));
+    let route_ok = route.starts_with("/api/")
+        && route.len() > "/api/".len()
+        && !route.contains("//")
+        && route
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'/' | b'_' | b'-'));
+    let query_ok = query.bytes().all(|b| {
+        b.is_ascii_alphanumeric() || matches!(b, b'%' | b'=' | b'&' | b'_' | b'-' | b'.' | b':')
+    });
+    if path.len() > 512 || !route_ok || !query_ok {
+        return Err(Error::usage(
+            "An owner call names an API route of the backend",
+        ));
+    }
+    Ok(())
 }
 /// Compare the owner's installation document with the ledger and read the wallet state back.
 /// `Verification::matches` is true only when every comparison matches.
@@ -246,4 +281,42 @@ pub fn typed_changes(
         })
         .collect::<Result<_>>()?;
     Ok((typed, changes))
+}
+
+#[cfg(test)]
+mod route_tests {
+    use super::check_route;
+
+    #[test]
+    fn an_owner_call_reaches_an_api_route_of_the_backend_only() {
+        for path in [
+            "/api/native/reputation?network=example:testnet",
+            "/api/native/reputation?network=example%3Atestnet",
+            "/api/native/reputation/votes",
+        ] {
+            check_route(path).unwrap();
+        }
+        for path in [
+            "",
+            "/native/reputation",
+            "https://elsewhere.example/api/x",
+            "//elsewhere.example/api/x",
+            "/api/../auth/verify",
+            "/api/./x",
+            "/api//x",
+            "/api/x y",
+            "/api/x#y",
+            "/api/\u{7f}",
+            "/api/%2e%2e/auth/verify",
+            "/api/.%2E/auth/verify",
+            "/api/..\\auth/verify",
+            "/api/x\\y",
+            "/api/",
+            "/api/x?next=/auth/verify",
+            "/api/x?a=b c",
+        ] {
+            assert!(check_route(path).is_err(), "{path}");
+        }
+        assert!(check_route(&format!("/api/{}", "a".repeat(600))).is_err());
+    }
 }
