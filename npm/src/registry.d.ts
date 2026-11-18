@@ -4,7 +4,6 @@ export type ElementKind =
   | 'amount'
   | 'wallet-sign-in'
   | 'owner-sign'
-  | 'build-attest'
   | 'owner-answer'
   | 'receipt'
   | 'binding-review';
@@ -398,8 +397,6 @@ export interface ElementData {
   amount: {network: string; asset: string; units: string};
   'wallet-sign-in': {network: string; message: string};
   'owner-sign': {network: string; step: OwnerStep; summary: {label: string; value: string}[]};
-  /** The owner's attestation of a custom wallet build: the exact attestation message that the wallet signs. */
-  'build-attest': {network: string; message: string; summary?: {label: string; value: string}[]};
   /**
    * The owner's answer to a held request: the exact owner review answer message that the wallet of `owner` signs.
    * The element shows the fields of the message.
@@ -416,12 +413,11 @@ export interface ElementData {
 export interface RailEvents {
   'allowit-signed-in': CustomEvent<{address: string; signature: string}>;
   /**
-   * `owner-sign` reports the signed payload; `build-attest` reports the message signature as hexadecimal text;
+   * `owner-sign` reports the signed payload;
    * `owner-answer` reports the message signature as base64 text, with the answer and the snapshot hash of the message.
    */
   'allowit-signed': CustomEvent<
     | {signedPayload: string; hash: string}
-    | {signature: string; codeHash: string}
     | {signature: string; answer: 'allow' | 'deny'; snapshot: string}
   >;
   'allowit-verified': CustomEvent<{ok: boolean; detail: string}>;

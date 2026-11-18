@@ -4,8 +4,8 @@ use crate::{config::ServerAuthority, error::Result};
 use allowit_core::vendor::runtime as native;
 pub use native::{
     Accounting, Action, Debit, Evaluator, Expense, Lifetime, OwnerAction, OwnerInfo, PacketInfo,
-    ParamsUpdate, PolicyInstallation, Poll, Problem, ReceiptInfo, Resources, Signature, Signer,
-    Snapshot, Status, Terms, Tier, Transport, Validity,
+    ParamsUpdate, PolicyInstallation, Poll, Problem, ReceiptInfo, Resources, SendingAccounts,
+    Signature, Signer, Snapshot, Status, Terms, Tier, Transport, Validity,
 };
 pub(crate) use native::{Kind, Packet};
 use serde::{Deserialize, Serialize};
@@ -193,6 +193,18 @@ impl Runtime {
         let network = crate::routing::normalize(network)?;
         crate::plugins::for_network(network)?
             .runtime(network, transport)
+            .map(|provider| Self { provider })
+    }
+    /// The server's runtime: its own `sender` accounts send each contract-wallet operation and
+    /// code upload, pay the network fee and receive the gas that the wallet repays.
+    pub fn with_sender(
+        network: &str,
+        transport: std::sync::Arc<dyn Transport>,
+        sender: std::sync::Arc<dyn native::SendingAccounts>,
+    ) -> Result<Self> {
+        let network = crate::routing::normalize(network)?;
+        crate::plugins::for_network(network)?
+            .sending_runtime(network, transport, sender)
             .map(|provider| Self { provider })
     }
     pub fn new(network: &str, endpoint: &str) -> Result<Self> {
@@ -395,6 +407,19 @@ impl Runtime {
                     })
                     .collect()
             })
+    }
+    /// Upload the wallet code of an installation from the server's sending accounts, which pay
+    /// for it. `None` when the network holds the code already.
+    pub fn upload_code(
+        &self,
+        i: &Installation,
+        wasm: &[u8],
+        poll: Poll,
+        now: u64,
+    ) -> Result<Option<Receipt>> {
+        self.provider
+            .upload_code(&i.0, wasm, poll, now)
+            .map(|r| r.map(|r| Receipt(r.0)))
     }
     pub fn prepare_owner(
         &self,

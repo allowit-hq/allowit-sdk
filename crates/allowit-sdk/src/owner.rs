@@ -141,8 +141,8 @@ pub fn update_params(cx: &Context<'_>, request: UpdateParams<'_>) -> Result<serd
         .owner()
         .update_params(&cx.provider_context(&store), request)
 }
-/// The owner's view of the build of a Custom policy on the backend: the server presignature,
-/// the build ticket and the build that the backend holds.
+/// The owner's view of the build of a Custom policy on the backend: the build ticket, the hash of
+/// the source that the owner signed and the build that the backend holds.
 pub fn custom_build(cx: &Context<'_>, policy_id: &str) -> Result<serde_json::Value> {
     cx.check()?;
     let store = || owner_store(cx.root, cx.network);

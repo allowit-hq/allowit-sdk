@@ -35,7 +35,7 @@ globalThis.customElements = {
 };
 
 const sdk = await import('../src/registry.js');
-const KINDS = ['address', 'explorer-link', 'amount', 'wallet-sign-in', 'owner-sign', 'build-attest', 'owner-answer', 'receipt', 'binding-review'];
+const KINDS = ['address', 'explorer-link', 'amount', 'wallet-sign-in', 'owner-sign', 'owner-answer', 'receipt', 'binding-review'];
 const FEATURES = ['transfer', 'swap', 'deposit', 'redeem', 'owner-setup', 'deploy', 'fund', 'activate', 'binding-review', 'explorer-links'];
 
 test('at least one rail is registered', () => {
