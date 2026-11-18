@@ -42,12 +42,17 @@ registry   https://example.com/registry.json rails=example sha256=<hex>
 2. It collects entry keys from every source. A key that two sources discover is an error.
 3. It parses each entry in key order. An entry that raises `ParseError` must appear in the skip file with a reason.
    A skip entry for a missing key, or for an entry that parses, is an error.
-4. It validates each record against `SCHEMA`: field set, field types, an all-or-nothing payment offer,
+4. It validates each record against `SCHEMA` and the optional fields of `OPTIONAL`: field set, field types, an all-or-nothing payment offer,
    unique `id`, `source_path` equal to the entry key, and a `network` that one of the source's rail hooks covers.
    Payment keys must be among that rail hook's `payment_fields`. A key that two sources claim, as an entry or a skip, is an error.
 5. It writes `schema_version`, `source` (the source locations joined by `; `), `generator`, `resource_count`,
    `skipped` and `resources`, sorted by `source_path`, as indented UTF-8 JSON.
    Nested objects use the schema key order and the rail's `payment_fields` order, whatever the input order.
    `example_input` keeps the source's key order.
+
+The optional `access` field lists the ways to get a resource without paying its challenge, each
+`{kind, network?, detail?}`: `free`, `free_quota`, `signature` (a zero-price signature) or `proof_of_work`. Every
+kind but `free` states its condition in `detail`, and each kind appears once. A record that omits it, or leaves it
+empty, is written without it.
 
 The helpers `find`, `split_row`, `read_table`, `link`, `code` and `section` parse Markdown captures.

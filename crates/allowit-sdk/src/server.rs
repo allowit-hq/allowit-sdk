@@ -41,6 +41,27 @@ pub(crate) fn send(
     max_reply_bytes: usize,
     refused: &str,
 ) -> Result<Vec<u8>> {
+    send_accepting(
+        server,
+        method,
+        path,
+        body,
+        max_reply_bytes,
+        refused,
+        "application/json",
+    )
+}
+
+/// [`send`] with the `accept` header `accept`, which can name the shape of the reply.
+pub(crate) fn send_accepting(
+    server: &str,
+    method: Method,
+    path: &str,
+    body: Option<&[u8]>,
+    max_reply_bytes: usize,
+    refused: &str,
+    accept: &str,
+) -> Result<Vec<u8>> {
     let origin = crate::config::parse_origin(server)?;
     let url = format!("{origin}{path}");
     let client = HttpClient::new(Options {
@@ -50,7 +71,7 @@ pub(crate) fn send(
         connect_timeout: Some(Duration::from_secs(10)),
     })
     .map_err(|_| Error::config("Cannot configure the server request"))?;
-    let mut headers = vec![("accept".to_owned(), "application/json".to_owned())];
+    let mut headers = vec![("accept".to_owned(), accept.to_owned())];
     if body.is_some() {
         headers.push(("content-type".into(), "application/json".into()));
     }
