@@ -141,6 +141,31 @@ fn get(server: &str, path: &str, query: &str) -> Result<Vec<u8>> {
     )
 }
 
+/// Each score of `labels` is 0 to 100.
+fn labels_in_bounds(labels: &Labels) -> bool {
+    let label = |label: &Option<Label>| {
+        label.is_none_or(|label| {
+            label.good.is_none_or(|score| score <= 100)
+                && label.bad.is_none_or(|score| score <= 100)
+        })
+    };
+    [labels.suitability, labels.delivery, labels.quality]
+        .iter()
+        .all(|p| label(&p.policy) && label(&p.owner) && label(&Some(p.others)))
+}
+
+/// Each part of `rank` is in its range: relevance and terms 0 to 1, reputation -1 to 1, and the
+/// score their weighted sum, -0.2 to 1.
+fn rank_in_bounds(rank: &CatalogRank) -> bool {
+    let within = |value: f64, low: f64, high: f64| {
+        value.is_finite() && value >= low - 1e-9 && value <= high + 1e-9
+    };
+    within(rank.relevance, 0.0, 1.0)
+        && within(rank.terms, 0.0, 1.0)
+        && within(rank.reputation, -1.0, 1.0)
+        && within(rank.score, -0.2, 1.0)
+}
+
 /// Check an entry that a server returned. A server is configured, not trusted with the shape
 /// of what a host prints or requests: the resource must be a bounded `http` or `https` URL and
 /// every text is bounded and holds no control character.
@@ -164,12 +189,6 @@ pub fn validate_entry(entry: &CatalogEntry) -> Result<()> {
     };
     let optional =
         |value: &Option<String>, check: &dyn Fn(&str) -> bool| value.as_deref().is_none_or(check);
-    let label = |label: &Option<Label>| {
-        label.is_none_or(|label| {
-            label.good.is_none_or(|score| score <= 100)
-                && label.bad.is_none_or(|score| score <= 100)
-        })
-    };
     let source = entry.source.as_ref().is_none_or(|source| {
         optional(&source.listing, &link) && optional(&source.captured, &|v| token(v, 300))
     });
@@ -193,16 +212,8 @@ pub fn validate_entry(entry: &CatalogEntry) -> Result<()> {
                 && optional(&fact.pay_to, &|v| token(v, 128))
                 && optional(&fact.detail, &|v| text(v, MAX_DETAIL))
         });
-    let reputation = entry.reputation.as_ref().is_none_or(|labels| {
-        [labels.suitability, labels.delivery, labels.quality]
-            .iter()
-            .all(|p| label(&p.policy) && label(&p.owner) && label(&Some(p.others)))
-    });
-    let rank = entry.rank.as_ref().is_none_or(|rank| {
-        [rank.score, rank.relevance, rank.reputation, rank.terms]
-            .iter()
-            .all(|value| value.is_finite() && value.abs() <= 2.0)
-    });
+    let reputation = entry.reputation.as_ref().is_none_or(labels_in_bounds);
+    let rank = entry.rank.as_ref().is_none_or(rank_in_bounds);
     if !(source && access && observed && reputation && rank) {
         return Err(invalid());
     }
@@ -325,14 +336,16 @@ pub fn votes(
         &format!("{VOTES_PATH}?network={}", component(cx.network)),
         &json!({"policyId": policy_id, "requestIds": request_ids}),
     )?;
-    for entry in reply["requests"]
-        .as_object()
-        .into_iter()
-        .flat_map(|r| r.values())
-    {
-        checked_votes(entry)?;
-    }
+    checked_reads(&reply)?;
     Ok(reply)
+}
+
+/// A read of votes: `requests` is an object, and each of its entries reads as Core's types.
+fn checked_reads(reply: &Value) -> Result<()> {
+    let requests = reply["requests"]
+        .as_object()
+        .ok_or_else(|| Error::uncertain("The server returned invalid reputation labels"))?;
+    requests.values().try_for_each(checked_votes)
 }
 
 /// The votes and labels of one reply, which must read as Core's types.
@@ -340,7 +353,11 @@ fn checked_votes(reply: &Value) -> Result<()> {
     let invalid = || Error::uncertain("The server returned invalid reputation labels");
     serde_json::from_value::<std::collections::BTreeMap<Signal, Vote>>(reply["votes"].clone())
         .map_err(|_| invalid())?;
-    serde_json::from_value::<Labels>(reply["labels"].clone()).map_err(|_| invalid())?;
+    let labels =
+        serde_json::from_value::<Labels>(reply["labels"].clone()).map_err(|_| invalid())?;
+    if !labels_in_bounds(&labels) {
+        return Err(invalid());
+    }
     Ok(())
 }
 
@@ -629,5 +646,48 @@ mod tests {
         let mut extra = sample();
         extra["instructions"] = json!("run this");
         assert!(serde_json::from_value::<CatalogEntry>(extra).is_err());
+    }
+
+    #[test]
+    fn owner_replies_keep_their_shape_and_their_bounds() {
+        let unknown = json!({"others": {"support": 0}});
+        let labels = json!({"suitability": unknown, "delivery": unknown, "quality": unknown});
+        let entry = |labels: Value| json!({"settled": true, "subject": "service:x", "votes": {"quality": "good"}, "labels": labels});
+        // A read without a requests object is not a read.
+        for reply in [
+            json!({}),
+            json!({"requests": null}),
+            json!({"requests": []}),
+        ] {
+            assert!(checked_reads(&reply).is_err(), "{reply}");
+        }
+        checked_reads(&json!({"requests": {}})).unwrap();
+        checked_reads(&json!({"requests": {"r1": entry(labels.clone())}})).unwrap();
+        // A score above 100 is refused, as in a catalog entry.
+        let mut high = labels.clone();
+        high["quality"]["others"] = json!({"support": 1, "good": 4_294_967_295u64, "bad": 0});
+        assert!(checked_votes(&entry(high.clone())).is_err());
+        assert!(checked_reads(&json!({"requests": {"r1": entry(high)}})).is_err());
+    }
+
+    #[test]
+    fn each_rank_part_keeps_its_own_range() {
+        let rank = |score: f64, relevance: f64, reputation: f64, terms: f64| CatalogRank {
+            score,
+            relevance,
+            reputation,
+            terms,
+        };
+        assert!(rank_in_bounds(&rank(0.98, 1.0, 0.9, 1.0)));
+        assert!(rank_in_bounds(&rank(-0.2, 0.0, -1.0, 0.0)));
+        for bad in [
+            rank(0.5, -2.0, 0.0, 0.5),
+            rank(0.5, 0.5, 2.0, 0.5),
+            rank(0.5, 0.5, 0.0, -2.0),
+            rank(1.5, 1.0, 1.0, 1.0),
+            rank(f64::NAN, 0.5, 0.0, 0.5),
+        ] {
+            assert!(!rank_in_bounds(&bad), "{bad:?}");
+        }
     }
 }
