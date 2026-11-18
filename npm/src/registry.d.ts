@@ -261,42 +261,6 @@ export interface InstallAndFundInput {
   reviewed?: {source: string; params: Record<string, ParamValue>; rules?: unknown; tier?: unknown};
   onStep: (text: string) => void;
 }
-/**
- * What the ledger holds for the fee account of a wallet: the account that sends the agent's operations and pays
- * their network fees. Its owner creates, funds and refills it; the agent holds a key and no account.
- */
-export interface FeeAccountState {
-  address: string;
-  /** False when the ledger holds no such account. */
-  exists: boolean;
-  /** Base units of the fee asset, as decimal text. */
-  balance: string;
-  /** The base units that can pay fees: the balance above what the network locks. */
-  spendable: string;
-  /** True when the owner should refill the account before the agent's operations fail. */
-  low: boolean;
-  /** `spendable` with its unit, such as `4.2 XYZ`. */
-  text: string;
-  /** The refill that a page offers: a decimal amount of the fee asset, and the same with its unit. */
-  refill: {amount: string; text: string};
-}
-export interface RefillFeesInput {
-  /** The owner's account, which pays. */
-  owner: string;
-  feeAccount: string;
-  /** The amount of the fee asset, as decimal text. */
-  amount: string;
-  /** Shows the payment in the `owner-sign` element and resolves with the exact signed payload. */
-  sign: (step: OwnerStep) => Promise<string>;
-  onStep: (text: string) => void;
-  /**
-   * Keeps the signed payment until the network settles it. A refill whose result is unknown rejects with `retry`
-   * set and stays saved; the next call under the same key settles it before it signs anything.
-   */
-  journal?: OwnerJournal;
-  /** The journal key of this fee account's refill. */
-  key?: string;
-}
 /** One typed param value: the JSON of a policy value. An integer is canonical decimal text. */
 export type ParamValue =
   | {Int: string}
@@ -328,6 +292,7 @@ export type OwnerFlowCode =
   | 'owner_transaction_expired'
   | 'owner_transaction_pending'
   | 'owner_transaction_settled'
+  | 'owner_transaction_failed'
   | 'network_unavailable'
   | 'param_invalid'
   | 'param_out_of_range'
@@ -338,6 +303,39 @@ export interface OwnerFlowFailure extends Error {
   code: OwnerFlowCode | string | null;
   /** True when Resume can send the same saved step, or prepare a new one, without a risk of a second payment. */
   retry: boolean;
+}
+
+/** What history holds for a transaction: `'missing'`, its record, or null when the read gave no clear answer. */
+export type TransactionRecord = 'missing' | {hash: string; ledger: number; successful: boolean} | null;
+/** The fields of a keypair wallet's policy approval that the workflow checks. */
+export interface ApprovalFields {policyId: string; revision: number; wallet: string}
+export interface OwnerChain {
+  transaction(network: string, hash: string): Promise<TransactionRecord>;
+  /**
+   * What the network holds for a signed step past its time bound: its ledger when it applied before the bound, or
+   * null when it can never apply. Rejects when the network cannot prove either; the step then stays saved.
+   */
+  expiredRecord(network: string, hash: string, signedPayload: string): Promise<{ledger: number} | null>;
+  /** The account of a keypair wallet, which one owner signature creates and funds. A rail without one omits it. */
+  readonly keypairSetup?: {
+    run(input: {network: string; owner: string; agent: string; server: string; amount: string; sign: (step: OwnerStep) => Promise<string>;
+      onStep: (text: string) => void; journal: OwnerJournal; key: string; retain: boolean}): Promise<{wallet: string; transactionHash: string; ledger: number; configuration: Record<string, unknown>}>;
+    /** The wallet and agent of a signed setup, or null. */
+    of(signedPayload: string, network: string): {wallet: string; agent: string} | null;
+    /** True when a failed setup stays saved and a resume needs no new signature. */
+    pending(error: unknown): boolean;
+  };
+  /** The owner's approval of a keypair wallet's policy: one message signature. A rail without one omits it. */
+  readonly approval?: {
+    read(message: unknown, network: string): ApprovalFields | null;
+    /** Whether the approval states exactly the reviewed policy for `wallet`. */
+    holds(fields: ApprovalFields, wallet: string, reviewed: {source: string; params: Record<string, ParamValue>; rules?: unknown; tier?: unknown}): boolean;
+    step(message: string): OwnerStep;
+    /** The wallet's owner as the network names it, or null. */
+    walletOwner(network: string, wallet: string): Promise<string | null>;
+    /** Whether `signature` is the signature of `signer` over the hexadecimal digest `hash`. */
+    signedBy(signer: string, hash: string, signature: number[]): boolean;
+  };
 }
 
 export interface RailPlugin {
@@ -364,16 +362,11 @@ export interface RailPlugin {
     agentPrompt(link: Pick<ReviewLink, 'workPrompt'>, origin: string, policyId: string, wallet: string, agent: string): string;
     paramLines(params: ReviewProposal['params']): ReviewParamLine[];
   };
-  readonly ownerWorkflow: {
-    /** `network` is the canonical network id that the SDK resolved. */
-    installAndFund(input: InstallAndFundInput & {network: string}): Promise<{wallet: string; receipts: OwnerReceipt[]}>;
-    /** The owner-signed update of installed params on an active wallet. A rail without it omits the function. */
-    updateParams?(input: UpdateParamsInput & {network: string}): Promise<{receipts: OwnerReceipt[]; done: boolean}>;
-    /** The fee account that `document` names, read from the ledger, or null. A rail without fee accounts omits it. */
-    feeAccount?(input: {network: string; document: unknown}): Promise<FeeAccountState | null>;
-    /** The owner's refill of a fee account. A rail without fee accounts omits it. */
-    refillFees?(input: RefillFeesInput & {network: string}): Promise<{transactionHash: string; ledger: number}>;
-  };
+  /**
+   * What the SDK's owner workflows read from the network and check with its keys. The SDK holds the workflows, their
+   * journal and their recovery rules. `network` is the canonical network id that the SDK resolved.
+   */
+  readonly ownerChain: OwnerChain;
   readonly test: {
     network: string;
     skips: Readonly<Partial<Record<Feature, string>>>;
@@ -456,13 +449,27 @@ export function installAndFund(network: string, input: InstallAndFundInput): Pro
  */
 export function updateParams(network: string, input: UpdateParamsInput): Promise<{receipts: OwnerReceipt[]; done: boolean}>;
 
-/**
- * The fee account of a wallet with what the ledger holds for it, or null when `document` names none: the wallet
- * pays its own fees.
- */
-export function feeAccount(network: string, document: unknown): Promise<FeeAccountState | null>;
-/** Refill a fee account with one owner-signed payment. A rail without fee accounts rejects with `refill_unavailable`. */
-export function refillFees(network: string, input: RefillFeesInput): Promise<{transactionHash: string; ledger: number}>;
+/** The error that `installAndFund` and `updateParams` reject with. */
+export class OwnerFlowError extends Error implements OwnerFlowFailure {
+  constructor(message: string, code: string | null, retry: boolean, cause?: unknown);
+  code: OwnerFlowCode | string | null;
+  retry: boolean;
+}
+/** The journal key that keeps the signed bytes of an expired step after the journal drops it. */
+export function ownerArchiveKey(key: string, hash: string): string;
+export const OWNER_TRANSACTION_EXPIRED: 'owner_transaction_expired';
+export const OWNER_TRANSACTION_PENDING: 'owner_transaction_pending';
+export const OWNER_TRANSACTION_SETTLED: 'owner_transaction_settled';
+export const OWNER_TRANSACTION_FAILED: 'owner_transaction_failed';
+export const NETWORK_UNAVAILABLE: 'network_unavailable';
+export const PARAM_INVALID: 'param_invalid';
+export const PARAM_OUT_OF_RANGE: 'param_out_of_range';
+export const UPDATE_UNAVAILABLE: 'update_unavailable';
+export const REVISION_CHANGED: 'revision_changed';
+export const UPDATE_PARAMS: 'update_params';
+export const WALLET_SETUP_REQUIRED: 'wallet_setup_required';
+export const SET_UP_WALLET: 'set_up_wallet';
+export const APPROVE_POLICY: 'approve_policy';
 
 export class AllowitRail extends HTMLElement {
   data: ElementData[ElementKind] | undefined;
