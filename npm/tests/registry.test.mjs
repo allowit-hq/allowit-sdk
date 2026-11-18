@@ -35,7 +35,7 @@ globalThis.customElements = {
 };
 
 const sdk = await import('../src/registry.js');
-const KINDS = ['address', 'explorer-link', 'amount', 'wallet-sign-in', 'owner-sign', 'build-attest', 'owner-answer', 'receipt', 'binding-review'];
+const KINDS = ['address', 'explorer-link', 'amount', 'wallet-sign-in', 'owner-sign', 'owner-answer', 'receipt', 'binding-review'];
 const FEATURES = ['transfer', 'swap', 'deposit', 'redeem', 'owner-setup', 'deploy', 'fund', 'activate', 'binding-review', 'explorer-links'];
 
 test('at least one rail is registered', () => {
@@ -246,8 +246,10 @@ for (const rail of sdk.rails()) {
     assert.match(sdk.reviewAgentPrompt(link, 'https://example.test', 'policy-1', 'wallet-1', fixtures.address), /^Do the work\./);
     assert.deepEqual(sdk.reviewParamLines(network, {}), []);
 
-    // Dispatch only: the rail's workflow gets the host's transport, and a transport failure signs nothing.
-    // Each rail tests its own owner protocol in its repository.
+    // Dispatch only: the SDK's workflow gets the host's transport and the rail's hooks, and a transport failure signs
+    // nothing. The SDK tests the workflows with fake hooks; each rail tests its hooks in its repository.
+    assert.equal(typeof rail.ownerChain.transaction, 'function');
+    assert.equal(typeof rail.ownerChain.expiredRecord, 'function');
     const offline = new Error('offline'), journal = new Map(), signed = [];
     const input = {
       ask: async () => { throw offline; }, sign: async (step) => (signed.push(step), 'signed'),
@@ -260,35 +262,17 @@ for (const rail of sdk.rails()) {
     }
     assert.deepEqual([signed.length, journal.size], [0, 0]);
 
-    // The fee account dispatches the same way. A document that names none reads no ledger, and a rail
-    // without fee accounts has none to read or refill.
-    assert.equal(await sdk.feeAccount(network, {}), null);
-    await assert.rejects(sdk.feeAccount('unknown:none', {}), /No rail is registered/);
-    const refill = {owner: fixtures.address, feeAccount: fixtures.address, amount: '1', sign: input.sign, onStep() {}};
-    if (typeof rail.ownerWorkflow.refillFees !== 'function') {
-      await assert.rejects(sdk.refillFees(network, refill), (error) => error.code === 'refill_unavailable');
-    } else {
-      // An owner that is its own fee account is refused before any read or signature.
-      await assert.rejects(sdk.refillFees(network, refill));
-    }
-    await assert.rejects(sdk.refillFees('unknown:none', refill), /No rail is registered/);
-    assert.equal(signed.length, 0);
-
-    // The params update dispatches the same way. A rail without the workflow rejects with a typed code.
+    // The params update dispatches the same way. The transport failure reaches the host as a typed owner-flow error,
+    // with the cause kept.
     const change = {ask: input.ask, sign: input.sign, journal: input.journal, key: 'u', policyId: 'p', params: {daily_spending_limit: {Int: '1'}}, onStep() {}};
-    if (rail.test.skips['update-params'] || typeof rail.ownerWorkflow.updateParams !== 'function') {
-      await assert.rejects(sdk.updateParams(network, change), (error) => error.code === 'update_unavailable');
-    } else {
-      // The transport failure reaches the host as the rail's typed owner-flow error, with the cause kept.
-      await assert.rejects(sdk.updateParams(network, change), (error) => error === offline || error.cause === offline);
-      for (const alias of rail.networks.find((n) => n.id === network).aliases) {
-        await assert.rejects(sdk.updateParams(alias, change), (error) => error === offline || error.cause === offline);
-      }
-      // No change, or an untyped set, never reaches the transport.
-      let asked = 0;
-      await assert.rejects(sdk.updateParams(network, {...change, ask: async () => { asked++; throw offline; }, params: {}}), (error) => error.code === 'param_invalid');
-      assert.equal(asked, 0);
+    await assert.rejects(sdk.updateParams(network, change), (error) => error instanceof sdk.OwnerFlowError && error.cause === offline);
+    for (const alias of rail.networks.find((n) => n.id === network).aliases) {
+      await assert.rejects(sdk.updateParams(alias, change), (error) => error.cause === offline);
     }
+    // No change, or an untyped set, never reaches the transport.
+    let asked = 0;
+    await assert.rejects(sdk.updateParams(network, {...change, ask: async () => { asked++; throw offline; }, params: {}}), (error) => error.code === sdk.PARAM_INVALID);
+    assert.equal(asked, 0);
     assert.deepEqual([signed.length, journal.size], [0, 0]);
   });
 }

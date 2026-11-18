@@ -4,7 +4,6 @@ export type ElementKind =
   | 'amount'
   | 'wallet-sign-in'
   | 'owner-sign'
-  | 'build-attest'
   | 'owner-answer'
   | 'receipt'
   | 'binding-review';
@@ -262,42 +261,6 @@ export interface InstallAndFundInput {
   reviewed?: {source: string; params: Record<string, ParamValue>; rules?: unknown; tier?: unknown};
   onStep: (text: string) => void;
 }
-/**
- * What the ledger holds for the fee account of a wallet: the account that sends the agent's operations and pays
- * their network fees. Its owner creates, funds and refills it; the agent holds a key and no account.
- */
-export interface FeeAccountState {
-  address: string;
-  /** False when the ledger holds no such account. */
-  exists: boolean;
-  /** Base units of the fee asset, as decimal text. */
-  balance: string;
-  /** The base units that can pay fees: the balance above what the network locks. */
-  spendable: string;
-  /** True when the owner should refill the account before the agent's operations fail. */
-  low: boolean;
-  /** `spendable` with its unit, such as `4.2 XYZ`. */
-  text: string;
-  /** The refill that a page offers: a decimal amount of the fee asset, and the same with its unit. */
-  refill: {amount: string; text: string};
-}
-export interface RefillFeesInput {
-  /** The owner's account, which pays. */
-  owner: string;
-  feeAccount: string;
-  /** The amount of the fee asset, as decimal text. */
-  amount: string;
-  /** Shows the payment in the `owner-sign` element and resolves with the exact signed payload. */
-  sign: (step: OwnerStep) => Promise<string>;
-  onStep: (text: string) => void;
-  /**
-   * Keeps the signed payment until the network settles it. A refill whose result is unknown rejects with `retry`
-   * set and stays saved; the next call under the same key settles it before it signs anything.
-   */
-  journal?: OwnerJournal;
-  /** The journal key of this fee account's refill. */
-  key?: string;
-}
 /** One typed param value: the JSON of a policy value. An integer is canonical decimal text. */
 export type ParamValue =
   | {Int: string}
@@ -329,6 +292,7 @@ export type OwnerFlowCode =
   | 'owner_transaction_expired'
   | 'owner_transaction_pending'
   | 'owner_transaction_settled'
+  | 'owner_transaction_failed'
   | 'network_unavailable'
   | 'param_invalid'
   | 'param_out_of_range'
@@ -340,6 +304,12 @@ export interface OwnerFlowFailure extends Error {
   /** True when Resume can send the same saved step, or prepare a new one, without a risk of a second payment. */
   retry: boolean;
 }
+
+/**
+ * The rail hooks of the owner workflows: Core's contract, which the SDK runs and each rail's `ownerChain` implements.
+ */
+export type {OwnerChain, TransactionRecord, ApprovalFields, PreparedKeypairSetup, SignedKeypairSetup, ReviewedPolicy} from '@allowit/core';
+import type {OwnerChain, OwnerStep as CoreOwnerStep} from '@allowit/core';
 
 export interface RailPlugin {
   readonly id: string;
@@ -365,16 +335,11 @@ export interface RailPlugin {
     agentPrompt(link: Pick<ReviewLink, 'workPrompt'>, origin: string, policyId: string, wallet: string, agent: string): string;
     paramLines(params: ReviewProposal['params']): ReviewParamLine[];
   };
-  readonly ownerWorkflow: {
-    /** `network` is the canonical network id that the SDK resolved. */
-    installAndFund(input: InstallAndFundInput & {network: string}): Promise<{wallet: string; receipts: OwnerReceipt[]}>;
-    /** The owner-signed update of installed params on an active wallet. A rail without it omits the function. */
-    updateParams?(input: UpdateParamsInput & {network: string}): Promise<{receipts: OwnerReceipt[]; done: boolean}>;
-    /** The fee account that `document` names, read from the ledger, or null. A rail without fee accounts omits it. */
-    feeAccount?(input: {network: string; document: unknown}): Promise<FeeAccountState | null>;
-    /** The owner's refill of a fee account. A rail without fee accounts omits it. */
-    refillFees?(input: RefillFeesInput & {network: string}): Promise<{transactionHash: string; ledger: number}>;
-  };
+  /**
+   * What the SDK's owner workflows read from the network and check with its keys. The SDK holds the workflows, their
+   * journal and their recovery rules. `network` is the canonical network id that the SDK resolved.
+   */
+  readonly ownerChain: OwnerChain;
   readonly test: {
     network: string;
     skips: Readonly<Partial<Record<Feature, string>>>;
@@ -383,13 +348,8 @@ export interface RailPlugin {
 }
 
 /** Rail-neutral owner step. `payload` is opaque text that only the vendor signs and reads. */
-export interface OwnerStep {
-  action: string;
-  payload: string;
-  hash: string;
-  expiresAt: number;
-  explorer?: string | null;
-}
+/** One owner step, as Core defines it. */
+export type OwnerStep = CoreOwnerStep;
 
 /** `data` per element kind. */
 export interface ElementData {
@@ -398,8 +358,6 @@ export interface ElementData {
   amount: {network: string; asset: string; units: string};
   'wallet-sign-in': {network: string; message: string};
   'owner-sign': {network: string; step: OwnerStep; summary: {label: string; value: string}[]};
-  /** The owner's attestation of a custom wallet build: the exact attestation message that the wallet signs. */
-  'build-attest': {network: string; message: string; summary?: {label: string; value: string}[]};
   /**
    * The owner's answer to a held request: the exact owner review answer message that the wallet of `owner` signs.
    * The element shows the fields of the message.
@@ -416,12 +374,11 @@ export interface ElementData {
 export interface RailEvents {
   'allowit-signed-in': CustomEvent<{address: string; signature: string}>;
   /**
-   * `owner-sign` reports the signed payload; `build-attest` reports the message signature as hexadecimal text;
+   * `owner-sign` reports the signed payload;
    * `owner-answer` reports the message signature as base64 text, with the answer and the snapshot hash of the message.
    */
   'allowit-signed': CustomEvent<
     | {signedPayload: string; hash: string}
-    | {signature: string; codeHash: string}
     | {signature: string; answer: 'allow' | 'deny'; snapshot: string}
   >;
   'allowit-verified': CustomEvent<{ok: boolean; detail: string}>;
@@ -460,13 +417,27 @@ export function installAndFund(network: string, input: InstallAndFundInput): Pro
  */
 export function updateParams(network: string, input: UpdateParamsInput): Promise<{receipts: OwnerReceipt[]; done: boolean}>;
 
-/**
- * The fee account of a wallet with what the ledger holds for it, or null when `document` names none: the wallet
- * pays its own fees.
- */
-export function feeAccount(network: string, document: unknown): Promise<FeeAccountState | null>;
-/** Refill a fee account with one owner-signed payment. A rail without fee accounts rejects with `refill_unavailable`. */
-export function refillFees(network: string, input: RefillFeesInput): Promise<{transactionHash: string; ledger: number}>;
+/** The error that `installAndFund` and `updateParams` reject with. */
+export class OwnerFlowError extends Error implements OwnerFlowFailure {
+  constructor(message: string, code: string | null, retry: boolean, cause?: unknown);
+  code: OwnerFlowCode | string | null;
+  retry: boolean;
+}
+/** The journal key that keeps the signed bytes of an expired step after the journal drops it. */
+export function ownerArchiveKey(key: string, hash: string): string;
+export const OWNER_TRANSACTION_EXPIRED: 'owner_transaction_expired';
+export const OWNER_TRANSACTION_PENDING: 'owner_transaction_pending';
+export const OWNER_TRANSACTION_SETTLED: 'owner_transaction_settled';
+export const OWNER_TRANSACTION_FAILED: 'owner_transaction_failed';
+export const NETWORK_UNAVAILABLE: 'network_unavailable';
+export const PARAM_INVALID: 'param_invalid';
+export const PARAM_OUT_OF_RANGE: 'param_out_of_range';
+export const UPDATE_UNAVAILABLE: 'update_unavailable';
+export const REVISION_CHANGED: 'revision_changed';
+export const UPDATE_PARAMS: 'update_params';
+export const WALLET_SETUP_REQUIRED: 'wallet_setup_required';
+export const SET_UP_WALLET: 'set_up_wallet';
+export const APPROVE_POLICY: 'approve_policy';
 
 export class AllowitRail extends HTMLElement {
   data: ElementData[ElementKind] | undefined;

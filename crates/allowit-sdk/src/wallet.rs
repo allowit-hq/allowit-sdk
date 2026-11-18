@@ -4,6 +4,9 @@ use crate::{
     plugins, routing,
 };
 use allowit_core::client::store::Store;
+/// A signer of a rail's messages and hashes, and the rail's text-message signature
+/// (`plugins::RailPlugin::message_signature`), with which a server signs its own statements.
+pub use allowit_core::vendor::wallet::{MessageSignature, Signer};
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 use zeroize::Zeroizing;

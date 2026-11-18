@@ -16,10 +16,14 @@
     }
   },
   "dependencies": {
-    "@allowit/stellar": "github:allowit-hq/allowit-contracts-stellar#3fe3fba4e90626f74cfaf33fd9943ab5adc26d0b&path:/npm/stellar"
+    "@allowit/core": "github:allowit-hq/allowit-core#387ebf43652c85ccdc5ca05e32b29953c25acc70",
+    "@allowit/stellar": "github:allowit-hq/allowit-contracts-stellar#b779db234ca6e088748d0440af395f119f1bfd8c&path:/npm/stellar"
   },
   "scripts": {
     "test": "node --test tests/*.test.mjs"
+  },
+  "devDependencies": {
+    "typescript": "5.9.3"
   },
   "packageManager": "pnpm@12.11.2"
 }

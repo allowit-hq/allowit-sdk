@@ -1,6 +1,9 @@
-//! The custom wallet build for hosts: the rail's build hook, the two signed build statements and
-//! the client of a server's build routes. Core defines the statements; the rail of each network
-//! supplies the build, the code hash and the signature scheme. No function here names a vendor.
+//! The custom wallet build for hosts: the rail's build hook and the client of a server's build
+//! routes. A Custom wallet runs code that is built from the exact policy source; the owner's
+//! policy signature binds that source. The owner's CLI builds the code and hands it to the
+//! server, which uploads it when the owner deploys. The owner's one creation signature names the
+//! code by its hash, so it covers the build. The rail of each network supplies the build and the
+//! code hash. No function here names a vendor.
 use crate::{
     error::{Error, Result},
     plugins::for_network,
@@ -8,23 +11,16 @@ use crate::{
     server::{component, send},
     transport::http::Method,
 };
-use allowit_core::vendor::custom_build::{self as core, CustomWalletBuild};
-pub use allowit_core::vendor::custom_build::{
-    ATTESTATION_TITLE, Admitted, Attestation, PRESIGNATURE_TITLE, Presignature, WalletCode,
-    attestation_message, check_code_hash, code, hex, signature_bytes,
-};
-pub use allowit_core::vendor::wallet::Signer;
+use allowit_core::vendor::custom_build::{CustomWalletBuild, refusal};
+pub use allowit_core::vendor::custom_build::{WalletCode, check_code_hash, code, hex};
 use base64::{Engine as _, engine::general_purpose::STANDARD};
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 
-/// The route of a server that reads the admitted source of a policy with its presignature,
-/// relative to its origin.
+/// The route of a server that reads the admitted source of a policy, relative to its origin.
 pub const BUILD_PATH: &str = "/api/custom/build";
 /// The route that hands the built code to the server.
 pub const CODE_PATH: &str = "/api/custom/build/code";
-/// The route that registers the owner's attestation of a build.
-pub const ATTEST_PATH: &str = "/api/custom/build/attest";
 /// The largest wallet code that a host sends or stores.
 pub const MAX_CODE_BYTES: usize = 131_072;
 /// The largest policy source of a build reply.
@@ -57,98 +53,39 @@ pub fn code_hash(network: &str, code: &[u8]) -> Result<[u8; 32]> {
     hook.code_hash(network, code)
 }
 
-/// Sign the server presignature of an admitted policy source. `signer` is the server key.
-pub fn presign(signer: &dyn Signer, policy_id: &str, source: &str) -> Result<Presignature> {
-    let (network, hook) = hook(signer.network())?;
-    core::presign(hook, signer, network, policy_id, source)
-}
-
-/// Verify a presignature against the caller's own network, policy id, source and trusted server
-/// key. See [`allowit_core::vendor::custom_build::verify_presignature`].
-pub fn verify_presignature(presignature: &Presignature, admitted: &Admitted<'_>) -> Result<()> {
-    let (network, hook) = hook(admitted.network)?;
-    core::verify_presignature(
-        hook,
-        presignature,
-        &Admitted {
-            network,
-            ..*admitted
-        },
-    )
-}
-
-/// Sign the owner attestation of a build. `signer` is the owner key. Verify the presignature
-/// first.
-pub fn attest(
-    signer: &dyn Signer,
-    presignature: &Presignature,
-    code_hash: &[u8; 32],
-) -> Result<Attestation> {
-    let (network, hook) = hook(signer.network())?;
-    if presignature.network != network {
-        return Err(core::refusal(
-            code::PRESIGNATURE_MISMATCH,
-            "The server presignature is for another network than the owner key. Select the rail of the policy.",
-        ));
-    }
-    core::attest(hook, signer, presignature, code_hash)
-}
-
-/// Verify an attestation against the caller's own network, policy id, source, trusted server
-/// key and owner.
-pub fn verify_attestation(
-    attestation: &Attestation,
-    admitted: &Admitted<'_>,
-    owner: &str,
-) -> Result<()> {
-    let (network, hook) = hook(admitted.network)?;
-    core::verify_attestation(
-        hook,
-        attestation,
-        &Admitted {
-            network,
-            ..*admitted
-        },
-        owner,
-    )
-}
-
-/// The build that a server holds for a policy. A reply may carry more fields: a later server
-/// can add facts.
+/// The build that the server holds for a policy: the code that a build handed over. A reply may
+/// carry more fields: a later server can add facts.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct BuildState {
-    /// The identity of the built wallet code.
+    /// The identity of the built wallet code, as lowercase hexadecimal text.
     pub code_hash: String,
-    /// Whether the owner attested this code.
-    pub attested: bool,
 }
 
-/// A policy that awaits its build: the admitted source with the server presignature.
+/// A policy that awaits its build: the source that the server admitted.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Admission {
     pub policy_id: String,
     /// The CAIP-2 network of the policy.
     pub network: String,
-    /// The owner of the policy: the account that attests the build.
-    pub owner: String,
     /// The exact policy source that the server admitted.
     pub source: String,
-    pub presignature: Presignature,
     #[serde(default)]
     pub build: Option<BuildState>,
 }
-
-/// The server's answer to built code: its hash and the attestation text for the owner to sign.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct Submitted {
-    pub policy_id: String,
-    pub code_hash: String,
-    pub attested: bool,
-    /// The exact attestation message of this build.
-    pub attestation_message: String,
+impl Admission {
+    /// Refuse a source other than the one that the owner reviewed and signed. `source_hash` is
+    /// the SHA-256 of that source, as lowercase hexadecimal text, from the owner's own record:
+    /// the policy file or the build command that the owner's app shows.
+    pub fn check_source(&self, source_hash: &str) -> Result<()> {
+        if crate::digest(self.source.as_bytes()) == source_hash {
+            return Ok(());
+        }
+        Err(Error::config(
+            "The server's policy source differs from the source that the owner signed. Nothing was built.",
+        ))
+    }
 }
 
 fn token(name: &str, value: &str) -> Result<()> {
@@ -163,33 +100,9 @@ fn reply<T: serde::de::DeserializeOwned>(body: &[u8]) -> Result<T> {
 }
 const REFUSED: &str = "the custom build request was refused";
 
-/// A build reply whose presignature is not verified yet. It opens only with the server key
-/// that the caller trusts.
-pub struct Sealed(Admission);
-impl Sealed {
-    /// The network that the reply names. The caller selects its trusted server key with it.
-    pub fn network(&self) -> &str {
-        &self.0.network
-    }
-    /// Open the reply: it is returned only when `server_key` signed exactly the requested
-    /// policy id, the reply's network and the reply's source.
-    pub fn verify(self, server_key: &str) -> Result<Admission> {
-        verify_presignature(
-            &self.0.presignature,
-            &Admitted {
-                network: &self.0.network,
-                policy_id: &self.0.policy_id,
-                source: &self.0.source,
-                server: server_key,
-            },
-        )?;
-        Ok(self.0)
-    }
-}
-
-/// Read the admitted source of a policy with its presignature. [`Sealed::verify`] checks the
-/// presignature against the server key that the caller trusts.
-pub fn fetch(server: &str, policy_id: &str, ticket: &str) -> Result<Sealed> {
+/// Read the admitted source of a policy with its build ticket. Check it with
+/// [`Admission::check_source`] before building.
+pub fn fetch(server: &str, policy_id: &str, ticket: &str) -> Result<Admission> {
     token("policy id", policy_id)?;
     token("build ticket", ticket)?;
     let body = send(
@@ -213,10 +126,11 @@ pub fn fetch(server: &str, policy_id: &str, ticket: &str) -> Result<Sealed> {
             "The server returned a policy source over the build limit",
         ));
     }
-    Ok(Sealed(admission))
+    Ok(admission)
 }
 
-/// The owner's view of a build on the server: the build ticket of the policy.
+/// The owner's view of a build on the server: the build ticket and the hash of the source that
+/// the owner's policy signature binds.
 #[derive(Clone, Debug, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct OwnerView {
@@ -224,6 +138,8 @@ pub struct OwnerView {
     pub network: String,
     /// The capability of the build routes of this policy.
     pub ticket: String,
+    /// The SHA-256 of the source that the owner signed, as lowercase hexadecimal text.
+    pub source_hash: String,
     #[serde(default)]
     pub build: Option<BuildState>,
 }
@@ -232,47 +148,22 @@ pub struct OwnerView {
 pub fn owner_view(cx: &crate::owner::Context<'_>, policy_id: &str) -> Result<OwnerView> {
     token("policy id", policy_id)?;
     let value = crate::owner::custom_build(cx, policy_id)?;
-    #[derive(Deserialize)]
-    #[serde(rename_all = "camelCase")]
-    struct View {
-        policy_id: String,
-        network: String,
-        ticket: String,
-        #[serde(default)]
-        build: Option<serde_json::Value>,
-    }
-    let view: View = serde_json::from_value(value)
+    let view: OwnerView = serde_json::from_value(value)
         .map_err(|_| Error::uncertain("The server returned an invalid custom build reply"))?;
     if view.policy_id != policy_id {
         return Err(Error::uncertain("The server returned another policy"));
     }
-    // The owner's view adds the attestation text and document; a host needs the state only.
-    let build = view
-        .build
-        .filter(|build| !build.is_null())
-        .and_then(|build| {
-            Some(BuildState {
-                code_hash: build.get("codeHash")?.as_str()?.to_owned(),
-                attested: build.get("attested")?.as_bool()?,
-            })
-        });
-    Ok(OwnerView {
-        policy_id: view.policy_id,
-        network: view.network,
-        ticket: view.ticket,
-        build,
-    })
+    Ok(view)
 }
 
-/// Hand built wallet code to the server. The server keeps it for the owner's code upload; it
-/// does not accept or vouch for the build. The reply names the hash that the server computed,
-/// which must be the hash of `built`.
+/// Hand built wallet code to the server, which uploads it when the owner deploys. The reply
+/// names the hash that the server computed, which must be the hash of `built`.
 pub fn submit(
     server: &str,
     policy_id: &str,
     ticket: &str,
     built: &WalletCode,
-) -> Result<Submitted> {
+) -> Result<BuildState> {
     token("policy id", policy_id)?;
     token("build ticket", ticket)?;
     if built.code.is_empty() || built.code.len() > MAX_CODE_BYTES {
@@ -291,43 +182,20 @@ pub fn submit(
         MAX_REPLY_BYTES,
         REFUSED,
     )?;
+    #[derive(Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    struct Submitted {
+        policy_id: String,
+        code_hash: String,
+    }
     let submitted: Submitted = reply(&body)?;
     if submitted.policy_id != policy_id || submitted.code_hash != hex(&built.code_hash) {
-        return Err(core::refusal(
+        return Err(refusal(
             code::CODE_HASH_MISMATCH,
             "The server reports another code hash than this build. Build the policy again.",
         ));
     }
-    Ok(submitted)
-}
-
-/// Register the owner's attestation of a build with the server.
-pub fn register(
-    server: &str,
-    policy_id: &str,
-    ticket: &str,
-    attestation: &Attestation,
-) -> Result<BuildState> {
-    token("policy id", policy_id)?;
-    token("build ticket", ticket)?;
-    let request = serde_json::json!({
-        "policyId": policy_id,
-        "ticket": ticket,
-        "attestation": attestation,
-    });
-    let body = send(
-        server,
-        Method::Post,
-        ATTEST_PATH,
-        Some(request.to_string().as_bytes()),
-        MAX_REPLY_BYTES,
-        REFUSED,
-    )?;
-    let state: BuildState = reply(&body)?;
-    if !state.attested || state.code_hash != attestation.code_hash {
-        return Err(Error::uncertain(
-            "The server did not register this build attestation",
-        ));
-    }
-    Ok(state)
+    Ok(BuildState {
+        code_hash: submitted.code_hash,
+    })
 }

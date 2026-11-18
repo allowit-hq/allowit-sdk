@@ -44,7 +44,7 @@ Rail packages can use common core primitives directly. Core has no dependency on
 | `output` | Shared printable values |
 | `paid_service` | Paid calls: the seller request, the rail's challenge parser and the proof of the payment, settled by the payer or by the seller; `seller_failed` (code 8) |
 | `settlement_service` | A settlement service for sellers: the rail's check, submission and settlement read of a payment authorization |
-| `custom_build` | The build of a Custom wallet: the rail's build hook, the server presignature, the owner attestation and the client of the server's build routes |
+| `custom_build` | The build of a Custom wallet: the rail's build hook and the client of the server's build routes. The owner's CLI builds the source that the owner signed and hands the code to the server, which uploads it at deployment |
 | `marketplace` | The catalog client of one configured server: `search` and `entry` |
 | `transport_failure` | Class of a failed rail call: `network_unavailable` (code 7), unknown outcome (code 5) or other |
 | `error` | The error type from `allowit_core::client::error` |

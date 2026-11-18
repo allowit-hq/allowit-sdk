@@ -166,18 +166,25 @@ importers:
 
   .:
     dependencies:
+      '@allowit/core':
+        specifier: github:allowit-hq/allowit-core#387ebf43652c85ccdc5ca05e32b29953c25acc70
+        version: https://codeload.github.com/allowit-hq/allowit-core/tar.gz/387ebf43652c85ccdc5ca05e32b29953c25acc70
       '@allowit/stellar':
-        specifier: github:allowit-hq/allowit-contracts-stellar#3fe3fba4e90626f74cfaf33fd9943ab5adc26d0b&path:/npm/stellar
-        version: https://codeload.github.com/allowit-hq/allowit-contracts-stellar/tar.gz/3fe3fba4e90626f74cfaf33fd9943ab5adc26d0b#path:/npm/stellar(debug@4.4.3)
+        specifier: github:allowit-hq/allowit-contracts-stellar#b779db234ca6e088748d0440af395f119f1bfd8c&path:/npm/stellar
+        version: https://codeload.github.com/allowit-hq/allowit-contracts-stellar/tar.gz/b779db234ca6e088748d0440af395f119f1bfd8c#path:/npm/stellar(debug@4.4.3)
+    devDependencies:
+      typescript:
+        specifier: 5.9.3
+        version: 5.9.3
 
 packages:
 
-  '@allowit/core@https://codeload.github.com/allowit-hq/allowit-core/tar.gz/443f30856bd9241666648ebad67633eab526e211':
-    resolution: {gitHosted: true, integrity: sha512-UeDOs/qpEKHmg7T5dsy87N60KaBRjXLE68ZBxFaY7N31XibnSoiSKDZALs5/IOcr19/1YCTjyTx9YYuQmYXgOg==, tarball: https://codeload.github.com/allowit-hq/allowit-core/tar.gz/443f30856bd9241666648ebad67633eab526e211}
-    version: 0.6.0
+  '@allowit/core@https://codeload.github.com/allowit-hq/allowit-core/tar.gz/387ebf43652c85ccdc5ca05e32b29953c25acc70':
+    resolution: {gitHosted: true, integrity: sha512-mdleUSQgqXILKh6YOerHHC1AhEI5rOk893KZvxrR1v9fYnpyK6aM2ryPWA9S/upkvr2VJyuFRLK9xijiFh3S7w==, tarball: https://codeload.github.com/allowit-hq/allowit-core/tar.gz/387ebf43652c85ccdc5ca05e32b29953c25acc70}
+    version: 0.11.1
 
-  '@allowit/stellar@https://codeload.github.com/allowit-hq/allowit-contracts-stellar/tar.gz/3fe3fba4e90626f74cfaf33fd9943ab5adc26d0b#path:/npm/stellar':
-    resolution: {gitHosted: true, integrity: sha512-5Fr9HbNsorwkLEZ8e6aalBdTi8B3LjbXRoLHS7jezjaYwMZbQq9RsKAinn9rs5AMufzQqsz8FsuGjJove78vFA==, path: /npm/stellar, tarball: https://codeload.github.com/allowit-hq/allowit-contracts-stellar/tar.gz/3fe3fba4e90626f74cfaf33fd9943ab5adc26d0b}
+  '@allowit/stellar@https://codeload.github.com/allowit-hq/allowit-contracts-stellar/tar.gz/b779db234ca6e088748d0440af395f119f1bfd8c#path:/npm/stellar':
+    resolution: {gitHosted: true, integrity: sha512-Z8SZBGBUhbzLIIKN2nqytsVpUY1yHsr3DNhuDgWWLbza2+FNSlg20n96roIkkgNl17nFmbA3+it56S331bsbFw==, path: /npm/stellar, tarball: https://codeload.github.com/allowit-hq/allowit-contracts-stellar/tar.gz/b779db234ca6e088748d0440af395f119f1bfd8c}
     version: 0.4.0
 
   '@exodus/bytes@1.16.0':
@@ -373,17 +380,22 @@ packages:
     resolution: {integrity: sha512-j7WyPdf0CJoutMzMoPLF/bVXHtKZIT9Rb4eGeEbWw8X2t5oirjPgpL+OpaENZrILYaXqYwnVH+qgUwVbl+pUJQ==}
     engines: {node: '>= 18'}
 
+  typescript@5.9.3:
+    resolution: {integrity: sha512-jl1vZzPDinLr9eUt3J/t7V6FgNEw9QjvBPdysz9KfQDD41fQrC2Y4vKQdiaUpFT4bXlb1RHhLpp8wtm6M5TgSw==}
+    engines: {node: '>=14.17'}
+    hasBin: true
+
   uint8array-extras@1.6.0:
     resolution: {integrity: sha512-8iAasVS4wUx0gPLjH8Xtz2PeDzTSiy8QiLGu2DT3X5GU+egFEQhpnbtkehbAwjvDcxIERmCYcysiODFmE3Ud0Q==}
     engines: {node: '>=18'}
 
 snapshots:
 
-  '@allowit/core@https://codeload.github.com/allowit-hq/allowit-core/tar.gz/443f30856bd9241666648ebad67633eab526e211': {}
+  '@allowit/core@https://codeload.github.com/allowit-hq/allowit-core/tar.gz/387ebf43652c85ccdc5ca05e32b29953c25acc70': {}
 
-  '@allowit/stellar@https://codeload.github.com/allowit-hq/allowit-contracts-stellar/tar.gz/3fe3fba4e90626f74cfaf33fd9943ab5adc26d0b#path:/npm/stellar(debug@4.4.3)':
+  '@allowit/stellar@https://codeload.github.com/allowit-hq/allowit-contracts-stellar/tar.gz/b779db234ca6e088748d0440af395f119f1bfd8c#path:/npm/stellar(debug@4.4.3)':
     dependencies:
-      '@allowit/core': https://codeload.github.com/allowit-hq/allowit-core/tar.gz/443f30856bd9241666648ebad67633eab526e211
+      '@allowit/core': https://codeload.github.com/allowit-hq/allowit-core/tar.gz/387ebf43652c85ccdc5ca05e32b29953c25acc70
       '@noble/curves': 1.9.7
       '@noble/hashes': 1.8.0
       '@stellar/freighter-api': 6.0.1
@@ -578,5 +590,7 @@ snapshots:
   semver@7.7.1: {}
 
   smol-toml@1.9.1: {}
+
+  typescript@5.9.3: {}
 
   uint8array-extras@1.6.0: {}

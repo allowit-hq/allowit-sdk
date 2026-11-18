@@ -2,6 +2,11 @@
 // Hosts pass data in and listen for allowit-* events; the registered plugin renders the rest.
 import * as registered from './registered.js';
 import WALLET_KINDS from './wallet-kinds.js';
+import * as workflow from './owner-workflow.js';
+
+export {OwnerFlowError, ownerArchiveKey, OWNER_TRANSACTION_EXPIRED, OWNER_TRANSACTION_PENDING, OWNER_TRANSACTION_SETTLED,
+  OWNER_TRANSACTION_FAILED, NETWORK_UNAVAILABLE, PARAM_INVALID, PARAM_OUT_OF_RANGE, UPDATE_UNAVAILABLE, REVISION_CHANGED,
+  UPDATE_PARAMS, WALLET_SETUP_REQUIRED, SET_UP_WALLET, APPROVE_POLICY} from './owner-workflow.js';
 
 const RAILS = Object.freeze(Object.values(registered));
 
@@ -264,55 +269,24 @@ export function reviewParamLines(network, params) {
 }
 
 /**
- * Install the reviewed policy wallet, then fund it. The host supplies its transport, the signing of
- * one owner step and a journal; the rail settles a saved signed step before it signs another one.
- * An unknown network rejects.
+ * Install the reviewed policy wallet, then fund it. The host supplies its transport, the signing of one owner step and a
+ * journal. The SDK settles a saved signed step before it signs another one; the rail of the network reads its records
+ * and checks its signatures. An unknown network rejects.
  */
 export async function installAndFund(network, input) {
   const hit = hitOf(network);
-  return hit.rail.ownerWorkflow.installAndFund({...input, network: hit.network.id});
+  return workflow.installAndFund(hit.rail.ownerChain, {...input, network: hit.network.id});
 }
 
 /**
- * Change installed params on an active wallet with one owner signature. `input.params` maps each changed
- * param to its complete typed value. The rail settles a saved signed step before it signs another one,
- * and the service saves the new params of the installation and of the policy when the network confirms
- * the step. A rail without the workflow rejects with the code `update_unavailable`. An unknown network rejects.
+ * Change installed params on an active wallet with one owner signature. `input.params` maps each changed param to its
+ * complete typed value. The SDK settles a saved signed step before it signs another one, and the service saves the new
+ * params of the installation and of the policy when the network confirms the step. A refusal keeps the service's typed
+ * code, such as `update_unavailable` for a wallet kind without owner-signed updates. An unknown network rejects.
  */
 export async function updateParams(network, input) {
   const hit = hitOf(network);
-  const run = hit.rail.ownerWorkflow.updateParams;
-  if (typeof run !== 'function') {
-    throw Object.assign(new Error('This network has no owner-signed update of installed params.'), {code: 'update_unavailable', retry: false});
-  }
-  return run({...input, network: hit.network.id});
-}
-
-/**
- * The fee account of a wallet: the account that sends the agent's operations and pays their network fees,
- * with what the ledger holds for it. `document` is an installation, a wallet profile or a policy of the
- * network. Null when the document names no fee account or the rail has none: the wallet pays its own fees.
- * The rail reads the public ledger itself. An unknown network rejects.
- */
-export async function feeAccount(network, document) {
-  const hit = hitOf(network);
-  const read = hit.rail.ownerWorkflow.feeAccount;
-  return typeof read === 'function' ? read({network: hit.network.id, document}) : null;
-}
-
-/**
- * Refill a fee account with one payment from the owner's account, which the owner's wallet signs. The rail
- * builds the payment and sends the signed bytes to the network itself. With `journal` and `key` the signed payment
- * stays saved until the network settles it, so an unknown result never leads to a second payment. A rail without fee accounts rejects
- * with the code `refill_unavailable`. An unknown network rejects.
- */
-export async function refillFees(network, input) {
-  const hit = hitOf(network);
-  const run = hit.rail.ownerWorkflow.refillFees;
-  if (typeof run !== 'function') {
-    throw Object.assign(new Error('This network has no fee account to refill.'), {code: 'refill_unavailable', retry: false});
-  }
-  return run({...input, network: hit.network.id});
+  return workflow.updateParams(hit.rail.ownerChain, {...input, network: hit.network.id});
 }
 
 const Base = globalThis.HTMLElement ?? class {};

@@ -66,8 +66,16 @@ with `Runtime::prepare_params_update` and stores `Configuration::with_params` af
 keeps its recorded usage and its request nonce. `owner::update_params` and `updateParams` are resume-safe under
 their request ID or journal key. `owner::verify` compares the owner's document with the ledger and reads the
 state back; `Verification::matches` is true only when every comparison matches. A rail without a call declares
-`Feature::EditParams`, `UpdateParams`, `Verify` or `PairedExport` skipped, and npm rejects `updateParams` with
-the code `update_unavailable`.
+`Feature::EditParams`, `UpdateParams`, `Verify` or `PairedExport` skipped, and the server refuses `updateParams`
+with the code `update_unavailable` for a wallet kind without owner-signed updates.
+
+The npm owner workflows, `installAndFund` and `updateParams`, live in
+[`npm/src/owner-workflow.js`](npm/src/owner-workflow.js). They hold the journal of signed steps, the recovery of a step
+whose result is unknown, one run per journal key, and the typed errors (`OwnerFlowError` with `code` and `retry`). The
+rail supplies only `ownerChain`, which implements Core's `OwnerChain` contract from `@allowit/core`: the network's record of a transaction, the record of an expired signed step, the
+steps of a keypair wallet's setup (build, read and send its transaction) and the check of the owner's approval
+signature. The SDK keeps each signed step and setup in the host's journal and replaces one only when the rail proves
+that it can never apply.
 
 A host never prints a unit of its own. An asset without a known unit is an error in Rust and `null` in npm.
 `npm/src/wallet-kinds.js` is generated from Core by the test `npm_wallet_kinds_equal_the_core_description`;
@@ -110,25 +118,23 @@ See the [portable policy reference](docs/policy-reference.md) for source restric
 
 ## Custom wallet build
 
-`custom_build` serves the build of a Custom wallet. Core defines the two signed statements; the rail of the
-network supplies the build, the code hash and the wallet message signature. The server does not build the code
-and keeps no list of builds.
+`custom_build` serves the build of a Custom wallet. The owner's policy signature binds the source. The owner's
+CLI builds the code and hands it to the server, which uploads it from its own account when the owner deploys; an
+upload gives no authority. The owner's one creation signature names the code by its hash. The rail of the
+network supplies the build and the code hash.
 
-1. `custom_build::fetch(server, policy_id, ticket)` reads the admitted policy source with the server presignature.
-   The reply is sealed: `Sealed::verify(server_key)` returns it only when the trusted server key signed exactly
-   this policy id, the reply's network and the reply's source.
+1. `custom_build::fetch(server, policy_id, ticket)` reads the source that the server admitted, with the build
+   ticket. `Admission::check_source(source_hash)` refuses a source other than the one that the owner signed;
+   `source_hash` comes from the owner's own record (the policy file, or the build command that the app shows).
 2. `custom_build::build(network, source, work)` runs the rail's build hook. A missing tool is a
    `custom_toolchain_missing` refusal that says what to install.
-3. `custom_build::submit(server, policy_id, ticket, built)` hands the code to the server, which keeps the bytes
-   for the owner's code upload and reports the hash that it computed.
-4. `custom_build::attest(signer, presignature, code_hash)` signs the owner attestation with a local owner key,
-   and `custom_build::register` registers it. A browser wallet signs the same message in the `build-attest`
-   element.
+3. `custom_build::submit(server, policy_id, ticket, built)` hands the code to the server, which reports the hash
+   that it computed; another hash is `custom_code_hash_mismatch`.
 
-`custom_build::presign`, `verify_presignature`, `verify_attestation` and `check_code_hash` are the server's side of
-the same statements. `custom_build::owner_view(cx, policy_id)` reads the build ticket of a policy with the owner's
-session. `custom_build::supported(network)` is true when the rail implements the hook; a rail without it declares
-`Feature::CustomBuild` skipped. The refusal codes are in `custom_build::code`.
+`custom_build::owner_view(cx, policy_id)` reads the build ticket, the signed source hash and the build with the
+owner's session. `check_code_hash` compares two code hashes. `custom_build::supported(network)` is true when the
+rail implements the hook; a rail without it declares `Feature::CustomBuild` skipped. The refusal codes are in
+`custom_build::code`.
 
 ## Paid calls and the marketplace
 
@@ -184,7 +190,7 @@ A vendor implements `allowit_core::vendor::plugin::RailPlugin` in its own reposi
 
 These five files are the only SDK files that may name a vendor. No other code branches on a vendor. Dispatch is by the CAIP-2 network id that each plugin declares.
 
-The npm package `@allowit/sdk` ([`npm/`](npm/)) is the browser registry. It exposes `rails()`, `railFor(network)`, `networks()`, `validateAddress`, `explorerUrl`, `assets` and one generic element, `<allowit-rail kind network>`. A host sets `element.data` and listens for `allowit-signed`, `allowit-signed-in`, `allowit-verified`, `allowit-cancel` and `allowit-error`. The element renders the registered vendor element for that kind (`address`, `explorer-link`, `amount`, `wallet-sign-in`, `owner-sign`, `build-attest`, `owner-answer`, `receipt` or `binding-review`). [`npm/src/registry.d.ts`](npm/src/registry.d.ts) defines the data and events.
+The npm package `@allowit/sdk` ([`npm/`](npm/)) is the browser registry. It exposes `rails()`, `railFor(network)`, `networks()`, `validateAddress`, `explorerUrl`, `assets` and one generic element, `<allowit-rail kind network>`. A host sets `element.data` and listens for `allowit-signed`, `allowit-signed-in`, `allowit-verified`, `allowit-cancel` and `allowit-error`. The element renders the registered vendor element for that kind (`address`, `explorer-link`, `amount`, `wallet-sign-in`, `owner-sign`, `owner-answer`, `receipt` or `binding-review`). [`npm/src/registry.d.ts`](npm/src/registry.d.ts) defines the data and events.
 
 The `main` branch registers public packages only and builds from public repositories. The long-lived `staging` branch is `main` plus the registration of private policy packages; it is refreshed by merging `main` into it and is never merged back ([AGENTS.md](AGENTS.md#branches)).
 

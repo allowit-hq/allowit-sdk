@@ -221,6 +221,35 @@ fn the_offline_chain_serves_the_runtime() {
     });
 }
 
+/// A server runtime takes the server's own sending accounts on every rail.
+#[test]
+fn a_server_runtime_takes_its_sending_accounts() {
+    struct Sending;
+    impl runtime::SendingAccounts for Sending {
+        fn account(&self) -> allowit_sdk::error::Result<String> {
+            Err(allowit_sdk::error::Error::unsupported(
+                "no sending account in this test",
+            ))
+        }
+        fn sign(&self, _: &str, _: &[u8; 32]) -> allowit_sdk::error::Result<Vec<u8>> {
+            Err(allowit_sdk::error::Error::unsupported(
+                "no sending account in this test",
+            ))
+        }
+    }
+    testkit::each(Feature::Transfer, |rail, fx| {
+        let Some(chain) = fx.chain.clone() else {
+            eprintln!("skip {}: no offline chain fixture", rail.id());
+            return;
+        };
+        let network = rail.test_support().network;
+        Runtime::with_sender(network, chain.clone(), std::sync::Arc::new(Sending)).unwrap();
+        assert!(
+            Runtime::with_sender("unknown:network", chain, std::sync::Arc::new(Sending)).is_err()
+        );
+    });
+}
+
 #[test]
 fn generation_on_another_network_stops_before_the_clock() {
     testkit::each(Feature::OwnerSetup, |rail, _| {
@@ -886,32 +915,6 @@ fn typed_changes_parse_owner_text_and_refuse_an_invalid_or_unknown_value() {
     });
 }
 
-/// A local key of a rail as the signer of a build statement.
-struct StatementKey {
-    network: &'static str,
-    key: Box<dyn allowit_sdk::portable::vendor::PrivateSigner>,
-}
-impl StatementKey {
-    fn of(rail: &dyn plugins::RailPlugin, seed: u8) -> Self {
-        let entropy = vec![seed; rail.keys().entropy_bytes()];
-        Self {
-            network: rail.test_support().network,
-            key: rail.keys().derive(&entropy).unwrap(),
-        }
-    }
-}
-impl custom_build::Signer for StatementKey {
-    fn network(&self) -> &str {
-        self.network
-    }
-    fn address(&self) -> &str {
-        self.key.address()
-    }
-    fn sign_hash(&self, digest: &[u8]) -> allowit_sdk::error::Result<Vec<u8>> {
-        self.key.sign_hash(digest)
-    }
-}
-
 #[test]
 fn a_rail_skips_the_custom_build_exactly_when_it_has_no_hook() {
     for rail in plugins::rails() {
@@ -933,71 +936,45 @@ fn a_rail_skips_the_custom_build_exactly_when_it_has_no_hook() {
 }
 
 #[test]
-fn a_rail_binds_a_build_to_its_presignature_owner_and_code() {
-    use custom_build::{Admitted, code};
+fn a_host_builds_only_the_signed_source_and_compares_the_code() {
+    use custom_build::code;
     testkit::each(Feature::CustomBuild, |rail, fx| {
         let network = rail.test_support().network;
-        let (server, owner, stranger) = (
-            StatementKey::of(rail, 1),
-            StatementKey::of(rail, 2),
-            StatementKey::of(rail, 3),
-        );
-        use custom_build::Signer as _;
-        let source = "pub fn execute() {}\n";
-        let presignature = custom_build::presign(&server, "policy-1", source).unwrap();
-        let admitted = Admitted {
-            network,
-            policy_id: "policy-1",
-            source,
-            server: server.address(),
-        };
-        custom_build::verify_presignature(&presignature, &admitted).unwrap();
-        let refused = |result: allowit_sdk::error::Result<()>| result.unwrap_err().api_code;
-        // Another policy, altered source and an untrusted server key.
-        for other in [
-            Admitted {
-                policy_id: "policy-2",
-                ..admitted
-            },
-            Admitted {
-                source: "pub fn execute() { /* altered */ }\n",
-                ..admitted
-            },
-            Admitted {
-                server: stranger.address(),
-                ..admitted
-            },
-        ] {
-            assert_eq!(
-                refused(custom_build::verify_presignature(&presignature, &other)).as_deref(),
-                Some(code::PRESIGNATURE_MISMATCH),
-                "{}",
-                rail.id()
-            );
-        }
-        // The rail hashes the fixture wallet code; the owner attests that hash.
+        // The rail hashes the fixture wallet code. A host compares its own build with the code
+        // that the server built and uploaded.
         assert!(!fx.wallet_code.is_empty(), "{}", rail.id());
         let hash = custom_build::code_hash(network, &fx.wallet_code).unwrap();
-        let attestation = custom_build::attest(&owner, &presignature, &hash).unwrap();
-        custom_build::verify_attestation(&attestation, &admitted, owner.address()).unwrap();
-        custom_build::check_code_hash(&attestation, &hash).unwrap();
-        // Another signer, and code with another hash.
-        let by_stranger = custom_build::attest(&stranger, &presignature, &hash).unwrap();
-        assert_eq!(
-            refused(custom_build::verify_attestation(
-                &by_stranger,
-                &admitted,
-                owner.address()
-            ))
-            .as_deref(),
-            Some(code::ATTESTATION_INVALID)
-        );
+        custom_build::check_code_hash(&hash, &hash).unwrap();
         let mut other = hash;
         other[0] ^= 1;
         assert_eq!(
-            refused(custom_build::check_code_hash(&attestation, &other)).as_deref(),
+            custom_build::check_code_hash(&hash, &other)
+                .unwrap_err()
+                .api_code
+                .as_deref(),
             Some(code::CODE_HASH_MISMATCH)
         );
         assert!(custom_build::code_hash(network, b"no wallet code").is_err());
+        // A server source that is not the source that the owner signed is refused before
+        // anything builds.
+        let admission: custom_build::Admission = serde_json::from_value(serde_json::json!({
+            "policyId": "policy-1",
+            "network": network,
+            "source": "pub fn execute() {}\n",
+            "build": null,
+        }))
+        .unwrap();
+        admission
+            .check_source(&allowit_sdk::digest(b"pub fn execute() {}\n"))
+            .unwrap();
+        assert!(
+            admission
+                .check_source(&allowit_sdk::digest(
+                    b"pub fn execute() { /* reviewed */ }\n"
+                ))
+                .unwrap_err()
+                .message
+                .contains("differs from the source that the owner signed")
+        );
     });
 }
