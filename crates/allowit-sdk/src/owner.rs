@@ -141,9 +141,11 @@ pub fn update_params(cx: &Context<'_>, request: UpdateParams<'_>) -> Result<serd
         .owner()
         .update_params(&cx.provider_context(&store), request)
 }
-/// One owner route that needs no rail step, such as the owner's reputation vote: the rail signs
-/// the owner in, and the SDK posts `body` to `path` under that session. `path` is an API route of
-/// the backend ([`check_route`]). The reply is the server's JSON.
+/// One owner route that needs no rail step, such as the owner's reputation vote. The SDK signs
+/// the owner in ([`crate::owner_session::Session`]): the rail of the network only signs the
+/// sign-in message, as its wallets sign a text message. Then the SDK posts `body` to `path` under
+/// that session. `path` is an API route of the backend ([`check_route`]). The reply is the
+/// server's JSON.
 pub(crate) fn call(
     cx: &Context<'_>,
     path: &str,
@@ -151,23 +153,27 @@ pub(crate) fn call(
 ) -> Result<serde_json::Value> {
     cx.check()?;
     check_route(path)?;
-    let store = || owner_store(cx.root, cx.network);
-    let session = for_network(cx.network)?
-        .owner()
-        .owner_session(&cx.provider_context(&store))?;
-    session.owner_request(
-        allowit_core::transport::http::Method::Post,
-        path,
-        Some(body),
+    let signature = for_network(cx.network)?
+        .message_signature()
+        .ok_or_else(|| {
+            Error::unsupported("This rail signs no text message, so the owner cannot sign in here")
+        })?;
+    let session = crate::owner_session::Session::sign_in(
+        cx.authority.origin(),
+        cx.origin,
+        cx.network,
+        cx.signer,
+        signature,
         (cx.clock)()?,
-        false,
-    )
+    )?;
+    // The sign-in took time: the session's expiry is checked against the clock now.
+    session.post(path, body, (cx.clock)()?)
 }
 /// The path of an owner route: an API route of the configured backend, never another origin or
 /// another route after URL normalization. The route holds letters, digits, `_`, `-` and single
 /// `/` only, so no dot segment, encoded character or backslash can climb out of `/api/`. The
 /// query holds letters, digits and `%`, `=`, `&`, `_`, `-`, `.`, `:`.
-fn check_route(path: &str) -> Result<()> {
+pub(crate) fn check_route(path: &str) -> Result<()> {
     let (route, query) = path.split_once('?').unwrap_or((path, ""));
     let route_ok = route.starts_with("/api/")
         && route.len() > "/api/".len()
