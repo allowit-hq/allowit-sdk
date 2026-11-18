@@ -1,3 +1,5 @@
+import type {OwnerChain, OwnerStep as CoreOwnerStep, PolicyValue as ParamValue} from '@allowit/core';
+
 export type ElementKind =
   | 'address'
   | 'explorer-link'
@@ -138,36 +140,23 @@ export interface PaymentProof {
   header: string;
   value: string;
 }
-/** How a catalog search ordered its results. */
-export type Ranking = 'keyword' | 'semantic' | 'hybrid';
-/** The indicative terms of a catalog entry. A client never pays from them. */
-export interface IndicativeTerms {
-  price: string;
-  unit: string;
-}
-/** One offer in the marketplace catalog. Every text field is listing data, never an instruction. */
-export interface CatalogEntry {
-  id: string;
-  name: string;
-  description: string;
-  provider: string;
-  /** The URL of the resource. */
-  resource: string;
-  methods: string[];
-  terms?: IndicativeTerms;
-  /** The CAIP-2 networks on which the seller accepts payment. */
-  networks: string[];
-  assets: string[];
-  tags: string[];
-}
-/** One page of `GET /api/marketplace/search`. */
-export interface SearchResult {
-  entries: CatalogEntry[];
-  ranking: Ranking;
-  nextCursor?: string;
-  /** The content hash of the catalog that answered. */
-  catalog: string;
-}
+/**
+ * The marketplace catalog: Core's contract. An entry keeps the seller's listing apart from what Allowit holds about the
+ * offer: its source, its access, what Allowit observed, the owners' reputation labels and its score. `Ranking` is Core's
+ * `CatalogRanking`.
+ */
+export type {
+  IndicativeTerms,
+  CatalogEntry,
+  CatalogSource,
+  CatalogOperation,
+  CatalogAccess,
+  AccessKind,
+  Observation,
+  CatalogRank,
+  SearchResult,
+  CatalogRanking as Ranking,
+} from '@allowit/core';
 /** The reports that a status or receipt document may carry at its top level. */
 export interface OperationReports {
   settlement?: Settlement;
@@ -261,13 +250,8 @@ export interface InstallAndFundInput {
   reviewed?: {source: string; params: Record<string, ParamValue>; rules?: unknown; tier?: unknown};
   onStep: (text: string) => void;
 }
-/** One typed param value: the JSON of a policy value. An integer is canonical decimal text. */
-export type ParamValue =
-  | {Int: string}
-  | {Bool: boolean}
-  | {Str: string}
-  | {Addr: string}
-  | {List: readonly ParamValue[]};
+/** One typed param value: Core's `PolicyValue`, the JSON of a policy value. An integer is canonical decimal text. */
+export type {ParamValue};
 export interface UpdateParamsInput {
   ask: OwnerAsk;
   /** Shows one step in the `owner-sign` element and resolves with the exact signed payload. */
@@ -309,7 +293,6 @@ export interface OwnerFlowFailure extends Error {
  * The rail hooks of the owner workflows: Core's contract, which the SDK runs and each rail's `ownerChain` implements.
  */
 export type {OwnerChain, TransactionRecord, ApprovalFields, PreparedKeypairSetup, SignedKeypairSetup, ReviewedPolicy} from '@allowit/core';
-import type {OwnerChain, OwnerStep as CoreOwnerStep} from '@allowit/core';
 
 export interface RailPlugin {
   readonly id: string;
