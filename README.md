@@ -241,6 +241,24 @@ cargo clippy --locked -p allowit-sdk@0.5.0 --all-targets --features testkit -- -
 (cd npm && pnpm install && pnpm test)
 ```
 
+`cargo test` runs the hermetic tests: no socket, no network. An end-to-end test binds a local
+socket for a fixture server. It carries `#[cfg_attr(not(feature = "e2e"), ignore = ...)]`, so the
+default run lists it as ignored. The `e2e` feature runs the whole suite, end-to-end tests included:
+
+```sh
+cargo test --locked -p allowit-sdk@0.5.0 --features testkit,e2e
+```
+
+`tools/no-network.sh` runs a command with IP networking denied: on Linux in a systemd unit that
+may create no IP socket (it uses `sudo`), on macOS in the built-in sandbox. CI runs the hermetic
+tests through it, so a hermetic test that opens a socket, even on 127.0.0.1, fails:
+
+```sh
+cargo test --locked -p allowit-sdk@0.5.0 --features testkit --no-run
+tools/no-network.sh cargo test --locked --offline -p allowit-sdk@0.5.0 --features testkit
+```
+
+Mark a new test that needs a socket or the network with the `e2e` attribute.
 The affected [workflows](.github/workflows/) define the required checks.
 
 ## License

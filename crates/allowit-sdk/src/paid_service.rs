@@ -291,6 +291,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(not(feature = "e2e"), ignore = "end-to-end: run with --features e2e")]
     fn a_seller_reply_of_any_status_is_returned_with_its_headers() {
         let (url, handle) = seller(
             b"HTTP/1.1 402 Payment Required\r\nX-Terms: a\r\nContent-Length: 2\r\nConnection: close\r\n\r\n{}"
@@ -308,6 +309,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(not(feature = "e2e"), ignore = "end-to-end: run with --features e2e")]
     fn the_proof_header_is_sent_once_and_no_caller_header_replaces_it() {
         let (url, handle) =
             seller(b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nok".to_vec());
@@ -328,6 +330,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(not(feature = "e2e"), ignore = "end-to-end: run with --features e2e")]
     fn a_redirect_is_returned_and_never_followed() {
         let (url, handle) = seller(
             b"HTTP/1.1 302 Found\r\nLocation: http://127.0.0.1:1/other\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"

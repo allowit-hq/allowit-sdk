@@ -185,6 +185,7 @@ fn dates_are_rfc3339() {
 }
 
 #[test]
+#[cfg_attr(not(feature = "e2e"), ignore = "end-to-end: run with --features e2e")]
 fn the_sdk_signs_the_owner_in_and_posts_under_the_rotated_session() {
     let (url, seen) = backend(Plan::new());
     let signature = Signature::default();
@@ -221,6 +222,7 @@ fn the_sdk_signs_the_owner_in_and_posts_under_the_rotated_session() {
 }
 
 #[test]
+#[cfg_attr(not(feature = "e2e"), ignore = "end-to-end: run with --features e2e")]
 fn the_owner_signs_nothing_but_the_exact_sign_in_message() {
     let nonce = "a".repeat(64);
     let altered = [
@@ -262,6 +264,7 @@ fn the_owner_signs_nothing_but_the_exact_sign_in_message() {
 }
 
 #[test]
+#[cfg_attr(not(feature = "e2e"), ignore = "end-to-end: run with --features e2e")]
 fn an_empty_origin_is_refused_before_any_request() {
     let (url, seen) = backend(Plan::new());
     let signature = Signature::default();
@@ -274,6 +277,7 @@ fn an_empty_origin_is_refused_before_any_request() {
 }
 
 #[test]
+#[cfg_attr(not(feature = "e2e"), ignore = "end-to-end: run with --features e2e")]
 fn only_a_root_http_only_lax_session_cookie_is_kept() {
     for (attributes, rotated) in [
         ("Path=/; SameSite=Lax", ROTATED),
@@ -302,6 +306,7 @@ fn only_a_root_http_only_lax_session_cookie_is_kept() {
 }
 
 #[test]
+#[cfg_attr(not(feature = "e2e"), ignore = "end-to-end: run with --features e2e")]
 fn a_session_that_the_server_did_not_rotate_is_refused() {
     let mut plan = Plan::new();
     plan.rotated = GUEST;
@@ -316,6 +321,7 @@ fn a_session_that_the_server_did_not_rotate_is_refused() {
 }
 
 #[test]
+#[cfg_attr(not(feature = "e2e"), ignore = "end-to-end: run with --features e2e")]
 fn a_typed_refusal_keeps_its_code_and_details() {
     let mut plan = Plan::new();
     plan.route = (

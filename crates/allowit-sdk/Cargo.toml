@@ -11,6 +11,9 @@ description = "Shared rail execution and owner workflows, with no terminal I/O"
 [features]
 # Vendor-neutral test harness for shared tests here and in downstream repositories.
 testkit = []
+# Runs the end-to-end tests too: tests that bind a local socket for a fixture server.
+# Without it, `cargo test` runs only the hermetic tests. No library code reads it.
+e2e = []
 
 [dependencies]
 allowit-core = { workspace = true, features = ["std", "policy-source", "client", "transport", "vendor"] }
