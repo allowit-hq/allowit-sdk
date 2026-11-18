@@ -437,6 +437,20 @@ impl Runtime {
             .upload_code(&i.0, wasm, poll, now)
             .map(|r| r.map(|r| Receipt(r.0)))
     }
+    /// As `upload_code`, with the network fee bounded by `max_fee` in the rail's native units:
+    /// an upload above it is refused before anything is signed.
+    pub fn upload_code_within(
+        &self,
+        i: &Installation,
+        wasm: &[u8],
+        max_fee: u64,
+        poll: Poll,
+        now: u64,
+    ) -> Result<Option<Receipt>> {
+        self.provider
+            .upload_code_within(&i.0, wasm, max_fee, poll, now)
+            .map(|r| r.map(|r| Receipt(r.0)))
+    }
     pub fn prepare_owner(
         &self,
         i: &Installation,
