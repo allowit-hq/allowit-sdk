@@ -410,6 +410,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(not(feature = "e2e"), ignore = "end-to-end: run with --features e2e")]
     fn a_search_sends_its_bounded_query_and_reads_the_page() {
         let (origin, handle) = server(
             "200 OK",
@@ -494,6 +495,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(not(feature = "e2e"), ignore = "end-to-end: run with --features e2e")]
     fn a_search_sends_its_capability_access_and_asset_filters() {
         let (origin, handle) = server(
             "200 OK",
@@ -535,6 +537,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(not(feature = "e2e"), ignore = "end-to-end: run with --features e2e")]
     fn a_catalog_request_asks_for_the_second_shape() {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let origin = format!("http://{}", listener.local_addr().unwrap());
@@ -567,6 +570,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(not(feature = "e2e"), ignore = "end-to-end: run with --features e2e")]
     fn an_entry_reads_by_its_id_and_another_entry_is_refused() {
         let (origin, handle) = server("200 OK", json!({"entry":sample(),"catalog":"ab"}));
         assert_eq!(entry(&origin, "sample/report").unwrap().name, "Report");
@@ -580,6 +584,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(not(feature = "e2e"), ignore = "end-to-end: run with --features e2e")]
     fn a_typed_refusal_keeps_its_code_and_bounded_text() {
         let (origin, handle) = server(
             "503 Service Unavailable",

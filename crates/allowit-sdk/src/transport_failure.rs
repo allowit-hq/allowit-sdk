@@ -73,6 +73,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(not(feature = "e2e"), ignore = "end-to-end: run with --features e2e")]
     fn a_call_without_an_answer_is_network_unavailable() {
         // A fake transport that accepts the request and never answers: a timeout.
         let silent = TcpListener::bind("127.0.0.1:0").unwrap();
@@ -96,6 +97,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(not(feature = "e2e"), ignore = "end-to-end: run with --features e2e")]
     fn a_deadline_that_expires_before_the_send_is_network_unavailable() {
         // The server would answer, but the deadline has passed: the client sends nothing.
         let unused = TcpListener::bind("127.0.0.1:0").unwrap();
@@ -132,6 +134,7 @@ mod tests {
     /// Every registered plugin reports a call that got no answer with the shared code, and an
     /// answer with an unknown outcome as unknown.
     #[test]
+    #[cfg_attr(not(feature = "e2e"), ignore = "end-to-end: run with --features e2e")]
     fn every_plugin_keeps_the_class_of_a_failed_rpc() {
         use std::io::Read;
         for plugin in crate::plugins::rails() {
