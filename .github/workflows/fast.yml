@@ -55,5 +55,5 @@ jobs:
         with:
           node-version: 22
       # Corepack reads the pnpm version from the package in the working directory.
-      - run: corepack enable && pnpm install && pnpm test
+      - run: corepack enable && pnpm install && ../tools/no-network.sh pnpm test
         working-directory: npm
