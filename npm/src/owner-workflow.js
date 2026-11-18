@@ -121,11 +121,82 @@ function retainedSetup(chain, raw, network, wallet, identity) {
   try {
     value = JSON.parse(raw);
   } catch { /* refused below */ }
-  const setup = object(value) && typeof value.signedPayload === 'string' ? chain.keypairSetup?.of(value.signedPayload, network) : null;
+  const setup = object(value) && typeof value.signedPayload === 'string' ? chain.keypairSetup?.read(value.signedPayload, network) : null;
   if (!object(value) || !setup || setup.wallet !== wallet || value.agent !== identity.agent || setup.agent !== identity.agent
     || value.amount !== identity.amount)
     throw changed(identity);
   return true;
+}
+
+/**
+ * Sets up the account of a keypair wallet: one transaction that the owner's wallet signs. The rail builds it, and its
+ * `complete` adds the new account's own signature. The signed bytes are saved under `key` before they are sent, and they
+ * stay saved after the network confirms them: the caller removes them once the server has registered the wallet, so a
+ * run that stops in between names the same account again.
+ *
+ * A saved setup is settled first. It is done when the network holds it as successful. It is sent again while its own
+ * time bound lasts. It is dropped only when the network holds it as failed, or proves past its time bound that it never
+ * applied; then a new setup is prepared, so one run never creates two wallets. Any unclear answer keeps it saved.
+ */
+async function setUpKeypairWallet(setup, chain, {network, owner, agent, server, amount, sign, onStep, journal, key}) {
+  const pending = cause => new OwnerFlowError('The network did not confirm the wallet setup. The signed setup stays saved: resume to check it. Nothing is signed twice.', null, true, cause);
+  const unreadable = () => new OwnerFlowError('The saved signed wallet setup is unreadable. It stays saved; nothing was signed.', null, false);
+  const done = (wallet, hash, ledger) => ({wallet, transactionHash: hash, ledger, configuration: setup.configuration(network, wallet, owner, agent, server)});
+  const raw = journal.get(key);
+  if (raw !== null) {
+    let saved;
+    try {
+      saved = JSON.parse(raw);
+    } catch { /* refused below */ }
+    if (!object(saved) || typeof saved.hash !== 'string' || !HASH.test(saved.hash) || typeof saved.signedPayload !== 'string')
+      throw unreadable();
+    if (saved.owner !== owner || saved.agent !== agent || saved.server !== server || saved.amount !== amount)
+      throw new OwnerFlowError('A signed wallet setup with another agent key or amount is saved. It stays saved; use the agent key and amount of that setup.', null, false);
+    onStep('Checking the saved wallet setup…');
+    // The saved bytes decide: their hash, the account that they create and their own time bound.
+    const signed = setup.read(saved.signedPayload, network);
+    if (!object(signed) || signed.hash !== saved.hash || signed.owner !== owner || signed.agent !== agent || signed.server !== server
+      || !Number.isSafeInteger(signed.validUntil))
+      throw unreadable();
+    const record = await chain.transaction(network, saved.hash).catch(() => null);
+    if (object(record)) {
+      // Only the record of this exact transaction settles it: successful, or failed in a ledger.
+      if (record.hash !== saved.hash || !Number.isSafeInteger(record.ledger) || record.ledger <= 0) throw pending();
+      if (record.successful === true) return done(signed.wallet, saved.hash, record.ledger);
+      if (record.successful !== false) throw pending();
+      // The network holds the setup as failed: it used its sequence, created nothing and can never apply.
+    } else if (record !== 'missing') throw pending();
+    else if (signed.validUntil >= Math.floor(Date.now() / 1000)) {
+      // The same signed bytes go again while their time bound lasts.
+      const ledger = await setup.send(network, saved.signedPayload, saved.hash).catch(() => null);
+      if (!Number.isSafeInteger(ledger)) throw pending();
+      return done(signed.wallet, saved.hash, ledger);
+    } else {
+      // Past its time bound a missing record proves nothing: history can lack an applied setup.
+      const expired = await chain.expiredRecord(network, saved.hash, saved.signedPayload).catch(cause => {throw pending(cause);});
+      if (expired) return done(signed.wallet, saved.hash, expired.ledger);
+    }
+    journal.remove(key);
+  }
+  onStep('Preparing the wallet…');
+  const failed = cause => new OwnerFlowError(cause instanceof Error && cause.message ? cause.message : 'The wallet account could not be set up.', null, false, cause);
+  const prepared = await setup.prepare({network, owner, agent, server, amount}).catch(cause => {throw failed(cause);});
+  const step = stepOf(prepared?.step);
+  if (!object(prepared) || !step || typeof prepared.wallet !== 'string' || typeof prepared.complete !== 'function') throw failed();
+  onStep('Sign the wallet setup in your wallet…');
+  const ownerSigned = await sign(step);
+  let signedPayload;
+  try {
+    signedPayload = prepared.complete(ownerSigned);
+  } catch (cause) {
+    throw failed(cause);
+  }
+  // The signed bytes are saved before they leave: an unknown result is settled from them, never signed again.
+  journal.set(key, JSON.stringify({hash: step.hash, signedPayload, owner, agent, server, amount}));
+  onStep('Waiting for the network to confirm…');
+  const ledger = await setup.send(network, signedPayload, step.hash).catch(() => null);
+  if (!Number.isSafeInteger(ledger)) throw pending();
+  return done(prepared.wallet, step.hash, ledger);
 }
 
 /** A signed approval of a keypair wallet's new values, saved before it is sent. */
@@ -324,15 +395,10 @@ async function run(chain, {network, ask, sign, journal, key, policyId, agent, am
     if (typeof roles.owner !== 'string' || typeof roles.server !== 'string' || roles.agent !== agent || roles.policyId !== policyId)
       throw new OwnerFlowError('The service named no roles for the wallet account of this policy.', null, false);
     if (!chain.keypairSetup) throw new OwnerFlowError('This network sets up no wallet account.', null, false);
-    let setup;
-    try {
-      // The signed setup stays in the journal until the server has registered the wallet, so a run that stops in
-      // between finds the same account again.
-      setup = await chain.keypairSetup.run({network, owner: roles.owner, agent, server: roles.server, amount, sign, onStep, journal, key: walletSetupKey, retain: true});
-    } catch (cause) {
-      if (cause instanceof OwnerFlowError) throw cause;
-      throw new OwnerFlowError(cause instanceof Error ? cause.message : 'The wallet account could not be set up.', null, chain.keypairSetup.pending(cause), cause);
-    }
+    // The signed setup stays in the journal until the server has registered the wallet, so a run that stops in
+    // between finds the same account again.
+    const setup = await setUpKeypairWallet(chain.keypairSetup, chain,
+      {network, owner: roles.owner, agent, server: roles.server, amount, sign, onStep, journal, key: walletSetupKey});
     receipts.push({policyId, action: SET_UP_WALLET, status: 'confirmed', transactionHash: setup.transactionHash, ledger: setup.ledger});
     onStep('Registering the wallet…');
     const registered = await ask('native/register', {configuration: setup.configuration, policyId});

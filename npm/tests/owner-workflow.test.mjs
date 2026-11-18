@@ -376,32 +376,44 @@ const installed = wallet => ({wallet, source, rules: ['payment_limit'], params: 
 
 /** The fake rail of keypair wallets, with the accounts that its setups created and the owner of each. */
 function keypairRail({owners} = {}) {
-  const world = {created: [], owners: owners ?? new Map(), reads: []};
+  const world = {created: [], owners: owners ?? new Map(), reads: [], sent: [], setups: new Set()};
+  // The network of the fake rail: the setups it holds by hash, and how it answers the next send.
+  world.held = new Map();
+  world.send = 'ok';
+  world.prepared = 0;
   const keypair = {
-    run: async ({network: net, owner, agent: forAgent, server, amount: funding, sign, journal, key: setupKey, retain}) => {
+    prepare: async ({network: net, owner, agent: forAgent, server, amount: funding}) => {
       assert.equal(net, network);
-      // A saved setup is settled before anything is signed again: it names the same account.
-      const saved = journal.get(setupKey);
-      if (saved) {
-        const {signedPayload, hash: txHash} = JSON.parse(saved);
-        const wallet = signedPayload.split('|')[1];
-        return {wallet, transactionHash: txHash, ledger: 7, configuration: {wallet}};
-      }
-      const wallet = `WALLET-${world.created.length + 1}`;
-      const payload = `setup|${wallet}|${forAgent}|${funding}`, txHash = sha(payload);
-      const signedPayload = await sign({action: 'set_up_wallet', payload, hash: txHash, expiresAt: Math.floor(Date.now() / 1000) + 300});
-      if (typeof signedPayload !== 'string') throw new Error('unsigned');
-      journal.set(setupKey, JSON.stringify({hash: txHash, signedPayload: payload, owner, agent: forAgent, server, amount: funding}));
-      world.created.push(wallet);
+      if (!/^[0-9]+(\.[0-9]{1,7})?$/.test(funding)) throw new Error('Enter an amount with at most seven decimals.');
+      const wallet = `WALLET-${++world.prepared}`;
+      const payload = `setup|${wallet}|${owner}|${forAgent}|${server}|${funding}`, txHash = sha(payload);
+      world.setups.add(txHash);
+      return {
+        wallet,
+        step: {action: 'set_up_wallet', payload, hash: txHash, expiresAt: Math.floor(Date.now() / 1000) + 300},
+        // The new account's own signature joins the owner's.
+        complete: ownerSigned => {
+          if (ownerSigned !== `signed:${payload}`) throw new Error('The wallet signed with another account than the owner.');
+          return `${ownerSigned}|countersigned|${world.validUntil ?? Math.floor(Date.now() / 1000) + 300}`;
+        },
+      };
+    },
+    read: (signedPayload, net) => {
+      const [head, wallet, owner, forAgent, server, , mark, validUntil] = signedPayload.split('|');
+      if (head !== 'signed:setup' || mark !== 'countersigned' || net !== network) return null;
+      return {hash: sha(signedPayload.slice('signed:'.length, signedPayload.indexOf('|countersigned|'))), owner, wallet, agent: forAgent, server, validUntil: Number(validUntil)};
+    },
+    send: async (net, signedPayload, txHash) => {
+      world.sent.push(signedPayload);
+      if (world.send === 'lost') return null;
+      const [, wallet, owner] = signedPayload.split('|');
+      world.held.set(txHash, {hash: txHash, ledger: 8, successful: world.send !== 'failed'});
+      if (world.send === 'failed') return null;
+      if (!world.created.includes(wallet)) world.created.push(wallet);
       world.owners.set(wallet, owner);
-      if (!retain) journal.remove(setupKey);
-      return {wallet, transactionHash: txHash, ledger: 7, configuration: {wallet}};
+      return 8;
     },
-    of: (signedPayload, net) => {
-      const [kind, wallet, forAgent] = signedPayload.split('|');
-      return kind === 'setup' && net === network ? {wallet, agent: forAgent} : null;
-    },
-    pending: error => error?.pending === true,
+    configuration: (net, wallet, owner, forAgent, server) => ({wallet, owner, agent: forAgent, server}),
   };
   const canonical = value => JSON.stringify(value, (_, v) => v && typeof v === 'object' && !Array.isArray(v) ? Object.fromEntries(Object.entries(v).sort()) : v);
   const approval = {
@@ -415,7 +427,9 @@ function keypairRail({owners} = {}) {
     walletOwner: async (net, wallet) => (world.reads.push(wallet), world.owners.get(wallet) ?? null),
     signedBy: (account, digest, signature) => JSON.stringify(signatureOf(account, digest)) === JSON.stringify(signature),
   };
-  return {world, chain: chainOf({keypair, approval})};
+  // History holds what the fake network took; a setup that it never took is missing. Other steps settle in ledger 7.
+  const history = txHash => world.held.get(txHash) ?? (world.setups.has(txHash) ? 'missing' : {hash: txHash, ledger: 7, successful: true});
+  return {world, chain: chainOf({keypair, approval, history})};
 }
 /** The owner's wallet: it signs a setup and an approval, and records each step. */
 const ownerSigns = (signed, account = OWNER) => async s => (signed.push(s.action),
@@ -453,7 +467,7 @@ test('a keypair policy deploys with two owner signatures: the wallet setup and t
   // One setup created and funded the account: no funding step and no server step.
   assert.deepEqual(world.created, [state.wallet]);
   assert.deepEqual(calls.map(([path]) => path), ['native/deploy/prepare', 'native/register', 'native/deploy/prepare', 'native/approval', 'micro/allocation/confirm']);
-  assert.deepEqual(calls[1][1], {configuration: {wallet: state.wallet}, policyId});
+  assert.deepEqual(calls[1][1], {configuration: {wallet: state.wallet, owner: OWNER, agent, server: SERVER}, policyId});
   const confirm = calls[4][1];
   assert.deepEqual([confirm.id, confirm.revision, confirm.sourceApproval.length, confirm.sourceApproval[0].signer], [policyId, 2, 1, OWNER]);
   assert.deepEqual(confirm.sourceApproval[0].signature, signatureOf(OWNER, sha(approvalMessage({wallet: state.wallet}))));
@@ -483,14 +497,82 @@ test('a registration that fails keeps the signed setup: the next run registers t
   };
   await assert.rejects(installAndFund({...input, ask: wrong, journal: journalOf(), key: 'other'}, chain), error => error instanceof OwnerFlowError && /named no roles/.test(error.message));
   assert.equal(signed.length, 2);
-  // A setup that the rail keeps for a resume reaches the host as a retry; any other failure does not.
-  for (const [thrown, retry] of [[Object.assign(new Error('unknown result'), {pending: true}), true], [new Error('refused'), false]]) {
-    const failing = {...chain, keypairSetup: {...chain.keypairSetup, run: async () => { throw thrown; }}};
-    await assert.rejects(installAndFund({...input, ask: keypairService().ask, journal: journalOf(), key: 'k'}, failing),
-      error => error instanceof OwnerFlowError && error.retry === retry && error.cause === thrown);
+  // A setup that the rail cannot prepare, or that the owner's wallet signed wrongly, is refused and saves nothing.
+  const refused = new Error('The owner account could not be read from the network.');
+  for (const [failing, sign, expected] of [
+    [{...chain, keypairSetup: {...chain.keypairSetup, prepare: async () => { throw refused; }}}, ownerSigns([]), /owner account could not be read/],
+    [chain, async () => 'signed:another transaction', /another account than the owner/],
+  ]) {
+    const kept = journalOf();
+    await assert.rejects(installAndFund({...input, sign, ask: keypairService().ask, journal: kept, key: 'k'}, failing),
+      error => error instanceof OwnerFlowError && error.retry === false && expected.test(error.message));
+    assert.equal(kept.map.size, 0);
   }
   // A network whose rail sets up no account refuses the setup.
   await assert.rejects(installAndFund({...input, ask: keypairService().ask, journal: journalOf(), key: 'k'}), /sets up no wallet account/);
+});
+
+test('a setup whose result is unknown stays saved and is settled before anything is signed again', async () => {
+  const {world, chain} = keypairRail(), signed = [], journal = journalOf();
+  const input = {ask: keypairService().ask, sign: ownerSigns(signed), journal, key: 'flow', policyId, agent, amount, reviewed: reviewed(), onStep() {}};
+  world.send = 'lost';
+  await assert.rejects(installAndFund(input, chain), error => error instanceof OwnerFlowError && error.retry === true && /did not confirm the wallet setup/.test(error.message));
+  const saved = JSON.parse(journal.get('flow:wallet-setup'));
+  assert.deepEqual([saved.owner, saved.agent, saved.server, saved.amount], [OWNER, agent, SERVER, amount]);
+  // The network has no record yet and the time bound lasts: the same bytes go again, and nothing is signed.
+  world.send = 'ok';
+  const result = await installAndFund(input, chain);
+  assert.deepEqual([result.wallet, world.sent.length, world.sent[0] === world.sent[1]], ['WALLET-1', 2, true]);
+  assert.deepEqual(signed, ['set_up_wallet', 'approve_policy']);
+  // Another agent key or amount never replaces a saved signed setup.
+  const other = journalOf({'flow:wallet-setup': JSON.stringify(saved)});
+  for (const changed of [{agent: 'OTHER-AGENT'}, {amount: '6'}]) {
+    const service = keypairService();
+    const ask = async (path, body) => {
+      try { return await service.ask(path, body); } catch (error) { if (error.details) error.details.agent = body.agent; throw error; }
+    };
+    await assert.rejects(installAndFund({...input, ask, journal: other, ...changed}, chain), /another agent key or amount/);
+  }
+  assert.equal(JSON.parse(other.get('flow:wallet-setup')).signedPayload, saved.signedPayload);
+  // Unreadable saved bytes are never replaced.
+  await assert.rejects(installAndFund({...input, ask: keypairService().ask, journal: journalOf({'flow:wallet-setup': '{"hash":"x"}'})}, chain), /unreadable/);
+  assert.equal(signed.length, 2);
+});
+
+test('a saved setup is replaced only when the network proves that it never applied', async () => {
+  const lost = async (validUntil) => {
+    const rail = keypairRail(), journal = journalOf();
+    rail.world.send = 'lost';
+    rail.world.validUntil = validUntil;
+    const input = {ask: keypairService().ask, sign: ownerSigns([]), journal, key: 'flow', policyId, agent, amount, reviewed: reviewed(), onStep() {}};
+    await assert.rejects(installAndFund(input, rail.chain), /did not confirm the wallet setup/);
+    rail.world.send = 'ok';
+    return {...rail, journal, input, saved: JSON.parse(journal.get('flow:wallet-setup'))};
+  };
+  // The network holds the setup as failed: it created nothing, and a new setup with a new account is signed.
+  const failed = await lost();
+  failed.world.held.set(failed.saved.hash, {hash: failed.saved.hash, ledger: 9, successful: false});
+  const replaced = await installAndFund({...failed.input, sign: ownerSigns([])}, failed.chain);
+  assert.equal(replaced.wallet, 'WALLET-2');
+  // Past its time bound, the rail decides: an applied setup is done, a setup that never applied is replaced, and an
+  // unclear answer keeps it saved.
+  const past = Math.floor(Date.now() / 1000) - 60;
+  for (const [expired, wallet] of [[async () => ({ledger: 11}), 'WALLET-1'], [async () => null, 'WALLET-2'], [async () => { throw new Error('unchecked'); }, null]]) {
+    const run = await lost(past);
+    if (wallet === 'WALLET-1') run.world.created.push('WALLET-1'), run.world.owners.set('WALLET-1', OWNER);
+    const chain = {...run.chain, expiredRecord: expired};
+    if (wallet) assert.equal((await installAndFund(run.input, chain)).wallet, wallet);
+    else {
+      await assert.rejects(installAndFund(run.input, chain), error => error.retry === true && /did not confirm the wallet setup/.test(error.message));
+      assert.equal(JSON.parse(run.journal.get('flow:wallet-setup')).hash, run.saved.hash);
+    }
+  }
+  // An unclear record keeps the setup saved.
+  const unclear = await lost();
+  await assert.rejects(installAndFund(unclear.input, {...unclear.chain, transaction: async () => null}), /did not confirm the wallet setup/);
+  await assert.rejects(installAndFund(unclear.input, {...unclear.chain, transaction: async () => ({hash: hash(3), ledger: 5, successful: true})}), /did not confirm the wallet setup/);
+  await assert.rejects(installAndFund(unclear.input, {...unclear.chain, transaction: async () => ({hash: unclear.saved.hash, ledger: 5})}), /did not confirm the wallet setup/);
+  assert.equal(JSON.parse(unclear.journal.get('flow:wallet-setup')).hash, unclear.saved.hash);
 });
 
 test('a registration whose reply is lost funds nothing again: the retained setup records its funding', async () => {
@@ -577,8 +659,8 @@ test('a deployment signs the approval only of the reviewed policy for the new wa
     const {chain: other, world} = keypairRail({owners});
     const {ask, calls} = keypairService();
     // The setup records its own owner unless the test empties the record after it.
-    const run = other.keypairSetup.run;
-    other.keypairSetup.run = async input => { const done = await run(input); if (owners) world.owners.clear(); return done; };
+    const send = other.keypairSetup.send;
+    other.keypairSetup.send = async (...args) => { const ledger = await send(...args); if (owners) world.owners.clear(); return ledger; };
     const signing = async s => s.action === 'set_up_wallet' ? `signed:${s.payload}` : sign(s);
     await assert.rejects(installAndFund({ask, sign: signing, journal: journalOf(), key: 'o', policyId, agent, amount, reviewed: reviewed(), onStep() {}}, other),
       error => error instanceof OwnerFlowError && expected.test(error.message) && error.retry === retry);

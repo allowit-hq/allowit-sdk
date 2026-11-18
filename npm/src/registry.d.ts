@@ -316,14 +316,19 @@ export interface OwnerChain {
    * null when it can never apply. Rejects when the network cannot prove either; the step then stays saved.
    */
   expiredRecord(network: string, hash: string, signedPayload: string): Promise<{ledger: number} | null>;
-  /** The account of a keypair wallet, which one owner signature creates and funds. A rail without one omits it. */
+  /**
+   * The steps of a keypair wallet's account, which one owner signature creates and funds. The SDK keeps the signed
+   * setup in its journal and decides when to send it again or replace it. A rail without one omits it.
+   */
   readonly keypairSetup?: {
-    run(input: {network: string; owner: string; agent: string; server: string; amount: string; sign: (step: OwnerStep) => Promise<string>;
-      onStep: (text: string) => void; journal: OwnerJournal; key: string; retain: boolean}): Promise<{wallet: string; transactionHash: string; ledger: number; configuration: Record<string, unknown>}>;
-    /** The wallet and agent of a signed setup, or null. */
-    of(signedPayload: string, network: string): {wallet: string; agent: string} | null;
-    /** True when a failed setup stays saved and a resume needs no new signature. */
-    pending(error: unknown): boolean;
+    /** Builds the setup. `complete` checks the owner's signed bytes and adds the new account's own signature. */
+    prepare(input: {network: string; owner: string; agent: string; server: string; amount: string}): Promise<{wallet: string; step: OwnerStep; complete(ownerSigned: string): string}>;
+    /** What signed setup bytes are: their hash, roles and own time bound, or null. */
+    read(signedPayload: string, network: string): {hash: string; owner: string; wallet: string; agent: string; server: string; validUntil: number} | null;
+    /** Sends signed setup bytes. The ledger of the successful transaction, or null without a certain answer. */
+    send(network: string, signedPayload: string, hash: string): Promise<number | null>;
+    /** The installation document that the server registers for the account. */
+    configuration(network: string, wallet: string, owner: string, agent: string, server: string): Record<string, unknown>;
   };
   /** The owner's approval of a keypair wallet's policy: one message signature. A rail without one omits it. */
   readonly approval?: {
