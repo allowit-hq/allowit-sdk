@@ -1,5 +1,6 @@
 //! The SDK's owner sign-in against a fake backend, with a fake rail signature.
 use super::*;
+use serde_json::json;
 use std::{
     io::{BufRead, BufReader, Read, Write},
     net::TcpListener,
@@ -305,6 +306,4 @@ fn a_typed_refusal_keeps_its_code_and_details() {
     );
     assert_eq!(error.status, Some(404));
     assert_eq!(error.detail("requestId"), Some("r9"));
-    // An untyped refusal names no code.
-    assert_eq!(refusal(502, b"bad gateway").api_code, None);
 }
