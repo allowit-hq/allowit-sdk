@@ -192,15 +192,24 @@ fn the_sdk_signs_the_owner_in_and_posts_under_the_rotated_session() {
         .post("/api/native/reputation", &json!({"policyId": "p"}), NOW)
         .unwrap();
     assert_eq!(reply, json!({"ok": true}));
-    let seen = seen.lock().unwrap().clone();
     assert_eq!(
-        seen,
+        seen.lock().unwrap().clone(),
         vec![
             ("/api/auth/challenge".to_owned(), String::new()),
             ("/api/auth/verify".to_owned(), GUEST.to_owned()),
             ("/api/native/reputation".to_owned(), ROTATED.to_owned()),
         ]
     );
+    // A path that is no API route of the backend, such as one that names another host, sends
+    // nothing and no cookie.
+    for path in [
+        ".attacker.example/api/collect",
+        "@attacker.example/api/x",
+        "/api/../auth/verify",
+    ] {
+        assert!(session.post(path, &json!({}), NOW).is_err(), "{path}");
+    }
+    assert_eq!(seen.lock().unwrap().len(), 3);
     // A session past its expiry sends nothing.
     assert!(
         session
@@ -248,6 +257,18 @@ fn the_owner_signs_nothing_but_the_exact_sign_in_message() {
         assert!(Session::sign_in(&url, ORIGIN, NETWORK, &Owner, &signature, NOW).is_err());
         assert_eq!(signature.0.load(Ordering::SeqCst), 0, "{field}");
     }
+}
+
+#[test]
+fn an_empty_origin_is_refused_before_any_request() {
+    let (url, seen) = backend(Plan::new());
+    let signature = Signature::default();
+    let error = Session::sign_in(&url, "", NETWORK, &Owner, &signature, NOW)
+        .err()
+        .unwrap();
+    assert_eq!(error.message, "Set the explicit owner sign-in Origin");
+    assert!(seen.lock().unwrap().is_empty());
+    assert_eq!(signature.0.load(Ordering::SeqCst), 0);
 }
 
 #[test]

@@ -158,22 +158,22 @@ pub(crate) fn call(
         .ok_or_else(|| {
             Error::unsupported("This rail signs no text message, so the owner cannot sign in here")
         })?;
-    let now = (cx.clock)()?;
-    crate::owner_session::Session::sign_in(
+    let session = crate::owner_session::Session::sign_in(
         cx.authority.origin(),
         cx.origin,
         cx.network,
         cx.signer,
         signature,
-        now,
-    )?
-    .post(path, body, now)
+        (cx.clock)()?,
+    )?;
+    // The sign-in took time: the session's expiry is checked against the clock now.
+    session.post(path, body, (cx.clock)()?)
 }
 /// The path of an owner route: an API route of the configured backend, never another origin or
 /// another route after URL normalization. The route holds letters, digits, `_`, `-` and single
 /// `/` only, so no dot segment, encoded character or backslash can climb out of `/api/`. The
 /// query holds letters, digits and `%`, `=`, `&`, `_`, `-`, `.`, `:`.
-fn check_route(path: &str) -> Result<()> {
+pub(crate) fn check_route(path: &str) -> Result<()> {
     let (route, query) = path.split_once('?').unwrap_or((path, ""));
     let route_ok = route.starts_with("/api/")
         && route.len() > "/api/".len()

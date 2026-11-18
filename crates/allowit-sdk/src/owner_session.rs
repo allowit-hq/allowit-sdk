@@ -64,6 +64,10 @@ impl Session {
         signature: &dyn MessageSignature,
         now: u64,
     ) -> Result<Self> {
+        // An empty origin would read as the default app origin, which the caller never named.
+        if origin.is_empty() {
+            return Err(Error::config("Set the explicit owner sign-in Origin"));
+        }
         let backend = parse_origin(backend)?;
         let origin = parse_origin(origin)?;
         let owner = signer.address().to_owned();
@@ -122,8 +126,11 @@ impl Session {
         })
     }
 
-    /// Post `body` to the owner route `path` under this session. The reply is the server's JSON.
+    /// Post `body` to the owner route `path` under this session. `path` must be an API route of
+    /// the backend ([`crate::owner::check_route`]): the session cookie never goes to another
+    /// origin or route. The reply is the server's JSON.
     pub fn post(&self, path: &str, body: &Value, now: u64) -> Result<Value> {
+        crate::owner::check_route(path)?;
         if self.expires <= now {
             return Err(Error::config("The owner session expired; sign in again"));
         }
