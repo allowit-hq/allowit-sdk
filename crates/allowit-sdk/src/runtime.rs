@@ -451,6 +451,20 @@ impl Runtime {
             .upload_code_within(&i.0, wasm, max_fee, poll, now)
             .map(|r| r.map(|r| Receipt(r.0)))
     }
+    /// Make the installation's wallet code live again when it lapsed, from the server's sending
+    /// account, with the network fee bounded by `max_fee`. `None` when the code is live. The
+    /// restoration names the code by its hash and needs no code bytes.
+    pub fn restore_code_within(
+        &self,
+        i: &Installation,
+        max_fee: u64,
+        poll: Poll,
+        now: u64,
+    ) -> Result<Option<Receipt>> {
+        self.provider
+            .restore_code_within(&i.0, max_fee, poll, now)
+            .map(|r| r.map(|r| Receipt(r.0)))
+    }
     pub fn prepare_owner(
         &self,
         i: &Installation,

@@ -167,11 +167,11 @@ importers:
   .:
     dependencies:
       '@allowit/core':
-        specifier: github:allowit-hq/allowit-core#c6567d7cacd7364bca54f5bb5432e9e68281e53f
-        version: https://codeload.github.com/allowit-hq/allowit-core/tar.gz/c6567d7cacd7364bca54f5bb5432e9e68281e53f
+        specifier: github:allowit-hq/allowit-core#4afff1e722cb68ee4a9da32e1b6f65bdd553e4a8
+        version: https://codeload.github.com/allowit-hq/allowit-core/tar.gz/4afff1e722cb68ee4a9da32e1b6f65bdd553e4a8
       '@allowit/stellar':
-        specifier: github:allowit-hq/allowit-contracts-stellar#c7cf75c16881e9c2c5f222c0222cdb655a301a71&path:/npm/stellar
-        version: https://codeload.github.com/allowit-hq/allowit-contracts-stellar/tar.gz/c7cf75c16881e9c2c5f222c0222cdb655a301a71#path:/npm/stellar(debug@4.4.3)
+        specifier: github:allowit-hq/allowit-contracts-stellar#393c6f29aae62c3c68431f5d55c6176f4fb51234&path:/npm/stellar
+        version: https://codeload.github.com/allowit-hq/allowit-contracts-stellar/tar.gz/393c6f29aae62c3c68431f5d55c6176f4fb51234#path:/npm/stellar(debug@4.4.3)
     devDependencies:
       typescript:
         specifier: 5.9.3
@@ -179,12 +179,12 @@ importers:
 
 packages:
 
-  '@allowit/core@https://codeload.github.com/allowit-hq/allowit-core/tar.gz/c6567d7cacd7364bca54f5bb5432e9e68281e53f':
-    resolution: {gitHosted: true, integrity: sha512-bvf5cv+vWZHcY6hgB/+IbPgMWgrDYYBwaoz1bmUkCJltfqZ5CMwds7K9+DLq/+3Ciy8S9zG9cQvVJ3fqTEAnzg==, tarball: https://codeload.github.com/allowit-hq/allowit-core/tar.gz/c6567d7cacd7364bca54f5bb5432e9e68281e53f}
-    version: 0.12.4
+  '@allowit/core@https://codeload.github.com/allowit-hq/allowit-core/tar.gz/4afff1e722cb68ee4a9da32e1b6f65bdd553e4a8':
+    resolution: {gitHosted: true, integrity: sha512-QJB9fEIKgi1z3aXtrQkd3LK7WABvArjwCDKCtvp49UsFDhN85xnnLXvHVcFetheNbkJC7kGGILO6OTCJ6x6bfA==, tarball: https://codeload.github.com/allowit-hq/allowit-core/tar.gz/4afff1e722cb68ee4a9da32e1b6f65bdd553e4a8}
+    version: 0.12.5
 
-  '@allowit/stellar@https://codeload.github.com/allowit-hq/allowit-contracts-stellar/tar.gz/c7cf75c16881e9c2c5f222c0222cdb655a301a71#path:/npm/stellar':
-    resolution: {gitHosted: true, integrity: sha512-WIDEvVoKjRyJUr4OGUeNXzZrTEq7lFKC+7uj/r6cUtvXsW+6BRaVDJcp1WP+oW3vDWCfBmE6gYIbWpBcUA2/aA==, path: /npm/stellar, tarball: https://codeload.github.com/allowit-hq/allowit-contracts-stellar/tar.gz/c7cf75c16881e9c2c5f222c0222cdb655a301a71}
+  '@allowit/stellar@https://codeload.github.com/allowit-hq/allowit-contracts-stellar/tar.gz/393c6f29aae62c3c68431f5d55c6176f4fb51234#path:/npm/stellar':
+    resolution: {gitHosted: true, integrity: sha512-hjgIciQtAMURNS64OnoZ2T13n0Vd3icNv7ilFvd3kxOQ15Yw+BRi5qRi/HRTtATJgTrE9M5xP3rQaFvP2NlriA==, path: /npm/stellar, tarball: https://codeload.github.com/allowit-hq/allowit-contracts-stellar/tar.gz/393c6f29aae62c3c68431f5d55c6176f4fb51234}
     version: 0.4.0
 
   '@exodus/bytes@1.16.0':
@@ -391,11 +391,11 @@ packages:
 
 snapshots:
 
-  '@allowit/core@https://codeload.github.com/allowit-hq/allowit-core/tar.gz/c6567d7cacd7364bca54f5bb5432e9e68281e53f': {}
+  '@allowit/core@https://codeload.github.com/allowit-hq/allowit-core/tar.gz/4afff1e722cb68ee4a9da32e1b6f65bdd553e4a8': {}
 
-  '@allowit/stellar@https://codeload.github.com/allowit-hq/allowit-contracts-stellar/tar.gz/c7cf75c16881e9c2c5f222c0222cdb655a301a71#path:/npm/stellar(debug@4.4.3)':
+  '@allowit/stellar@https://codeload.github.com/allowit-hq/allowit-contracts-stellar/tar.gz/393c6f29aae62c3c68431f5d55c6176f4fb51234#path:/npm/stellar(debug@4.4.3)':
     dependencies:
-      '@allowit/core': https://codeload.github.com/allowit-hq/allowit-core/tar.gz/c6567d7cacd7364bca54f5bb5432e9e68281e53f
+      '@allowit/core': https://codeload.github.com/allowit-hq/allowit-core/tar.gz/4afff1e722cb68ee4a9da32e1b6f65bdd553e4a8
       '@noble/curves': 1.9.7
       '@noble/hashes': 1.8.0
       '@stellar/freighter-api': 6.0.1
