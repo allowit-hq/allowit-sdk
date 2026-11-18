@@ -144,10 +144,15 @@ pub struct OwnerView {
     pub build: Option<BuildState>,
 }
 
-/// Read the build ticket of a Custom policy with the owner's session.
+/// Read the build ticket of a Custom policy with the owner's session. The rail signs the owner
+/// in; the SDK sends the request.
 pub fn owner_view(cx: &crate::owner::Context<'_>, policy_id: &str) -> Result<OwnerView> {
     token("policy id", policy_id)?;
-    let value = crate::owner::custom_build(cx, policy_id)?;
+    let value = crate::owner::call(
+        cx,
+        "/api/native/custom/build",
+        &serde_json::json!({ "policyId": policy_id }),
+    )?;
     let view: OwnerView = serde_json::from_value(value)
         .map_err(|_| Error::uncertain("The server returned an invalid custom build reply"))?;
     if view.policy_id != policy_id {
