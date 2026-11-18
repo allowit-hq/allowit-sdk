@@ -305,43 +305,11 @@ export interface OwnerFlowFailure extends Error {
   retry: boolean;
 }
 
-/** What history holds for a transaction: `'missing'`, its record, or null when the read gave no clear answer. */
-export type TransactionRecord = 'missing' | {hash: string; ledger: number; successful: boolean} | null;
-/** The fields of a keypair wallet's policy approval that the workflow checks. */
-export interface ApprovalFields {policyId: string; revision: number; wallet: string}
-export interface OwnerChain {
-  transaction(network: string, hash: string): Promise<TransactionRecord>;
-  /**
-   * What the network holds for a signed step past its time bound: its ledger when it applied before the bound, or
-   * null when it can never apply. Rejects when the network cannot prove either; the step then stays saved.
-   */
-  expiredRecord(network: string, hash: string, signedPayload: string): Promise<{ledger: number} | null>;
-  /**
-   * The steps of a keypair wallet's account, which one owner signature creates and funds. The SDK keeps the signed
-   * setup in its journal and decides when to send it again or replace it. A rail without one omits it.
-   */
-  readonly keypairSetup?: {
-    /** Builds the setup. `complete` checks the owner's signed bytes and adds the new account's own signature. */
-    prepare(input: {network: string; owner: string; agent: string; server: string; amount: string}): Promise<{wallet: string; step: OwnerStep; complete(ownerSigned: string): string}>;
-    /** What signed setup bytes are: their hash, roles and own time bound, or null. */
-    read(signedPayload: string, network: string): {hash: string; owner: string; wallet: string; agent: string; server: string; validUntil: number} | null;
-    /** Sends signed setup bytes. The ledger of the successful transaction, or null without a certain answer. */
-    send(network: string, signedPayload: string, hash: string): Promise<number | null>;
-    /** The installation document that the server registers for the account. */
-    configuration(network: string, wallet: string, owner: string, agent: string, server: string): Record<string, unknown>;
-  };
-  /** The owner's approval of a keypair wallet's policy: one message signature. A rail without one omits it. */
-  readonly approval?: {
-    read(message: unknown, network: string): ApprovalFields | null;
-    /** Whether the approval states exactly the reviewed policy for `wallet`. */
-    holds(fields: ApprovalFields, wallet: string, reviewed: {source: string; params: Record<string, ParamValue>; rules?: unknown; tier?: unknown}): boolean;
-    step(message: string): OwnerStep;
-    /** The wallet's owner as the network names it, or null. */
-    walletOwner(network: string, wallet: string): Promise<string | null>;
-    /** Whether `signature` is the signature of `signer` over the hexadecimal digest `hash`. */
-    signedBy(signer: string, hash: string, signature: number[]): boolean;
-  };
-}
+/**
+ * The rail hooks of the owner workflows: Core's contract, which the SDK runs and each rail's `ownerChain` implements.
+ */
+export type {OwnerChain, TransactionRecord, ApprovalFields, PreparedKeypairSetup, SignedKeypairSetup, ReviewedPolicy} from '@allowit/core';
+import type {OwnerChain, OwnerStep as CoreOwnerStep} from '@allowit/core';
 
 export interface RailPlugin {
   readonly id: string;
@@ -380,13 +348,8 @@ export interface RailPlugin {
 }
 
 /** Rail-neutral owner step. `payload` is opaque text that only the vendor signs and reads. */
-export interface OwnerStep {
-  action: string;
-  payload: string;
-  hash: string;
-  expiresAt: number;
-  explorer?: string | null;
-}
+/** One owner step, as Core defines it. */
+export type OwnerStep = CoreOwnerStep;
 
 /** `data` per element kind. */
 export interface ElementData {
