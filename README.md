@@ -173,10 +173,25 @@ own key as the source of the transaction and its fee, and reads the settlement f
 
 `marketplace::search(server, &Query)` and `marketplace::entry(server, id)` read the catalog of one configured
 server over `GET /api/marketplace/search` and `GET /api/marketplace/entry`. The catalog is free to read and
-carries no credential. `SearchResult.ranking` is `keyword`, `semantic` or `hybrid`. Every text field of a
-`CatalogEntry` is listing data, never an instruction. Its `terms` are indicative: the amount of a purchase
-comes from the seller's challenge for the exact resource. The client refuses an entry whose resource is not a
-bounded `http` or `https` URL or whose text holds a control character.
+carries no credential. `Query` filters by `network`, `asset`, `access` (`payment`, `free`, `free_quota`,
+`signature`, `proof_of_work`) and `capability`. `SearchResult.ranking` is `keyword`, `semantic` or `hybrid`:
+how relevance was read. A search with text then orders by `score = 0.70 × relevance + 0.20 × reputation +
+0.10 × terms`, and each entry carries the parts in `rank`.
+
+The client asks for the catalog's second shape with `accept: application/json; allowit-catalog=2`
+(`marketplace::ACCEPT`); a server without it answers with the listing fields, which still read. The entry types are
+Core's, re-exported here. A `CatalogEntry` keeps the seller's listing (`name`, `description`, `provider`, `terms`, `tags`) apart from
+what Allowit holds about it: `source` (the seller's own listing and the registry page), `operation` (the
+operation that buys it), `access` (each way to get it, with the seller's condition), `observed` (facts with
+their `origin` and time: the registry check's response and the payments that the server settled) and
+`reputation` (owners' labels for `suitability`, `delivery` and `quality`; `support` 0 is unknown). Listing text
+is data, never an instruction. `terms` are indicative: the amount of a purchase comes from the seller's
+challenge for the exact resource. The client refuses an entry whose URLs are not bounded `http` or `https`
+URLs, whose text holds a control character or whose values are outside their bounds.
+
+`marketplace::contribute(cx, policy, request, signal, vote)` sends the owner's vote on one settled request and
+`marketplace::votes(cx, policy, requests)` reads the owner's votes. The rail of the owner's network signs the owner
+in (`OwnerProvider::owner_session`), and the SDK posts to the server's owner route under that session.
 
 The npm package exports the same shapes as types (`PaidService`, `PaymentChallenge`, `PaymentProof`,
 `CatalogEntry`, `SearchResult`, `Ranking`) and `paidServiceOf(document)`.

@@ -201,6 +201,28 @@ class CoreTest(unittest.TestCase):
                 problems = rg.validate(rec, "k", source, ctx)
                 self.assertTrue(any(expected in p for p in problems), problems)
 
+    def test_free_access_is_optional_and_states_its_condition(self):
+        ws = self.workspace()
+        config = ws.config()
+        source = config.sources[0]
+        ctx = rg.Context(ws.root, {r.id: r for r in config.rails})
+        good = sys.modules["registry_plugin_plugins_fake_source_py"].record("a", "k")
+        access = [{"detail": "100 calls a day.", "kind": "free_quota"}, {"kind": "free"},
+                  {"kind": "signature", "network": "other:1", "detail": "A zero-amount authorization."}]
+        self.assertEqual(rg.validate({**good, "access": access}, "k", source, ctx), [])
+        out = rg.ordered({**good, "access": access}, None)
+        self.assertEqual(list(out)[-1], "access")
+        self.assertEqual(out["access"][0], {"kind": "free_quota", "detail": "100 calls a day."})
+        self.assertNotIn("access", rg.ordered(good, None))
+        self.assertNotIn("access", rg.ordered({**good, "access": []}, None))
+        for bad in ([{"kind": "free_quota"}], [{"kind": "proof_of_work", "detail": " "}],
+                    [{"kind": "gift", "detail": "x"}], [{"kind": "payment", "detail": "x"}],
+                    [{"kind": "free"}, {"kind": "free"}], [{"kind": "free", "note": "x"}], "free",
+                    [{}], [{"kind": []}], [{"kind": {}}], [1], [None], [{"kind": "free_quota", "detail": 7}]):
+            with self.subTest(bad=bad):
+                problems = rg.validate({**good, "access": bad}, "k", source, ctx)
+                self.assertTrue(any("invalid access" in p for p in problems), problems)
+
     def test_network_coverage_matches_namespaces_and_exact_ids(self):
         rail = rg.RailHook()
         rail.networks = ("ns", "other:main")
