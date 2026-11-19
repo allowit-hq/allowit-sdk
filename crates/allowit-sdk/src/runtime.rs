@@ -501,6 +501,9 @@ impl Runtime {
     ///
     /// The journal `store` decides. Its packet is the transaction: when it holds one under the
     /// same operation ID, this follows that original and its status, not the new preparation.
+    /// A journal packet that names another operation ID, transaction hash or network stops the
+    /// call before any send or lookup. The clock of each send counts from the call's start, so
+    /// the preparation's reads of the network take part of the transaction's time bound.
     /// `submit` retains the transaction before every send, so a transaction is pending once the
     /// journal holds it past `Prepared` (`Submitted` or `SubmissionUnknown`): the network may
     /// still include it. A send that the network did not accept (`Prepared`) goes out again, the
@@ -525,13 +528,14 @@ impl Runtime {
         poll: Poll,
         now: u64,
     ) -> Result<Option<Receipt>> {
+        let started = std::time::Instant::now();
         let Some(prepared) = self
             .provider
             .prepare_code_within(&i.0, wasm, max_fee, now)?
         else {
             return Ok(None);
         };
-        self.send_code(store, Signed(prepared.0), poll, now)
+        self.send_code(store, Signed(prepared.0), poll, (now, started))
     }
     /// Renew the live wallet code `code` that the server uploaded and that wallets share, such as
     /// the code of a fixed tier, from the server's sending accounts, which pay for it, with the
@@ -547,27 +551,42 @@ impl Runtime {
         poll: Poll,
         now: u64,
     ) -> Result<Option<Receipt>> {
+        let started = std::time::Instant::now();
         let Some(prepared) = self.provider.prepare_code_renewal(code, max_fee, now)? else {
             return Ok(None);
         };
-        self.send_code(store, Signed(prepared.0), poll, now)
+        self.send_code(store, Signed(prepared.0), poll, (now, started))
     }
     /// Send the code transaction `prepared` through the journal `store` and follow it to its
-    /// receipt within `poll`. See [`Self::make_code_live`].
+    /// receipt within `poll`. The clock counts from `start`, the time `now` at which the call
+    /// began and the instant that matched it. See [`Self::make_code_live`].
     fn send_code(
         &self,
         store: &mut dyn OperationStore,
         prepared: Signed,
         poll: Poll,
-        now: u64,
+        start: (u64, std::time::Instant),
     ) -> Result<Option<Receipt>> {
-        let id = prepared.info()?.operation_id;
+        let expected = prepared.info()?;
+        let id = expected.operation_id;
         let (signed, mut status) = match store.load(id)? {
-            Some((original, status)) => (original, status),
+            Some((original, status)) => {
+                // The journal's packet is followed only when it is this transaction.
+                let held = original.info()?;
+                if held.operation_id != id
+                    || held.transaction_hash != expected.transaction_hash
+                    || original.network() != prepared.network()
+                {
+                    return Err(crate::error::Error::config(
+                        "The journal holds another transaction under the code transaction's operation ID",
+                    ));
+                }
+                (original, status)
+            }
             None => (prepared, Status::Prepared),
         };
-        let hash = signed.info()?.transaction_hash;
-        let started = std::time::Instant::now();
+        let hash = expected.transaction_hash;
+        let (now, started) = start;
         let clock = || now.saturating_add(started.elapsed().as_secs());
         let mut last = None;
         for attempt in 0..poll.attempts.max(1) {
@@ -766,6 +785,10 @@ mod code_transactions {
         observed: Vec<Vec<u8>>,
         /// The ledger's final status of the transaction, once it has one.
         outcome: Option<Status>,
+        /// How long each preparation takes, as the rail's reads of the network do.
+        preparation_time: std::time::Duration,
+        /// The time that each send carried.
+        sent_at: Vec<u64>,
     }
     struct Packets;
     static PACKETS: Packets = Packets;
@@ -779,10 +802,16 @@ mod code_transactions {
         fn prepared_metadata(&self, _: &Packet) -> Result<native::PreparedMetadata> {
             unimplemented!()
         }
-        fn info(&self, _: &Packet, _: Kind) -> Result<PacketInfo> {
+        /// The operation ID and transaction hash that the packet names (`id`, `hash`), by
+        /// default those of the one code transaction.
+        fn info(&self, p: &Packet, _: Kind) -> Result<PacketInfo> {
+            let document: serde_json::Value = serde_json::from_str(p.document().get()).unwrap();
+            let byte = |name: &str, default: u8| {
+                [document[name].as_u64().map_or(default, |b| b as u8); 32]
+            };
             Ok(PacketInfo {
-                operation_id: [7; 32],
-                transaction_hash: [8; 32],
+                operation_id: byte("id", 7),
+                transaction_hash: byte("hash", 8),
                 wallet: String::new(),
                 expires_at: u64::MAX,
             })
@@ -828,6 +857,8 @@ mod code_transactions {
     impl Rail {
         /// A code transaction, signed: new bytes for each preparation. Live code needs none.
         fn prepare(&self) -> Result<Option<native::Signed>> {
+            let delay = self.0.lock().unwrap().preparation_time;
+            std::thread::sleep(delay);
             let mut chain = self.0.lock().unwrap();
             if chain.live {
                 return Ok(None);
@@ -969,6 +1000,7 @@ mod code_transactions {
         fn broadcast(&self, p: &native::Signed, now: u64) -> Result<native::Status> {
             let mut chain = self.0.lock().unwrap();
             chain.sends += 1;
+            chain.sent_at.push(now);
             if chain.live_at_send == Some(chain.sends) {
                 chain.live = true;
             }
@@ -1202,6 +1234,71 @@ mod code_transactions {
                 .is_none()
         );
         assert_eq!(chain.lock().unwrap().sends, 1);
+    }
+    /// The journal's packet under the operation ID is followed only when it is the transaction
+    /// that the rail prepared: another one is neither sent nor looked up.
+    #[test]
+    fn a_journal_that_holds_another_transaction_under_the_id_stops_the_call() {
+        for foreign in [
+            serde_json::json!({ "id": 9 }),
+            serde_json::json!({ "hash": 9 }),
+            serde_json::json!({}),
+        ] {
+            let network = if foreign == serde_json::json!({}) {
+                "other:network"
+            } else {
+                NETWORK
+            };
+            let packet = Signed(native::Packet::new(network, &foreign, &PACKETS).unwrap());
+            let mut store = MemoryOperations::default();
+            store
+                .record([7; 32], &packet, Status::SubmissionUnknown)
+                .unwrap();
+            let chain = Arc::new(Mutex::new(Chain {
+                outcome: Some(Status::Confirmed),
+                ..Chain::default()
+            }));
+            let refused = run_on(chain.clone(), &mut store, 4).unwrap_err();
+            assert!(
+                refused.message.contains("another transaction"),
+                "{refused:?}"
+            );
+            let chain = chain.lock().unwrap();
+            assert_eq!((chain.sends, chain.lookups), (0, 0), "{foreign}");
+        }
+    }
+    /// A send carries the time of the call, which the preparation's reads of the network take
+    /// part of: the clock starts when the call does.
+    #[test]
+    fn the_send_counts_the_preparation_in_its_clock() {
+        let chain = Arc::new(Mutex::new(Chain {
+            preparation_time: std::time::Duration::from_millis(1_100),
+            outcome: Some(Status::Confirmed),
+            ..Chain::default()
+        }));
+        let mut store = MemoryOperations::default();
+        assert!(run_on(chain.clone(), &mut store, 1).unwrap().is_some());
+        assert!(
+            chain.lock().unwrap().sent_at[0] >= 2,
+            "{:?}",
+            chain.lock().unwrap().sent_at
+        );
+        let runtime = Runtime {
+            provider: Box::new(Rail(chain.clone())),
+        };
+        let poll = Poll {
+            attempts: 1,
+            interval: std::time::Duration::ZERO,
+        };
+        let mut store = MemoryOperations::default();
+        runtime
+            .renew_code(&mut store, &[3; 32], 10_000, poll, 1)
+            .unwrap();
+        assert!(
+            chain.lock().unwrap().sent_at[1] >= 2,
+            "{:?}",
+            chain.lock().unwrap().sent_at
+        );
     }
     #[test]
     fn live_code_needs_no_transaction() {
