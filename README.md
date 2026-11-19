@@ -115,6 +115,7 @@ See the [portable policy reference](docs/policy-reference.md) for source restric
 - `wallet`, `routing` and `config` supply explicit caller bindings and registered network selection.
 - `paid_service` and `marketplace` serve paid calls. See [Paid calls and the marketplace](#paid-calls-and-the-marketplace).
 - `custom_build` serves the build of a Custom wallet. See [Custom wallet build](#custom-wallet-build).
+- `accounting::post_flight(counters, now, usage)` updates the counters that a server keeps for a wallet after one approved operation. It runs Core's standard post-flight (`allowit_core::post_flight`), the one definition that a wallet and the server's policy evaluation also use: the UTC day rolls over, the call counts, the spent units add to the day and the lifetime, the gross amount with its gas adds to the day's volume, and an unpriced operation is marked. Counters of a later day are refused.
 
 ## Custom wallet build
 
