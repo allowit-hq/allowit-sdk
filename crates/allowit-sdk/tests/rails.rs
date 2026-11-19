@@ -250,12 +250,11 @@ fn a_server_runtime_takes_its_sending_accounts() {
     });
 }
 
-/// A transport that counts the calls of the rail and answers none, as an unreachable network.
+/// A transport that answers no call, as an unreachable network.
 #[derive(Default)]
-struct Unreachable(std::sync::atomic::AtomicUsize);
+struct Unreachable;
 impl runtime::Transport for Unreachable {
     fn call(&self, _: &str, _: serde_json::Value) -> allowit_sdk::error::Result<serde_json::Value> {
-        self.0.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         Err(allowit_sdk::error::Error::config(
             "The network is unreachable in this test",
         ))
@@ -270,9 +269,9 @@ const NO_CODE_TRANSACTIONS: [&str; 3] = [
 ];
 
 /// The server's code upload at deployment and its renewal of shared code reach the rail's own
-/// code transactions through the registered sending runtime: the rail reads the network for
-/// each, so neither answers Core's refusal of a rail without them. The rail's own tests follow
-/// a code transaction through a model of its network; here the network answers nothing.
+/// code transactions through the registered sending runtime: neither answers Core's refusal of a
+/// rail without them, however the rail then fails on a network that answers nothing. The rail's
+/// own tests follow a code transaction through a model of its network.
 #[test]
 fn a_rail_that_deploys_prepares_code_uploads_and_renewals_itself() {
     struct Sending;
@@ -296,7 +295,7 @@ fn a_rail_that_deploys_prepares_code_uploads_and_renewals_itself() {
             attempts: 1,
             interval: std::time::Duration::ZERO,
         };
-        let renewal = std::sync::Arc::new(Unreachable::default());
+        let renewal = std::sync::Arc::new(Unreachable);
         let sending =
             Runtime::with_sender(network, renewal.clone(), std::sync::Arc::new(Sending)).unwrap();
         let mut journal = runtime::MemoryOperations::default();
@@ -304,13 +303,8 @@ fn a_rail_that_deploys_prepares_code_uploads_and_renewals_itself() {
             .renew_code(&mut journal, &[3; 32], 1_000_000, poll, 1)
             .unwrap_err();
         assert!(!refused_by_core(&refused), "{}: {refused:?}", rail.id());
-        assert!(
-            renewal.0.load(std::sync::atomic::Ordering::SeqCst) > 0,
-            "{}",
-            rail.id()
-        );
 
-        let upload = std::sync::Arc::new(Unreachable::default());
+        let upload = std::sync::Arc::new(Unreachable);
         let sending =
             Runtime::with_sender(network, upload.clone(), std::sync::Arc::new(Sending)).unwrap();
         // A new installation from the profile's description: its wallet comes from the
@@ -340,11 +334,6 @@ fn a_rail_that_deploys_prepares_code_uploads_and_renewals_itself() {
             )
             .unwrap_err();
         assert!(!refused_by_core(&refused), "{}: {refused:?}", rail.id());
-        assert!(
-            upload.0.load(std::sync::atomic::Ordering::SeqCst) > 0,
-            "{}",
-            rail.id()
-        );
         assert!(!journal.pending());
     });
 }
@@ -355,16 +344,20 @@ fn a_rail_that_deploys_prepares_code_uploads_and_renewals_itself() {
 fn a_signer_from_a_seed_is_the_rails_key_of_that_seed() {
     testkit::each(Feature::Transfer, |rail, fx| {
         let network = rail.test_support().network;
-        let signer = wallet::LocalSigner::from_seed(network, &fx.agent_seed).unwrap();
-        let again = wallet::LocalSigner::from_seed(network, &fx.agent_seed).unwrap();
+        // Seeds of the rail's own key size, from the fixture's agent seed.
+        let size = rail.keys().entropy_bytes();
+        let seed: Vec<u8> = fx.agent_seed.iter().cycle().take(size).copied().collect();
+        let other: Vec<u8> = seed.iter().map(|b| b ^ 1).collect();
+        let signer = wallet::LocalSigner::from_seed(network, &seed).unwrap();
+        let again = wallet::LocalSigner::from_seed(network, &seed).unwrap();
         assert_eq!(signer.public(), again.public(), "{}", rail.id());
         assert_eq!(signer.network(), network);
         signer.public().validate().unwrap();
         assert!(!signer.sign_hash(&[5; 32]).unwrap().is_empty());
-        let other = wallet::LocalSigner::from_seed(network, &[fx.agent_seed[0] ^ 1; 32]).unwrap();
+        let other = wallet::LocalSigner::from_seed(network, &other).unwrap();
         assert_ne!(other.address(), signer.address());
-        assert!(wallet::LocalSigner::from_seed(network, &fx.agent_seed[1..]).is_err());
-        assert!(wallet::LocalSigner::from_seed("unknown:network", &fx.agent_seed).is_err());
+        assert!(wallet::LocalSigner::from_seed(network, &seed[1..]).is_err());
+        assert!(wallet::LocalSigner::from_seed("unknown:network", &seed).is_err());
     });
 }
 

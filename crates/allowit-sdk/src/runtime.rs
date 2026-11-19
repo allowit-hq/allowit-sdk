@@ -173,6 +173,8 @@ fn code_receipt(
     signed: &Signed,
     receipt: Receipt,
 ) -> Result<Option<Receipt>> {
+    // Only a receipt of this transaction is its outcome.
+    receipt.verify_operation(signed)?;
     let info = receipt.info()?;
     let _ = store.record(id, signed, info.status.clone());
     if info.status != Status::Confirmed {
@@ -186,6 +188,8 @@ fn code_receipt(
     }
     Ok(Some(receipt))
 }
+/// What a journal holds under an operation ID: the retained packet and its status.
+type Journaled = Option<(Signed, Status)>;
 /// Lowercase hexadecimal of `bytes`.
 fn hex(bytes: &[u8]) -> String {
     bytes.iter().map(|b| format!("{b:02x}")).collect()
@@ -503,7 +507,10 @@ impl Runtime {
     /// same operation ID, this follows that original and its status, not the new preparation.
     /// A journal packet that names another operation ID, transaction hash or network stops the
     /// call, at the first read before any send or lookup, and at a later read before its status
-    /// counts. The clock of each send counts from the call's start, so
+    /// counts. The read just before each send decides: a transaction that the journal holds past
+    /// `Prepared`, also one that another caller of a shared journal sent, is looked up by its
+    /// retained packet, never sent again. A receipt counts only when the rail verifies it as this
+    /// transaction's. The clock of each send counts from the call's start, so
     /// the preparation's reads of the network take part of the transaction's time bound.
     /// `submit` retains the transaction before every send, so a transaction is pending once the
     /// journal holds it past `Prepared` (`Submitted` or `SubmissionUnknown`): the network may
@@ -573,7 +580,7 @@ impl Runtime {
         let network = prepared.network().to_owned();
         // The journal's packet is followed, and its status taken, only when it is this
         // transaction: at the first read and at every read after it.
-        let this = |found: Option<(Signed, Status)>| -> Result<Option<(Signed, Status)>> {
+        let this = |found: Journaled| -> Result<Journaled> {
             match found {
                 Some((original, status)) => {
                     let held = original.info()?;
@@ -590,7 +597,8 @@ impl Runtime {
                 None => Ok(None),
             }
         };
-        let (signed, mut status) = this(store.load(id)?)?.unwrap_or((prepared, Status::Prepared));
+        let (mut signed, mut status) =
+            this(store.load(id)?)?.unwrap_or((prepared, Status::Prepared));
         let hash = expected.transaction_hash;
         let (now, started) = start;
         let clock = || now.saturating_add(started.elapsed().as_secs());
@@ -609,16 +617,21 @@ impl Runtime {
                         continue;
                     }
                 }
-                status = match self.submit(store, &signed, clock()) {
+                status = match self.send_unless_journaled(store, &mut signed, id, &this, clock()) {
                     Ok(status) => status,
-                    // The journal tells whether the send that failed may be pending. A journal
-                    // that cannot be read leaves it in doubt: it is looked up, never sent again.
+                    // The journal tells whether the send that failed may be pending, and holds
+                    // the packet that the call follows. A journal that cannot be read leaves it
+                    // in doubt: it is looked up, never sent again.
                     Err(error) => {
                         last = Some(error);
                         match store.load(id) {
-                            Ok(found) => {
-                                this(found)?.map_or(Status::Prepared, |(_, status)| status)
-                            }
+                            Ok(found) => match this(found)? {
+                                Some((original, status)) => {
+                                    signed = original;
+                                    status
+                                }
+                                None => Status::Prepared,
+                            },
                             Err(_) => Status::SubmissionUnknown,
                         }
                     }
@@ -661,6 +674,35 @@ impl Runtime {
                 )
             })),
         }
+    }
+    /// Send the code transaction `signed` once, unless the journal's read just before the send,
+    /// whose packet `this` checks, holds it already: its retained packet becomes the one that the
+    /// call follows, and a status past `Prepared` is looked up, never sent again, also when
+    /// another caller of a shared journal sent it.
+    fn send_unless_journaled(
+        &self,
+        store: &mut dyn OperationStore,
+        signed: &mut Signed,
+        id: [u8; 32],
+        this: &dyn Fn(Journaled) -> Result<Journaled>,
+        now: u64,
+    ) -> Result<Status> {
+        if let Some((original, status)) = this(store.load(id)?)? {
+            *signed = original;
+            if status != Status::Prepared {
+                return Ok(status);
+            }
+        }
+        self.provider
+            .validate_signed(&native::Signed(signed.0.clone()), now)?;
+        store.record(id, signed, Status::SubmissionUnknown)?;
+        let status = self
+            .provider
+            .broadcast(&native::Signed(signed.0.clone()), now)?;
+        if status != Status::SubmissionUnknown {
+            store.record(id, signed, status.clone())?;
+        }
+        Ok(status)
     }
     pub fn prepare_owner(
         &self,
@@ -793,6 +835,8 @@ mod code_transactions {
         observed: Vec<Vec<u8>>,
         /// The ledger's final status of the transaction, once it has one.
         outcome: Option<Status>,
+        /// The transaction that the receipts settle, when it is another one.
+        receipt_hash: Option<u64>,
         /// How long each preparation takes, as the rail's reads of the network do.
         preparation_time: std::time::Duration,
         /// The time that each send carried.
@@ -842,7 +886,19 @@ mod code_transactions {
         fn same_snapshot(&self, _: &Snapshot, _: &Snapshot) -> Result<bool> {
             unimplemented!()
         }
-        fn verify_receipt(&self, _: &Packet, _: &Packet) -> Result<()> {
+        /// A receipt settles the transaction that its `hash` names, by default the one code
+        /// transaction.
+        fn verify_receipt(&self, r: &Packet, p: &Packet) -> Result<()> {
+            let hash = |packet: &Packet| {
+                let document: serde_json::Value =
+                    serde_json::from_str(packet.document().get()).unwrap();
+                document["hash"].as_u64().unwrap_or(8)
+            };
+            if hash(r) != hash(p) {
+                return Err(crate::error::Error::config(
+                    "The receipt settles another transaction",
+                ));
+            }
             Ok(())
         }
         fn receipt_info(&self, p: &Packet) -> Result<ReceiptInfo> {
@@ -1046,8 +1102,11 @@ mod code_transactions {
                 .outcome
                 .clone()
                 .map(|status| {
-                    native::Packet::new(NETWORK, &serde_json::json!({ "status": status }), &PACKETS)
-                        .map(native::Receipt)
+                    let mut receipt = serde_json::json!({ "status": status });
+                    if let Some(hash) = chain.receipt_hash {
+                        receipt["hash"] = hash.into();
+                    }
+                    native::Packet::new(NETWORK, &receipt, &PACKETS).map(native::Receipt)
                 })
                 .transpose()
         }
@@ -1320,6 +1379,77 @@ mod code_transactions {
                 let chain = chain.lock().unwrap();
                 assert_eq!((chain.sends, chain.lookups), (0, 0));
             }
+        }
+    }
+    /// A receipt of another transaction is no outcome of this one: the journal does not record
+    /// its status, and the call returns no receipt.
+    #[test]
+    fn a_receipt_of_another_transaction_is_refused() {
+        let (result, _, store) = run(Chain {
+            outcome: Some(Status::Confirmed),
+            receipt_hash: Some(9),
+            ..Chain::default()
+        });
+        assert!(result.is_err());
+        assert_ne!(status(&store), Some(Status::Confirmed));
+    }
+    /// A journal shared with another caller that sent the same transaction in the meantime: the
+    /// read just before the send finds it pending, so the call only looks it up, and follows the
+    /// retained packet, also when its signed bytes differ from this preparation's.
+    #[test]
+    fn a_send_that_another_caller_journaled_is_looked_up_not_sent_again() {
+        /// Holds nothing at the first read, then `retained` as `Submitted`.
+        struct Shared {
+            loads: std::cell::Cell<usize>,
+            retained: Signed,
+            recorded: Vec<Status>,
+        }
+        impl OperationStore for Shared {
+            fn load(&self, _: [u8; 32]) -> Result<Option<(Signed, Status)>> {
+                self.loads.set(self.loads.get() + 1);
+                Ok((self.loads.get() > 1).then(|| {
+                    (
+                        self.retained.clone(),
+                        self.recorded.last().cloned().unwrap_or(Status::Submitted),
+                    )
+                }))
+            }
+            fn record(&mut self, _: [u8; 32], signed: &Signed, status: Status) -> Result<()> {
+                assert_eq!(signed.bytes(), self.retained.bytes());
+                self.recorded.push(status);
+                Ok(())
+            }
+        }
+        for retained in [
+            // The same bytes as this preparation's: the first one.
+            serde_json::json!({ "code": 1 }),
+            // The same transaction with other signed bytes.
+            serde_json::json!({ "code": 99 }),
+        ] {
+            let mut store = Shared {
+                loads: std::cell::Cell::new(0),
+                retained: Signed(native::Packet::new(NETWORK, &retained, &PACKETS).unwrap()),
+                recorded: Vec::new(),
+            };
+            let chain = Arc::new(Mutex::new(Chain {
+                // The first send has no receipt yet.
+                pending_lookups: 2,
+                outcome: Some(Status::Confirmed),
+                ..Chain::default()
+            }));
+            assert!(
+                run_on(chain.clone(), &mut store, 4).unwrap().is_some(),
+                "{retained}"
+            );
+            let chain = chain.lock().unwrap();
+            assert_eq!(chain.sends, 0, "{retained}");
+            assert!(
+                chain
+                    .observed
+                    .iter()
+                    .all(|bytes| bytes == store.retained.bytes()),
+                "{retained}"
+            );
         }
     }
     /// A send carries the time of the call, which the preparation's reads of the network take
