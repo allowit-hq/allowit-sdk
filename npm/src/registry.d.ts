@@ -1,4 +1,4 @@
-import type {OwnerChain, OwnerStep as CoreOwnerStep, PolicyValue as ParamValue} from '@allowit/core';
+import type {OwnerChain, OwnerStep as CoreOwnerStep, PolicyValue as ParamValue, WalletAsset} from '@allowit/core';
 import type {
   WalletKindId,
   WalletKindInfo,
@@ -156,9 +156,11 @@ export interface InstallAndFundInput {
   amount: string;
   /**
    * The policy that the owner reviewed: its exact source and every value, and its ordered rules and tier when the host
-   * shows them. A rail whose deployment ends with an approval of the whole policy signs only this policy.
+   * shows them. A rail whose deployment ends with an approval of the whole policy signs only this policy. `asset` is
+   * the asset that the policy pays in, as the policy names it. A keypair wallet is set up to hold it, `amount` is in
+   * it, and the approval must name it. Without one it is the asset of the network itself.
    */
-  reviewed?: {source: string; params: Record<string, ParamValue>; rules?: unknown; tier?: unknown};
+  reviewed?: {source: string; params: Record<string, ParamValue>; rules?: unknown; tier?: unknown; asset?: WalletAsset | null | undefined};
   onStep: (text: string) => void;
 }
 /** One typed param value: Core's `PolicyValue`, the JSON of a policy value. An integer is canonical decimal text. */
@@ -177,9 +179,10 @@ export interface UpdateParamsInput {
   expectedRevision?: number;
   /**
    * The installed policy that the owner reviewed: its wallet, exact source, ordered rules and every value. A rail
-   * whose change is an approval of the whole policy signs only this policy with the changed params replaced.
+   * whose change is an approval of the whole policy signs only this policy with the changed params replaced. `asset`
+   * is the asset that the policy pays in; without one it is the asset of the network itself.
    */
-  installed?: {wallet: string; source: string; rules: unknown; params: Record<string, ParamValue>; tier?: unknown};
+  installed?: {wallet: string; source: string; rules: unknown; params: Record<string, ParamValue>; tier?: unknown; asset?: WalletAsset | null | undefined};
   onStep: (text: string) => void;
 }
 /** Typed codes of the owner workflow. `OwnerFlowFailure.code` holds one, another server code or null. */
@@ -192,7 +195,8 @@ export type OwnerFlowCode =
   | 'param_invalid'
   | 'param_out_of_range'
   | 'update_unavailable'
-  | 'revision_changed';
+  | 'revision_changed'
+  | 'asset_mismatch';
 /** The error that `installAndFund` and `updateParams` reject with. */
 export interface OwnerFlowFailure extends Error {
   code: OwnerFlowCode | string | null;
@@ -203,7 +207,7 @@ export interface OwnerFlowFailure extends Error {
 /**
  * The rail hooks of the owner workflows: Core's contract, which the SDK runs and each rail's `ownerChain` implements.
  */
-export type {OwnerChain, TransactionRecord, ApprovalFields, PreparedKeypairSetup, SignedKeypairSetup, ReviewedPolicy} from '@allowit/core';
+export type {OwnerChain, TransactionRecord, ApprovalFields, PreparedKeypairSetup, SignedKeypairSetup, ReviewedPolicy, WalletAsset} from '@allowit/core';
 
 export interface RailPlugin {
   readonly id: string;
@@ -329,6 +333,7 @@ export const PARAM_OUT_OF_RANGE: 'param_out_of_range';
 export const UPDATE_UNAVAILABLE: 'update_unavailable';
 export const REVISION_CHANGED: 'revision_changed';
 export const UPDATE_PARAMS: 'update_params';
+export const ASSET_MISMATCH: 'asset_mismatch';
 export const WALLET_SETUP_REQUIRED: 'wallet_setup_required';
 export const SET_UP_WALLET: 'set_up_wallet';
 export const APPROVE_POLICY: 'approve_policy';
