@@ -506,6 +506,20 @@ function keypairService({registerFails = 0, message} = {}) {
   return {ask, calls, state};
 }
 
+test('a Native deployment that names no wallet account signs no deployment step', async () => {
+  const {world, chain} = keypairRail(), signed = [];
+  // A reply of the reviewed kind that names no installed wallet and offers a step: a Native wallet is set up only by
+  // the keypair setup, so the step is never signed.
+  const ask = async path => {
+    if (path === 'native/deploy/prepare') return {policyId, walletKind: 'native', step: step('create_wallet', 1)};
+    throw new Error(path);
+  };
+  await assert.rejects(
+    installAndFund({ask, sign: ownerSigns(signed), journal: journalOf(), key: 'flow', policyId, agent, amount, reviewed: reviewed(), walletKind: 'native', onStep() {}}, chain),
+    error => error instanceof OwnerFlowError && /names no wallet account/.test(error.message));
+  assert.deepEqual([signed, world.created], [[], []]);
+});
+
 test('a wallet setup that the service asks for another kind than the reviewed one is never signed', async () => {
   const {world, chain} = keypairRail(), signed = [];
   const service = keypairService();

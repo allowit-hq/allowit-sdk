@@ -585,6 +585,9 @@ async function run(chain, {network, ask, sign, journal, key, policyId, agent, am
       break;
     }
     if (wallet) break;
+    // A Native wallet is set up by the keypair setup alone: a reply of it that names no wallet account signs no step.
+    if (walletKind === 'native')
+      throw new OwnerFlowError('The service prepared a step for a Native wallet that names no wallet account. Nothing was signed.', null, false);
     const step = stepOf(reply.step);
     if (!step) throw new OwnerFlowError('The service did not prepare an owner step for this policy.', null, false);
     // The owner signs a Custom wallet's creation only for the code of the owner's own build.
