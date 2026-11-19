@@ -5,6 +5,7 @@
  * supplies what only it can read or check, through its `ownerChain` hooks: the network's record of a transaction, the
  * record of an expired signed step, the setup of a keypair wallet and the approval of a keypair wallet's policy.
  */
+import KINDS from './wallet-kinds.js';
 
 /** Typed codes of a refused `native/owner/submit`. The reply body is `{error, code, details}`. */
 export const OWNER_TRANSACTION_EXPIRED = 'owner_transaction_expired';
@@ -27,6 +28,12 @@ export const UPDATE_PARAMS = 'update_params';
 export const ASSET_MISMATCH = 'asset_mismatch';
 /** The service's refusal of a deployment whose keypair wallet needs its setup first. */
 export const WALLET_SETUP_REQUIRED = 'wallet_setup_required';
+/** The service holds no build of a Custom wallet's code, or the host gave the workflow no way to wait for one. */
+export const CUSTOM_BUILD_MISSING = 'custom_build_missing';
+/** A Custom wallet's creation names other code than the owner's build. */
+export const CUSTOM_CODE_HASH_MISMATCH = 'custom_code_hash_mismatch';
+/** The wallet kinds that an owner reviews, as Core describes them. */
+const WALLET_KINDS = KINDS.map(kind => kind.id);
 /** Receipt labels of a keypair wallet's setup and of the owner's approval of its policy. */
 export const SET_UP_WALLET = 'set_up_wallet';
 export const APPROVE_POLICY = 'approve_policy';
@@ -441,7 +448,11 @@ async function ownerApproval(chain, {network, sign, onStep}, message, wallet, {t
 }
 const noApproval = () => new OwnerFlowError('This network signs no policy approval. Nothing was signed.', null, false);
 
-async function run(chain, {network, ask, sign, journal, key, policyId, agent, amount, reviewed, onStep, historyPauseMs = 1_500}, asset) {
+async function run(chain, {network, ask, sign, journal, key, policyId, agent, amount, reviewed, walletKind, onStep, build, historyPauseMs = 1_500}, asset) {
+  // The wallet kind that the owner reviewed decides the workflow, never the service's reply: whether the owner sets up a
+  // wallet account, and whether a creation needs the owner's build.
+  if (!WALLET_KINDS.includes(walletKind))
+    throw new OwnerFlowError('The wallet kind that you reviewed is missing. Nothing was signed.', null, false);
   const fundedKey = `${key}:funded`;
   // The asset belongs to the inputs of the run: a saved step or funded marker of another asset is refused.
   const identity = {policyId, agent, amount, ...(asset === null ? {} : {asset: canonical(asset)})};
@@ -455,6 +466,10 @@ async function run(chain, {network, ask, sign, journal, key, policyId, agent, am
   saved(journal, key, identity);
   funded(journal, fundedKey, identity);
   await settleSaved();
+  // A Custom wallet's owner signs nothing new without the build hook, not even the funding of a wallet that is already
+  // installed: the hook runs only when a build is needed.
+  if (walletKind === 'custom' && typeof build !== 'function')
+    throw new OwnerFlowError('This Custom wallet runs code that you build from its policy. Build it, then deploy again. Nothing was signed.', CUSTOM_BUILD_MISSING, false);
   let wallet;
   // True when the deployment names a keypair wallet: its funding step pays the reviewed asset, which the rail checks.
   let keypairWallet = false;
@@ -507,6 +522,20 @@ async function run(chain, {network, ask, sign, journal, key, policyId, agent, am
     receipts.push({policyId, action: APPROVE_POLICY, status: 'confirmed', transactionHash: ''});
   };
 
+  // The code hash of the owner's build of a Custom wallet's code, once this run has it. The host's `build` waits for the
+  // build of the reviewed source and returns its code hash; the workflow asks it once.
+  let built = null;
+  const ownerBuild = async () => {
+    if (built !== null) return built;
+    if (typeof build !== 'function')
+      throw new OwnerFlowError('This Custom wallet runs code that you build from its policy. Build it, then deploy again. Nothing was signed.', CUSTOM_BUILD_MISSING, false);
+    const codeHash = await build();
+    if (typeof codeHash !== 'string' || !/^[0-9a-f]{64}$/.test(codeHash))
+      throw new OwnerFlowError('The build returned no code hash. Nothing was signed.', null, false);
+    built = codeHash;
+    return built;
+  };
+
   // A deployment takes at most the wallet creation, which funds it, and a lifetime renewal. The server uploads the code
   // itself.
   for (let i = 0; i < 4 && !wallet; i++) {
@@ -518,17 +547,30 @@ async function run(chain, {network, ask, sign, journal, key, policyId, agent, am
       const {code, details} = object(error) ? error : {};
       // A keypair policy needs the wallet account of its agent. This workflow sets the account up from the owner's own
       // account, the server registers it, and the deployment then answers with the wallet.
-      if (code === WALLET_SETUP_REQUIRED && !keypairSetUp) {
+      if (code === WALLET_SETUP_REQUIRED && walletKind === 'native' && !keypairSetUp) {
+        // The refusal names the wallet kind that the service would set up: another one than the reviewed kind signs
+        // nothing.
+        if (!object(details) || details.walletKind !== walletKind)
+          throw new OwnerFlowError('The service prepared another wallet kind than the one that you reviewed. Nothing was signed.', null, false);
         await setUpWallet(details);
         keypairSetUp = true;
+        i--;
+        continue;
+      }
+      // A Custom wallet's code is the owner's build: the service holds none yet. Once the build arrives, the deployment
+      // is prepared again.
+      if (code === CUSTOM_BUILD_MISSING && walletKind === 'custom' && built === null) {
+        await ownerBuild();
         i--;
         continue;
       }
       throw error;
     }
     if (!object(reply) || reply.policyId !== policyId) throw new OwnerFlowError('The deployment reply names a different policy.', null, false);
+    if (reply.walletKind !== walletKind)
+      throw new OwnerFlowError('The service prepared another wallet kind than the one that you reviewed. Nothing was signed.', null, false);
     wallet = installedWallet(reply);
-    if (wallet && reply.walletKind === 'native') {
+    if (wallet && walletKind === 'native') {
       keypairWallet = true;
       // A setup of this workflow created and funded the wallet account. A run that stopped after the registration and
       // before its reply kept the signed setup: when it names this wallet, agent and amount, the setup funded it, and
@@ -543,8 +585,17 @@ async function run(chain, {network, ask, sign, journal, key, policyId, agent, am
       break;
     }
     if (wallet) break;
+    // A Native wallet is set up by the keypair setup alone: a reply of it that names no wallet account signs no step.
+    if (walletKind === 'native')
+      throw new OwnerFlowError('The service prepared a step for a Native wallet that names no wallet account. Nothing was signed.', null, false);
     const step = stepOf(reply.step);
     if (!step) throw new OwnerFlowError('The service did not prepare an owner step for this policy.', null, false);
+    // The owner signs a Custom wallet's creation only for the code of the owner's own build.
+    if (walletKind === 'custom' && step.action === 'create_wallet') {
+      const codeHash = await ownerBuild();
+      if (!object(reply.deployment) || reply.deployment.wasmHash !== codeHash)
+        throw new OwnerFlowError('The wallet creation names other code than your build. Nothing was signed.', CUSTOM_CODE_HASH_MISMATCH, false);
+    }
     await signAndSubmit(step);
   }
   if (!wallet) throw new OwnerFlowError('The wallet installation could not be confirmed.', null, true);

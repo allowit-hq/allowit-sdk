@@ -11,7 +11,9 @@ const record: TransactionRecord = {hash: step.hash, ledger: 7, successful: true}
 const chain: OwnerChain = {transaction: async () => record, expiredRecord: async () => null};
 const plugin: RailPlugin | undefined = rails()[0];
 const hooks: OwnerChain | undefined = plugin?.ownerChain;
-const input: Omit<InstallAndFundInput, 'ask' | 'sign' | 'journal'> = {key: 'k', policyId: 'p', agent: 'a', amount: '5', onStep() {}};
+const input: Omit<InstallAndFundInput, 'ask' | 'sign' | 'journal'> = {key: 'k', policyId: 'p', agent: 'a', amount: '5', walletKind: 'custom', onStep() {}};
+// @ts-expect-error The workflow takes the wallet kind that the owner reviewed.
+const unreviewed: Omit<InstallAndFundInput, 'ask' | 'sign' | 'journal'> = {key: 'k', policyId: 'p', agent: 'a', amount: '5', onStep() {}};
 // Core's reviewed policy, with an asset that a host leaves explicitly undefined, is the reviewed input of both workflows.
 const reviewedPolicy: Core.ReviewedPolicy = {source: 's', params: {}, asset: undefined};
 const reviewedInput: Omit<InstallAndFundInput, 'ask' | 'sign' | 'journal'> = {...input, reviewed: reviewedPolicy};
