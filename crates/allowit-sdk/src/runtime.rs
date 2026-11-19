@@ -490,16 +490,24 @@ impl Runtime {
     /// when nothing is needed. The rail prepares the transaction and signs it with a sending
     /// account (`prepare_code_within`).
     ///
+    /// A new preparation is a new transaction: its sending account, sequence and bounds give it
+    /// another hash, and so another operation ID, than an earlier one. This call therefore finds
+    /// no transaction of an earlier call that may still apply. The caller keeps the journal of
+    /// its code transactions beyond the call, and makes no call for the same code while that
+    /// journal holds one of them as pending: it looks that one up with `observe` instead, until
+    /// it resolves or `code_lapsed` proves that it lapsed.
+    ///
     /// The journal `store` decides. Its packet is the transaction: when it holds one under the
-    /// same operation ID from an earlier call, this follows that original and its status, not
-    /// the new preparation. `submit` retains the transaction before every send, so a
+    /// same operation ID, this follows that original and its status, not the new preparation. `submit` retains the transaction before every send, so a
     /// transaction is pending once the journal holds it past `Prepared` (`Submitted` or
     /// `SubmissionUnknown`): the network may still include it. A send that the network did not
     /// accept (`Prepared`) goes out again, the first one included, only while the rail says
     /// that it is still needed (`code_needed`), since another transaction can make the code live
-    /// meanwhile. Each attempt within `poll` after a send reads the receipt, which gives the
-    /// final status and the fee in one lookup. An error within the poll moves on to the next
-    /// attempt.
+    /// meanwhile; after the last attempt's refused send, live code needs nothing. A send that
+    /// failed is pending when the journal holds it as pending, and also when the journal cannot
+    /// be read: it is looked up, never sent again. Each attempt within `poll` after a send reads
+    /// the receipt, which gives the final status and the fee in one lookup. An error within the
+    /// poll moves on to the next attempt.
     ///
     /// The receipt is that of a confirmed transaction. One that the ledger included and failed
     /// is an error whose details name its `transactionHash` and the fee that its source paid,
@@ -548,16 +556,26 @@ impl Runtime {
                 }
                 status = match self.submit(store, &signed, clock()) {
                     Ok(status) => status,
-                    // The journal tells whether the send that failed may be pending.
+                    // The journal tells whether the send that failed may be pending. A journal
+                    // that cannot be read leaves it in doubt: it is looked up, never sent again.
                     Err(error) => {
                         last = Some(error);
-                        store
-                            .load(id)?
-                            .map(|(_, status)| status)
-                            .unwrap_or(Status::Prepared)
+                        match store.load(id) {
+                            Ok(found) => found.map_or(Status::Prepared, |(_, status)| status),
+                            Err(_) => Status::SubmissionUnknown,
+                        }
                     }
                 };
                 if status == Status::Prepared {
+                    // The network accepted no send. After the last one, live code needs nothing.
+                    if attempt + 1 == poll.attempts.max(1)
+                        && matches!(
+                            self.provider.code_needed(&native::Signed(signed.0.clone())),
+                            Ok(false)
+                        )
+                    {
+                        return Ok(None);
+                    }
                     continue;
                 }
             }
@@ -567,8 +585,13 @@ impl Runtime {
                 Err(error) => last = Some(error),
             }
         }
-        match store.load(id)? {
-            Some((_, status)) if pending(&status) => {
+        // A journal that cannot be read now keeps what this call knew of the send.
+        let journal = store.load(id).map_or_else(
+            |_| Some(status.clone()),
+            |found| found.map(|(_, status)| status),
+        );
+        match journal {
+            Some(status) if pending(&status) => {
                 Err(crate::error::Error::uncertain(format!(
                     "The wallet code transaction {} has no receipt yet; look it up again before any replacement",
                     hex(&hash)
@@ -1028,11 +1051,14 @@ mod code_transactions {
             authority: None,
         })
     }
-    /// A journal whose `n`th write fails, as a full disk does, and keeps what came before.
+    /// A journal whose `n`th write fails, as a full disk does, and keeps what came before. With
+    /// `unreadable`, every read after that failure fails too, as a lost store does.
     struct Journal {
         inner: MemoryOperations,
         writes: usize,
         failing_write: Option<usize>,
+        unreadable: bool,
+        failed: std::cell::Cell<bool>,
     }
     impl Journal {
         fn failing_at(n: usize) -> Self {
@@ -1040,16 +1066,28 @@ mod code_transactions {
                 inner: MemoryOperations::default(),
                 writes: 0,
                 failing_write: Some(n),
+                unreadable: false,
+                failed: std::cell::Cell::new(false),
+            }
+        }
+        fn lost_at(n: usize) -> Self {
+            Self {
+                unreadable: true,
+                ..Self::failing_at(n)
             }
         }
     }
     impl OperationStore for Journal {
         fn load(&self, id: [u8; 32]) -> Result<Option<(Signed, Status)>> {
+            if self.unreadable && self.failed.get() {
+                return Err(crate::error::Error::config("The journal is unreachable"));
+            }
             self.inner.load(id)
         }
         fn record(&mut self, id: [u8; 32], signed: &Signed, status: Status) -> Result<()> {
             self.writes += 1;
             if self.failing_write == Some(self.writes) {
+                self.failed.set(true);
                 return Err(crate::error::Error::config("The journal is full"));
             }
             self.inner.record(id, signed, status)
@@ -1216,6 +1254,42 @@ mod code_transactions {
         assert_eq!(status(&journal), Some(Status::SubmissionUnknown));
         assert!(journal.inner.pending());
         assert_eq!(chain.lock().unwrap().sends, 1);
+    }
+    #[test]
+    fn a_send_stays_in_doubt_while_its_journal_cannot_be_read() {
+        // The network accepts the send, and the journal can neither record that (second write)
+        // nor be read afterwards: the transaction is looked up, never sent again.
+        let chain = Arc::new(Mutex::new(Chain {
+            pending_lookups: 1,
+            outcome: Some(Status::Confirmed),
+            ..Chain::default()
+        }));
+        let mut journal = Journal::lost_at(2);
+        assert!(run_on(chain.clone(), &mut journal, 4).unwrap().is_some());
+        assert_eq!(chain.lock().unwrap().sends, 1);
+        // Without a receipt within the poll, the error names it as pending.
+        let chain = Arc::new(Mutex::new(Chain {
+            pending_lookups: 10,
+            ..Chain::default()
+        }));
+        let mut journal = Journal::lost_at(2);
+        let pending = run_on(chain.clone(), &mut journal, 4).unwrap_err();
+        assert!(names_transaction(&pending), "{pending:?}");
+        assert_eq!(chain.lock().unwrap().sends, 1);
+    }
+    #[test]
+    fn live_code_after_the_last_refused_send_needs_nothing() {
+        // Another transaction makes the code live during the one send that the poll allows,
+        // which the network does not accept.
+        let chain = Arc::new(Mutex::new(Chain {
+            answers: vec![Status::Prepared],
+            live_at_send: Some(1),
+            ..Chain::default()
+        }));
+        let mut store = MemoryOperations::default();
+        assert!(run_on(chain.clone(), &mut store, 1).unwrap().is_none());
+        assert_eq!(chain.lock().unwrap().sends, 1);
+        assert!(!store.pending());
     }
     #[test]
     fn a_failed_transaction_keeps_its_fee_when_the_journal_cannot_record_it() {
