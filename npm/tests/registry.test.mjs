@@ -254,7 +254,7 @@ for (const rail of sdk.rails()) {
     const input = {
       ask: async () => { throw offline; }, sign: async (step) => (signed.push(step), 'signed'),
       journal: {get: (k) => journal.get(k) ?? null, set: (k, v) => void journal.set(k, v), remove: (k) => void journal.delete(k)},
-      key: 'k', policyId: 'p', agent: fixtures.address, amount: '5', onStep() {},
+      key: 'k', policyId: 'p', agent: fixtures.address, amount: '5', walletKind: 'standard', onStep() {},
     };
     await assert.rejects(sdk.installAndFund(network, input), (error) => error === offline);
     for (const alias of rail.networks.find((n) => n.id === network).aliases) {

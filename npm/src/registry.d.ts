@@ -159,6 +159,12 @@ export interface InstallAndFundInput {
    * shows them. A rail whose deployment ends with an approval of the whole policy signs only this policy.
    */
   reviewed?: {source: string; params: Record<string, ParamValue>; rules?: unknown; tier?: unknown};
+  /**
+   * The wallet kind that the owner reviewed. It decides the workflow, never the service's reply: whether the owner sets
+   * up a wallet account (`native`) and whether a creation needs the owner's build (`custom`). A deployment reply that
+   * names another kind is refused, and nothing is signed.
+   */
+  walletKind: WalletKindId;
   onStep: (text: string) => void;
   /**
    * Waits for the owner's build of a Custom wallet's code from the reviewed source and resolves with its code hash (64
