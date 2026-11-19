@@ -495,9 +495,11 @@ impl Runtime {
     /// changes, as the rail reads it ([`Settlement`]): the outcome, the usage, the operation's own
     /// fee, the counted gas, the next nonce and the gas carry. `accounting` is the server's account of the wallet before
     /// the receipt and `carry` its gas carry. The rail refuses a receipt that is not of `signed`'s
-    /// transaction and a `signed` that does not carry `p`'s operation. A server applies the
-    /// counters with [`crate::accounting::apply_settlement`] and stores the carry as given, once
-    /// for each operation and [`Settlement::transaction`].
+    /// transaction, or, for a payment authorization that another party settles, of that party's
+    /// transaction, and a `signed` that does not carry `p`'s operation. A server applies the
+    /// operation's usage and nonce with [`crate::accounting::apply_settlement`], charges the fee
+    /// of a wallet that counts no gas itself as that function says, and stores the carry as
+    /// given, once for each operation and [`Settlement::transaction`].
     pub fn settle_receipt(
         &self,
         p: &Prepared,
