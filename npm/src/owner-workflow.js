@@ -548,6 +548,10 @@ async function run(chain, {network, ask, sign, journal, key, policyId, agent, am
       // A keypair policy needs the wallet account of its agent. This workflow sets the account up from the owner's own
       // account, the server registers it, and the deployment then answers with the wallet.
       if (code === WALLET_SETUP_REQUIRED && walletKind === 'native' && !keypairSetUp) {
+        // The refusal names the wallet kind that the service would set up: another one than the reviewed kind signs
+        // nothing.
+        if (!object(details) || details.walletKind !== walletKind)
+          throw new OwnerFlowError('The service prepared another wallet kind than the one that you reviewed. Nothing was signed.', null, false);
         await setUpWallet(details);
         keypairSetUp = true;
         i--;

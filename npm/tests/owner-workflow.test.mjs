@@ -506,6 +506,24 @@ function keypairService({registerFails = 0, message} = {}) {
   return {ask, calls, state};
 }
 
+test('a wallet setup that the service asks for another kind than the reviewed one is never signed', async () => {
+  const {world, chain} = keypairRail(), signed = [];
+  const service = keypairService();
+  // The service's refusal names the wallet kind that it would set up: here not the reviewed Native wallet.
+  const relabelled = async (path, body) => {
+    try {
+      return await service.ask(path, body);
+    } catch (error) {
+      if (error.code === 'wallet_setup_required') error.details = {...error.details, walletKind: 'standard'};
+      throw error;
+    }
+  };
+  await assert.rejects(
+    installAndFund({ask: relabelled, sign: ownerSigns(signed), journal: journalOf(), key: 'flow', policyId, agent, amount, reviewed: reviewed(), walletKind: 'native', onStep() {}}, chain),
+    error => error instanceof OwnerFlowError && /another wallet kind/.test(error.message));
+  assert.deepEqual([signed, world.created, service.calls.map(([path]) => path)], [[], [], ['native/deploy/prepare']]);
+});
+
 test('a keypair policy deploys with two owner signatures: the wallet setup and the approval of the policy', async () => {
   const {world, chain} = keypairRail(), signed = [], journal = journalOf();
   const {ask, calls, state} = keypairService();
