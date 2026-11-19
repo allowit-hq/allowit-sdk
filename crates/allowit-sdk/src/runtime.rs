@@ -3,10 +3,10 @@ pub mod owner;
 use crate::{config::ServerAuthority, error::Result};
 use allowit_core::vendor::runtime as native;
 pub use native::{
-    Accounting, Action, Debit, Evaluator, Expense, FeeCeiling, Lifetime, OperationOutcome,
-    OwnerAction, OwnerInfo, PacketInfo, ParamsUpdate, PolicyInstallation, Poll, Problem,
-    ReceiptInfo, Resources, SendingAccounts, Settlement, Signature, Signer, Snapshot, Status,
-    Terms, Tier, Transport, Usage, Validity,
+    Accounting, Action, Debit, Evaluator, Expense, ExpenseBound, FeeCeiling, Lifetime,
+    OperationOutcome, OwnerAction, OwnerInfo, PacketInfo, ParamsUpdate, PolicyInstallation, Poll,
+    Problem, ReceiptInfo, Resources, SendingAccounts, Settlement, Signature, Signer, Snapshot,
+    Status, Terms, Tier, Transport, Usage, Validity,
 };
 pub(crate) use native::{Kind, Packet};
 use serde::{Deserialize, Serialize};
@@ -522,7 +522,7 @@ impl Runtime {
         i: &Installation,
         action: &Action,
         ceiling: &FeeCeiling,
-    ) -> Result<Expense> {
+    ) -> Result<ExpenseBound> {
         self.provider.expense(&i.0, action, ceiling)
     }
     /// What the operation adds to its wallet's figures when it executes, as the wallet counts

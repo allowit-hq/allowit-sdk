@@ -48,11 +48,11 @@ pub fn post_flight(counters: &Counters, now: u64, usage: &Usage) -> Result<Count
 }
 
 /// The server's account of a wallet after the settlement `s` of one of its operations, evaluated
-/// at `evaluated_at` (Unix seconds) with the debit `debit` in asset units: the settlement's usage
-/// counts with Core's post-flight in the day of the evaluation, the day whose limits admitted the
-/// operation; an executed operation of a wallet whose rail reports no usage counts its debit as
-/// its spending; and the nonce is the settlement's when it gives one. An operation that did not
-/// execute changes no figure. The server stores the gas carry `s.gas_carry` beside the account.
+/// at `evaluated_at` (Unix seconds) with the debit `debit` in asset units: what Core says the
+/// operation adds (`Settlement::usage_for`) counts with Core's post-flight in the day of the
+/// evaluation, the day whose limits admitted the operation, and the nonce is the settlement's when
+/// it gives one. An operation that did not execute changes no figure. The server stores the gas
+/// carry `s.gas_carry` beside the account.
 pub fn apply_settlement(
     accounting: &crate::runtime::Accounting,
     evaluated_at: u64,
@@ -60,13 +60,7 @@ pub fn apply_settlement(
     s: &crate::runtime::Settlement,
 ) -> Result<crate::runtime::Accounting> {
     let mut a = accounting.clone();
-    if s.outcome == crate::runtime::OperationOutcome::Executed {
-        let usage = s.usage.unwrap_or(Usage {
-            amount_units: 0,
-            gas_units: 0,
-            spent_units: debit,
-            unpriced: false,
-        });
+    if let Some(usage) = s.usage_for(debit) {
         let counters = Counters {
             calls: a.calls,
             spent: a.spent_total,
