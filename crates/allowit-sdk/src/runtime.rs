@@ -1514,6 +1514,41 @@ mod code_transactions {
                 Status::SubmissionUnknown
             })
         }
+        /// The settlement of any receipt: executed, for the carry that the call gave plus one.
+        fn settle_receipt(
+            &self,
+            p: &native::Prepared,
+            signed: &native::Signed,
+            r: &native::Receipt,
+            accounting: Option<&native::Accounting>,
+            carry: u128,
+        ) -> Result<Settlement> {
+            Ok(Settlement {
+                transaction: vec![8; 32],
+                outcome: OperationOutcome::Executed,
+                usage: None,
+                fee_units: 250,
+                counted_gas: None,
+                next_nonce: accounting.map(|a| a.nonce + 1),
+                gas_carry: carry + 1,
+            })
+        }
+        /// The bound of any action: its ceiling's gas and fee, with a conversion of 5.
+        fn expense(
+            &self,
+            i: &native::Installation,
+            action: &Action,
+            ceiling: &FeeCeiling,
+        ) -> Result<ExpenseBound> {
+            Ok(ExpenseBound {
+                gas_units: ceiling.gas_units,
+                conversion_units: 5,
+                spent_units: 5 + ceiling.gas_units,
+                max_fee_units: ceiling.max_fee_units,
+                observed_height: ceiling.observed_height,
+                day: ceiling.day,
+            })
+        }
     }
     /// The receipt of the confirmed owner step.
     fn owner_receipt() -> native::Receipt {
@@ -2357,5 +2392,44 @@ mod code_transactions {
             .unwrap(),
         );
         assert!(runtime.submit_owner_step(&mut journal, &other, 15).is_err());
+    }
+    /// `settle_receipt` and `expense` pass the caller's inputs to the rail and its answers back.
+    #[test]
+    fn the_settlement_and_expense_wrappers_pass_through_to_the_rail() {
+        let (runtime, _, _) = owner_run(Chain::default(), 100);
+        let packet = |document: serde_json::Value| {
+            native::Packet::new(NETWORK, &document, &PACKETS).unwrap()
+        };
+        let accounting = Accounting {
+            nonce: 4,
+            ..Accounting::default()
+        };
+        let settled = runtime
+            .settle_receipt(
+                &Prepared(packet(serde_json::json!({"prepared": 1}))),
+                &Signed(packet(serde_json::json!({"signed": 1}))),
+                &Receipt(packet(serde_json::json!({"status": "confirmed"}))),
+                Some(&accounting),
+                7,
+            )
+            .unwrap();
+        assert_eq!(
+            (settled.next_nonce, settled.gas_carry, settled.fee_units),
+            (Some(5), 8, 250)
+        );
+        let ceiling = FeeCeiling {
+            max_fee_units: 1_000,
+            gas_units: 30,
+            observed_height: 9,
+            day: 1,
+        };
+        let transfer = Action::Transfer {
+            recipient: String::new(),
+            units: 1,
+        };
+        let bound = runtime
+            .expense(&installation(), &transfer, &ceiling)
+            .unwrap();
+        assert_eq!((bound.spent_units, bound.max_fee_units), (35, 1_000));
     }
 }
