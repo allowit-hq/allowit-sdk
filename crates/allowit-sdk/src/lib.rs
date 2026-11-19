@@ -22,6 +22,8 @@ pub mod policy_metadata {
         ResultDescriptor, canonical_function_metadata_hash, canonical_function_registry,
     };
 }
+/// Counters that a server keeps for a wallet, by Core's post-flight transition.
+pub mod accounting;
 pub mod authoring;
 pub mod config;
 pub mod custom_build;
