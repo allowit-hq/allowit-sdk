@@ -405,6 +405,10 @@ async function run(chain, {network, ask, sign, journal, key, policyId, agent, am
   saved(journal, key, identity);
   funded(journal, fundedKey, identity);
   await settleSaved();
+  // A Custom wallet's owner signs nothing new without the build hook, not even the funding of a wallet that is already
+  // installed: the hook runs only when a build is needed.
+  if (walletKind === 'custom' && typeof build !== 'function')
+    throw new OwnerFlowError('This Custom wallet runs code that you build from its policy. Build it, then deploy again. Nothing was signed.', CUSTOM_BUILD_MISSING, false);
   let wallet;
   // True once this run set up the wallet account of a keypair policy: the deployment then names the wallet.
   let keypairSetUp = false;

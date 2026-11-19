@@ -913,3 +913,24 @@ test('the wallet kind that the owner reviewed decides the workflow, never the se
     error => error.code === 'custom_build_missing');
   assert.deepEqual([signed.length, builds.length], [0, 0]);
 });
+
+test('a Custom wallet that is already installed is funded only with the build hook', async () => {
+  const signed = [], calls = [];
+  const ask = async (path, body) => {
+    calls.push(path);
+    if (path === 'native/deploy/prepare') return {policyId, installed: true, walletKind: 'custom', installation: {wallet: 'CWALLET'}};
+    if (path === 'native/owner/prepare') return {policyId, step: step('fund', 1)};
+    if (path === 'native/owner/submit') return confirmed(body);
+    throw new Error(path);
+  };
+  await assert.rejects(
+    installAndFund({ask, sign: signer(signed), journal: journalOf(), key, policyId, agent, amount, walletKind: 'custom', onStep() {}}),
+    error => error instanceof OwnerFlowError && error.code === 'custom_build_missing' && /Nothing was signed/.test(error.message));
+  assert.deepEqual([signed, calls], [[], []]);
+  // With the hook, the installed wallet is funded and no build runs: the creation is already done.
+  const builds = [];
+  const result = await installAndFund({ask, sign: signer(signed), journal: journalOf(), key, policyId, agent, amount, walletKind: 'custom', onStep() {},
+    build: async () => (builds.push(1), hash(9))});
+  assert.equal(result.wallet, 'CWALLET');
+  assert.deepEqual([signed, builds], [['fund'], []]);
+});

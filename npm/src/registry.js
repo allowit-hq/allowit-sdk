@@ -90,22 +90,30 @@ export function walletKindIdOf(document) {
   return typeof id === 'string' && WALLET_KIND_IDS.has(id) ? id : null;
 }
 
-/** A quantity `{units, asset, text}` of a server document, or null when the value is not one. */
+/**
+ * A quantity `{units, asset, text}` of a server document, or null when the value is not one. Its asset is Core's
+ * `AssetDisplay` in full: `symbol`, `decimals`, `name` and `native`.
+ */
 function quantity(value) {
   const item = record(value);
   const asset = record(item?.asset);
   return item && asset && typeof item.units === 'string' && /^-?[0-9]+$/.test(item.units)
     && typeof item.text === 'string' && typeof asset.symbol === 'string'
     && Number.isInteger(asset.decimals) && asset.decimals >= 0
+    && typeof asset.name === 'string' && typeof asset.native === 'boolean'
     ? item
     : null;
 }
 
-/** The settlement `{height, fee, amount}` of a status or receipt document, or null. */
+/**
+ * The settlement `{height, fee, amount}` of a status or receipt document, or null. A settlement that reports no amount
+ * has `amount: null`, as Core declares it.
+ */
 export function settlementOf(document) {
   const item = record(record(document)?.settlement);
   if (!item || !Number.isSafeInteger(item.height) || !quantity(item.fee)) return null;
-  return item.amount === null || item.amount === undefined || quantity(item.amount) ? item : null;
+  if (item.amount === null || item.amount === undefined) return {...item, amount: null};
+  return quantity(item.amount) ? item : null;
 }
 
 /**
