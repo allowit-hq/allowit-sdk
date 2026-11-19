@@ -5,7 +5,7 @@ version = 4
 [[package]]
 name = "allowit-core"
 version = "0.13.0"
-source = "git+https://github.com/allowit-hq/allowit-core.git?rev=a5ce87fc82b8ceeea632f1af23dc791f9d2f5ec3#a5ce87fc82b8ceeea632f1af23dc791f9d2f5ec3"
+source = "git+https://github.com/allowit-hq/allowit-core.git?rev=4324c60954635adc0bad2e69cc330388d6c5825c#4324c60954635adc0bad2e69cc330388d6c5825c"
 dependencies = [
  "libc",
  "reqwest",
@@ -40,7 +40,7 @@ dependencies = [
 [[package]]
 name = "allowit-stellar"
 version = "0.4.0"
-source = "git+https://github.com/allowit-hq/allowit-contracts-stellar.git?rev=e91b2500ca77772c6e9bc14168d47b50ad70ca95#e91b2500ca77772c6e9bc14168d47b50ad70ca95"
+source = "git+https://github.com/allowit-hq/allowit-contracts-stellar.git?rev=409939f363fae3c35dcfdd08e06ff3191734eba9#409939f363fae3c35dcfdd08e06ff3191734eba9"
 dependencies = [
  "allowit-core",
  "base64 0.22.1",

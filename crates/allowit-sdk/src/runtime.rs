@@ -159,6 +159,33 @@ impl Receipt {
         self.0.provider().receipt_info(&self.0)
     }
 }
+/// Whether a journal status leaves a send pending: the journal holds the transaction past
+/// `Prepared`, and the network may still include it.
+fn pending(status: &Status) -> bool {
+    matches!(status, Status::Submitted | Status::SubmissionUnknown)
+}
+/// The outcome of a code transaction from its receipt, which is final whatever the journal can
+/// record of it: a confirmed transaction returns its receipt, and one that the ledger failed is
+/// an error that names it and the fee that its source paid.
+fn code_receipt(
+    store: &mut dyn OperationStore,
+    id: [u8; 32],
+    signed: &Signed,
+    receipt: Receipt,
+) -> Result<Option<Receipt>> {
+    let info = receipt.info()?;
+    let _ = store.record(id, signed, info.status.clone());
+    if info.status != Status::Confirmed {
+        return Err(crate::error::Error::config(
+            "The wallet code transaction failed on the ledger",
+        )
+        .with_details(serde_json::json!({
+            "transactionHash": hex(&info.transaction_hash),
+            "nativeUnits": info.fee.native_units.to_string(),
+        })));
+    }
+    Ok(Some(receipt))
+}
 /// Lowercase hexadecimal of `bytes`.
 fn hex(bytes: &[u8]) -> String {
     bytes.iter().map(|b| format!("{b:02x}")).collect()
@@ -168,6 +195,14 @@ fn hex(bytes: &[u8]) -> String {
 /// the value.
 #[derive(Default)]
 pub struct MemoryOperations(std::collections::BTreeMap<[u8; 32], (Signed, Status)>);
+impl MemoryOperations {
+    /// Whether the journal holds a transaction as pending: past `Prepared` and without a final
+    /// status, so the network may still include it. A caller that frees the sending account of
+    /// a code transaction only when this is false never frees one that may still be charged.
+    pub fn pending(&self) -> bool {
+        self.0.values().any(|(_, status)| pending(status))
+    }
+}
 impl OperationStore for MemoryOperations {
     fn load(&self, id: [u8; 32]) -> Result<Option<(Signed, Status)>> {
         Ok(self.0.get(&id).cloned())
@@ -453,21 +488,25 @@ impl Runtime {
     /// pay for it: the upload of `wasm`, or without it the restoration of the installation's
     /// lapsed code, with the network fee bounded by `max_fee` in the rail's native units. `None`
     /// when nothing is needed. The rail prepares the transaction and signs it with a sending
-    /// account (`prepare_code_within`). This sends it with `submit`, which retains it in the
-    /// journal `store` before its first send; a journal that holds it already decides the first
-    /// step by its retained status. A send that the network did not accept goes out again, the
-    /// first one included, only while the rail says that it is still needed (`code_needed`),
-    /// since another transaction can make the code live meanwhile. Once a send may have been
-    /// accepted, each attempt within `poll` reads its receipt, which gives the final status and
-    /// the fee in one lookup, and the journal records that status.
+    /// account (`prepare_code_within`).
     ///
-    /// The receipt is that of a confirmed transaction. An error names the transaction in its
-    /// details (`transactionHash`) once a send of it may have been accepted: with `nativeUnits`,
-    /// the fee that its source paid, when the ledger included it and failed it; without them
-    /// when it has no receipt yet, so that it can still apply. An error that names no
-    /// transaction sent nothing that is pending. A caller that keeps the journal looks a pending
-    /// transaction up again with `observe`, and drops it without a receipt only when
-    /// `code_lapsed` proves that it lapsed.
+    /// The journal `store` decides. Its packet is the transaction: when it holds one under the
+    /// same operation ID from an earlier call, this follows that original and its status, not
+    /// the new preparation. `submit` retains the transaction before every send, so a
+    /// transaction is pending once the journal holds it past `Prepared` (`Submitted` or
+    /// `SubmissionUnknown`): the network may still include it. A send that the network did not
+    /// accept (`Prepared`) goes out again, the first one included, only while the rail says
+    /// that it is still needed (`code_needed`), since another transaction can make the code live
+    /// meanwhile. Each attempt within `poll` after a send reads the receipt, which gives the
+    /// final status and the fee in one lookup. An error within the poll moves on to the next
+    /// attempt.
+    ///
+    /// The receipt is that of a confirmed transaction. One that the ledger included and failed
+    /// is an error whose details name its `transactionHash` and the fee that its source paid,
+    /// `nativeUnits`. Without a receipt, an error names the transaction's own `transactionHash`
+    /// when the journal holds it as pending; a caller that keeps the journal looks it up again
+    /// with `observe`, and drops it without a receipt only when `code_lapsed` proves that it
+    /// lapsed.
     pub fn make_code_live(
         &self,
         store: &mut dyn OperationStore,
@@ -483,19 +522,16 @@ impl Runtime {
         else {
             return Ok(None);
         };
-        let signed = Signed(prepared.0);
-        let id = signed.info()?.operation_id;
-        let naming = |error: crate::error::Error| {
-            error.with_details(serde_json::json!({ "transactionHash": hex(&id) }))
+        let prepared = Signed(prepared.0);
+        let id = prepared.info()?.operation_id;
+        let (signed, mut status) = match store.load(id)? {
+            Some((original, status)) => (original, status),
+            None => (prepared, Status::Prepared),
         };
+        let hash = signed.info()?.transaction_hash;
         let started = std::time::Instant::now();
         let clock = || now.saturating_add(started.elapsed().as_secs());
-        let mut status = store
-            .load(id)?
-            .map(|(_, status)| status)
-            .unwrap_or(Status::Prepared);
-        // Whether a send of it may have been accepted.
-        let mut sent = status != Status::Prepared;
+        let mut last = None;
         for attempt in 0..poll.attempts.max(1) {
             if attempt > 0 {
                 std::thread::sleep(poll.interval);
@@ -505,46 +541,46 @@ impl Runtime {
                 match self.provider.code_needed(&native::Signed(signed.0.clone())) {
                     Ok(true) => {}
                     Ok(false) => return Ok(None),
-                    Err(error) if !sent => return Err(error),
-                    Err(_) => continue,
+                    Err(error) => {
+                        last = Some(error);
+                        continue;
+                    }
                 }
                 status = match self.submit(store, &signed, clock()) {
                     Ok(status) => status,
-                    Err(error) if !sent => return Err(error),
-                    Err(_) => continue,
+                    // The journal tells whether the send that failed may be pending.
+                    Err(error) => {
+                        last = Some(error);
+                        store
+                            .load(id)?
+                            .map(|(_, status)| status)
+                            .unwrap_or(Status::Prepared)
+                    }
                 };
                 if status == Status::Prepared {
                     continue;
                 }
-                sent = true;
             }
-            // A lookup that fails leaves the transaction pending within the poll.
-            if let Ok(Some(receipt)) = self.observe(&signed) {
-                let info = receipt.info().map_err(naming)?;
-                store
-                    .record(id, &signed, info.status.clone())
-                    .map_err(naming)?;
-                if info.status != Status::Confirmed {
-                    return Err(crate::error::Error::config(
-                        "The wallet code transaction failed on the ledger",
-                    )
-                    .with_details(serde_json::json!({
-                        "transactionHash": hex(&info.transaction_hash),
-                        "nativeUnits": info.fee.native_units.to_string(),
-                    })));
-                }
-                return Ok(Some(receipt));
+            match self.observe(&signed) {
+                Ok(Some(receipt)) => return code_receipt(store, id, &signed, receipt),
+                Ok(None) => {}
+                Err(error) => last = Some(error),
             }
         }
-        if !sent {
-            return Err(crate::error::Error::config(
-                "The network did not accept the wallet code transaction: nothing is pending",
-            ));
+        match store.load(id)? {
+            Some((_, status)) if pending(&status) => {
+                Err(crate::error::Error::uncertain(format!(
+                    "The wallet code transaction {} has no receipt yet; look it up again before any replacement",
+                    hex(&hash)
+                ))
+                .with_details(serde_json::json!({ "transactionHash": hex(&hash) })))
+            }
+            _ => Err(last.unwrap_or_else(|| {
+                crate::error::Error::config(
+                    "The network did not accept the wallet code transaction: nothing is pending",
+                )
+            })),
         }
-        Err(naming(crate::error::Error::uncertain(format!(
-            "The wallet code transaction {} has no receipt yet; look it up again before any replacement",
-            hex(&id)
-        ))))
     }
     /// Whether the code transaction `p` lapsed: it never applied and can no longer apply.
     /// `false` means not proven.
@@ -670,9 +706,14 @@ mod code_transactions {
         pending_lookups: usize,
         /// Lookups that fail, as an unreachable RPC does, before the others answer.
         failing_lookups: usize,
-        /// The first code check fails, as an unreachable RPC does.
-        failing_check: bool,
+        /// The code checks, counted from one, that fail, as an unreachable RPC does.
+        failing_checks: Vec<usize>,
+        checks: usize,
         lookups: usize,
+        /// Each preparation signs new bytes of the same transaction.
+        preparations: usize,
+        /// The packets that the lookups asked about.
+        observed: Vec<Vec<u8>>,
         /// The ledger's final status of the transaction, once it has one.
         outcome: Option<Status>,
     }
@@ -691,7 +732,7 @@ mod code_transactions {
         fn info(&self, _: &Packet, _: Kind) -> Result<PacketInfo> {
             Ok(PacketInfo {
                 operation_id: [7; 32],
-                transaction_hash: [7; 32],
+                transaction_hash: [8; 32],
                 wallet: String::new(),
                 expires_at: u64::MAX,
             })
@@ -720,7 +761,7 @@ mod code_transactions {
         fn receipt_info(&self, p: &Packet) -> Result<ReceiptInfo> {
             let document: serde_json::Value = serde_json::from_str(p.document().get()).unwrap();
             Ok(ReceiptInfo {
-                transaction_hash: [7; 32],
+                transaction_hash: [8; 32],
                 status: serde_json::from_value(document["status"].clone()).unwrap(),
                 observed_height: 1,
                 fee: native::Fee {
@@ -874,7 +915,8 @@ mod code_transactions {
         }
         fn status(&self, p: &native::Signed) -> Result<native::Status> {
             let mut chain = self.0.lock().unwrap();
-            // As Stellar's lookup of a transaction that it has not seen: uncertain.
+            // A lookup that has not found the transaction does not establish that it is safe
+            // to send it again: uncertain.
             if chain.pending_lookups > 0 {
                 chain.pending_lookups -= 1;
                 return Ok(Status::SubmissionUnknown);
@@ -884,6 +926,9 @@ mod code_transactions {
         fn observe(&self, p: &native::Signed) -> Result<Option<native::Receipt>> {
             let mut chain = self.0.lock().unwrap();
             chain.lookups += 1;
+            chain
+                .observed
+                .push(p.0.document().get().as_bytes().to_vec());
             if chain.failing_lookups > 0 {
                 chain.failing_lookups -= 1;
                 return Err(crate::error::Error::config("The RPC is unreachable"));
@@ -923,19 +968,21 @@ mod code_transactions {
             max_fee: u64,
             now: u64,
         ) -> Result<Option<native::Signed>> {
-            let chain = self.0.lock().unwrap();
+            let mut chain = self.0.lock().unwrap();
             if chain.live {
                 return Ok(None);
             }
+            chain.preparations += 1;
             Ok(Some(native::Signed(native::Packet::new(
                 NETWORK,
-                &serde_json::json!({"code": 1}),
+                &serde_json::json!({ "code": chain.preparations }),
                 &PACKETS,
             )?)))
         }
         fn code_needed(&self, p: &native::Signed) -> Result<bool> {
             let mut chain = self.0.lock().unwrap();
-            if std::mem::take(&mut chain.failing_check) {
+            chain.checks += 1;
+            if chain.failing_checks.contains(&chain.checks) {
                 return Err(crate::error::Error::config("The RPC is unreachable"));
             }
             Ok(!chain.live)
@@ -981,27 +1028,59 @@ mod code_transactions {
             authority: None,
         })
     }
-    fn run_with(
-        chain: Chain,
-        mut store: MemoryOperations,
+    /// A journal whose `n`th write fails, as a full disk does, and keeps what came before.
+    struct Journal {
+        inner: MemoryOperations,
+        writes: usize,
+        failing_write: Option<usize>,
+    }
+    impl Journal {
+        fn failing_at(n: usize) -> Self {
+            Self {
+                inner: MemoryOperations::default(),
+                writes: 0,
+                failing_write: Some(n),
+            }
+        }
+    }
+    impl OperationStore for Journal {
+        fn load(&self, id: [u8; 32]) -> Result<Option<(Signed, Status)>> {
+            self.inner.load(id)
+        }
+        fn record(&mut self, id: [u8; 32], signed: &Signed, status: Status) -> Result<()> {
+            self.writes += 1;
+            if self.failing_write == Some(self.writes) {
+                return Err(crate::error::Error::config("The journal is full"));
+            }
+            self.inner.record(id, signed, status)
+        }
+    }
+    fn run_on(
+        chain: Arc<Mutex<Chain>>,
+        store: &mut dyn OperationStore,
         attempts: u32,
-    ) -> (Result<Option<Receipt>>, Arc<Mutex<Chain>>, MemoryOperations) {
-        let chain = Arc::new(Mutex::new(chain));
+    ) -> Result<Option<Receipt>> {
         let runtime = Runtime {
-            provider: Box::new(Rail(chain.clone())),
+            provider: Box::new(Rail(chain)),
         };
         let poll = Poll {
             attempts,
             interval: std::time::Duration::ZERO,
         };
-        let result = runtime.make_code_live(&mut store, &installation(), None, 10_000, poll, 1);
-        (result, chain, store)
+        runtime.make_code_live(store, &installation(), None, 10_000, poll, 1)
     }
     fn run(chain: Chain) -> (Result<Option<Receipt>>, Arc<Mutex<Chain>>, MemoryOperations) {
-        run_with(chain, MemoryOperations::default(), 4)
+        let chain = Arc::new(Mutex::new(chain));
+        let mut store = MemoryOperations::default();
+        let result = run_on(chain.clone(), &mut store, 4);
+        (result, chain, store)
     }
+    /// The error names the transaction by its own hash, not by its operation ID.
     fn names_transaction(error: &crate::error::Error) -> bool {
-        error.detail("transactionHash") == Some(hex(&[7; 32]).as_str())
+        error.detail("transactionHash") == Some(hex(&[8; 32]).as_str())
+    }
+    fn status(store: &dyn OperationStore) -> Option<Status> {
+        store.load([7; 32]).unwrap().map(|(_, status)| status)
     }
     #[test]
     fn live_code_needs_no_transaction() {
@@ -1011,7 +1090,8 @@ mod code_transactions {
         });
         assert!(result.unwrap().is_none());
         assert_eq!(chain.lock().unwrap().sends, 0);
-        assert!(store.load([7; 32]).unwrap().is_none());
+        assert_eq!(status(&store), None);
+        assert!(!store.pending());
     }
     #[test]
     fn a_confirmed_restoration_is_retained_and_returned() {
@@ -1023,19 +1103,17 @@ mod code_transactions {
         let receipt = result.unwrap().unwrap();
         assert_eq!(receipt.info().unwrap().status, Status::Confirmed);
         assert_eq!(chain.lock().unwrap().sends, 1);
-        assert_eq!(store.load([7; 32]).unwrap().unwrap().1, Status::Confirmed);
+        assert_eq!(status(&store), Some(Status::Confirmed));
+        assert!(!store.pending());
     }
     #[test]
     fn a_send_accepted_in_the_last_attempt_is_looked_up_in_it() {
-        let (result, chain, _) = run_with(
-            Chain {
-                outcome: Some(Status::Confirmed),
-                ..Chain::default()
-            },
-            MemoryOperations::default(),
-            1,
-        );
-        assert!(result.unwrap().is_some());
+        let chain = Arc::new(Mutex::new(Chain {
+            outcome: Some(Status::Confirmed),
+            ..Chain::default()
+        }));
+        let mut store = MemoryOperations::default();
+        assert!(run_on(chain.clone(), &mut store, 1).unwrap().is_some());
         assert_eq!(chain.lock().unwrap().sends, 1);
     }
     #[test]
@@ -1058,58 +1136,104 @@ mod code_transactions {
         });
         assert!(result.unwrap().is_some());
         assert_eq!(chain.lock().unwrap().sends, 2);
-        assert_eq!(store.load([7; 32]).unwrap().unwrap().1, Status::Confirmed);
-        // The network accepts none of the sends: nothing is pending, and the error names no
-        // transaction.
-        let (result, chain, _) = run(Chain {
+        assert_eq!(status(&store), Some(Status::Confirmed));
+        // The network accepts none of the sends: the journal holds nothing pending, and the
+        // error names no transaction.
+        let (result, chain, store) = run(Chain {
             answers: vec![Status::Prepared; 4],
             ..Chain::default()
         });
         let refused = result.unwrap_err();
         assert!(!names_transaction(&refused), "{refused:?}");
         assert_eq!(chain.lock().unwrap().sends, 4);
+        assert_eq!(status(&store), Some(Status::Prepared));
+        assert!(!store.pending());
     }
     #[test]
     fn a_check_that_fails_before_any_send_sends_nothing() {
         let (result, chain, store) = run(Chain {
-            failing_check: true,
+            failing_checks: vec![1, 2, 3, 4],
             outcome: Some(Status::Confirmed),
             ..Chain::default()
         });
         let refused = result.unwrap_err();
         assert!(!names_transaction(&refused));
         assert_eq!(chain.lock().unwrap().sends, 0);
-        assert!(store.load([7; 32]).unwrap().is_none());
+        assert_eq!(status(&store), None);
+        assert!(!store.pending());
     }
     #[test]
-    fn a_transaction_that_the_journal_holds_is_looked_up_not_sent_again() {
-        let (_, _, first) = run(Chain {
+    fn a_check_that_fails_after_a_send_that_was_not_accepted_stays_within_the_poll() {
+        let (result, chain, _) = run(Chain {
+            answers: vec![Status::Prepared],
+            failing_checks: vec![2],
+            outcome: Some(Status::Confirmed),
+            ..Chain::default()
+        });
+        assert!(result.unwrap().is_some());
+        assert_eq!(chain.lock().unwrap().sends, 2);
+    }
+    #[test]
+    fn a_transaction_that_the_journal_holds_is_followed_by_its_retained_packet() {
+        let chain = Arc::new(Mutex::new(Chain {
             answers: vec![Status::SubmissionUnknown],
             pending_lookups: 10,
             ..Chain::default()
-        });
-        assert_eq!(
-            first.load([7; 32]).unwrap().unwrap().1,
-            Status::SubmissionUnknown
-        );
-        // The first lookup still finds nothing, as Stellar does for a transaction that it has
-        // not seen yet.
-        let (result, chain, store) = run_with(
-            Chain {
-                pending_lookups: 1,
-                outcome: Some(Status::Confirmed),
-                ..Chain::default()
-            },
-            first,
-            4,
-        );
-        assert!(result.unwrap().is_some());
-        assert_eq!(chain.lock().unwrap().sends, 0);
-        assert_eq!(store.load([7; 32]).unwrap().unwrap().1, Status::Confirmed);
+        }));
+        let mut store = MemoryOperations::default();
+        assert!(run_on(chain.clone(), &mut store, 4).is_err());
+        let (original, retained) = store.load([7; 32]).unwrap().unwrap();
+        assert_eq!(retained, Status::SubmissionUnknown);
+        // A later call prepares new bytes of the same transaction. The journal's packet is the
+        // one that the network may hold: it is looked up, not sent again, and its status is
+        // recorded.
+        {
+            let mut chain = chain.lock().unwrap();
+            chain.pending_lookups = 1;
+            chain.outcome = Some(Status::Confirmed);
+            chain.sends = 0;
+            chain.observed.clear();
+        }
+        assert!(run_on(chain.clone(), &mut store, 4).unwrap().is_some());
+        let chain = chain.lock().unwrap();
+        assert_eq!(chain.sends, 0);
+        assert_eq!(chain.preparations, 2);
+        assert!(chain.observed.iter().all(|bytes| bytes == original.bytes()));
+        assert_eq!(status(&store), Some(Status::Confirmed));
+    }
+    #[test]
+    fn a_send_that_the_journal_could_not_record_as_accepted_is_pending() {
+        // The journal retains the transaction before the send (first write); the network
+        // accepts it, and the journal cannot record that (second write).
+        let chain = Arc::new(Mutex::new(Chain {
+            pending_lookups: 10,
+            ..Chain::default()
+        }));
+        let mut journal = Journal::failing_at(2);
+        let pending = run_on(chain.clone(), &mut journal, 4).unwrap_err();
+        assert!(names_transaction(&pending), "{pending:?}");
+        assert!(pending.detail("nativeUnits").is_none());
+        assert_eq!(status(&journal), Some(Status::SubmissionUnknown));
+        assert!(journal.inner.pending());
+        assert_eq!(chain.lock().unwrap().sends, 1);
+    }
+    #[test]
+    fn a_failed_transaction_keeps_its_fee_when_the_journal_cannot_record_it() {
+        // Writes: retained before the send, accepted, then the failure, which the journal
+        // cannot record.
+        let chain = Arc::new(Mutex::new(Chain {
+            outcome: Some(Status::Failed),
+            ..Chain::default()
+        }));
+        let mut journal = Journal::failing_at(3);
+        let failed = run_on(chain, &mut journal, 4).unwrap_err();
+        assert!(failed.message.contains("failed on the ledger"));
+        assert!(names_transaction(&failed));
+        assert_eq!(failed.detail("nativeUnits"), Some("250"));
     }
     #[test]
     fn lookups_that_fail_stay_within_the_poll() {
-        let (result, chain, _) = run(Chain {
+        let (result, chain, store) = run(Chain {
             failing_lookups: 2,
             outcome: Some(Status::Failed),
             ..Chain::default()
@@ -1119,9 +1243,11 @@ mod code_transactions {
         assert!(names_transaction(&failed));
         assert_eq!(failed.detail("nativeUnits"), Some("250"));
         assert_eq!(chain.lock().unwrap().lookups, 3);
+        assert_eq!(status(&store), Some(Status::Failed));
+        assert!(!store.pending());
     }
     #[test]
-    fn a_transaction_without_a_receipt_is_uncertain_and_named() {
+    fn a_transaction_without_a_receipt_is_pending_and_named() {
         let (result, chain, store) = run(Chain {
             pending_lookups: 10,
             outcome: Some(Status::Confirmed),
@@ -1136,6 +1262,7 @@ mod code_transactions {
         assert!(names_transaction(&uncertain));
         assert!(uncertain.detail("nativeUnits").is_none());
         assert_eq!(chain.lock().unwrap().sends, 1);
-        assert_eq!(store.load([7; 32]).unwrap().unwrap().1, Status::Submitted);
+        assert_eq!(status(&store), Some(Status::Submitted));
+        assert!(store.pending());
     }
 }
