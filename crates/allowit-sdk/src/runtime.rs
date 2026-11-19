@@ -492,10 +492,11 @@ impl Runtime {
     ///
     /// A new preparation is a new transaction: its sending account, sequence and time bound give
     /// it another hash, and so another operation ID, than an earlier one. This call therefore
-    /// finds no transaction of an earlier call that may still apply. The caller keeps the journal
-    /// of its code transactions beyond the call, and makes no call for the same code while that
-    /// journal holds one of them as pending: it looks that one up with `observe` instead, until
-    /// it resolves. A send can apply only within the transaction's time bound
+    /// finds no transaction of an earlier call that may still apply. A caller whose journal lasts
+    /// one call, as the server's does, can send a second transaction for the same code while the
+    /// first may still apply: a code transaction gives no authority, the server pays each within
+    /// the fee ceiling, and the sending account of a pending one stays held until it resolves or
+    /// its hold ends. A send can apply only within the transaction's time bound
     /// (`Signed::info().expires_at`).
     ///
     /// The journal `store` decides. Its packet is the transaction: when it holds one under the
@@ -514,8 +515,7 @@ impl Runtime {
     /// The receipt is that of a confirmed transaction. One that the ledger included and failed
     /// is an error whose details name its `transactionHash` and the fee that its source paid,
     /// `nativeUnits`. Without a receipt, an error names the transaction's own `transactionHash`
-    /// when the journal holds it as pending; a caller that keeps the journal looks it up again
-    /// with `observe`.
+    /// when the journal holds it as pending; it can be looked up again with `observe`.
     pub fn make_code_live(
         &self,
         store: &mut dyn OperationStore,
