@@ -138,6 +138,7 @@ mod tests {
             transaction: vec![7; 32],
             outcome,
             usage,
+            fee_units: 0,
             counted_gas: None,
             next_nonce,
             gas_carry: 0,
