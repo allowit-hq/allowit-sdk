@@ -223,6 +223,13 @@ impl OperationStore for MemoryOperations {
         Ok(())
     }
 }
+/// A journal of signed packets by operation ID, with the status of each.
+///
+/// A journal has one writer. Its reads and writes are no conditional claim: the SDK engine
+/// decides from a read and then writes, so two writers of one journal can both send the same
+/// transaction. A host that shares one journal between callers serialises their writers, for
+/// example one call at a time per operation ID. A journal that lasts one call, as a server's
+/// does, has one writer by construction.
 pub trait OperationStore {
     fn load(&self, id: [u8; 32]) -> Result<Option<(Signed, Status)>>;
     fn record(&mut self, id: [u8; 32], signed: &Signed, status: Status) -> Result<()>;
@@ -508,9 +515,10 @@ impl Runtime {
     /// A journal packet that names another operation ID, transaction hash or network stops the
     /// call, at the first read before any send or lookup, and at a later read before its status
     /// counts. The read just before each send decides: a transaction that the journal holds past
-    /// `Prepared`, also one that another caller of a shared journal sent, is looked up by its
-    /// retained packet, never sent again. A receipt counts only when the rail verifies it as this
-    /// transaction's. The clock of each send counts from the call's start, so
+    /// `Prepared` is looked up by its retained packet, never sent again; a journal has one writer
+    /// ([`OperationStore`]). Live code needs nothing, unless the journal holds a send of this
+    /// transaction, whose receipt the call then returns. A receipt counts only when the rail
+    /// verifies it as this transaction's. The clock of each send counts from the call's start, so
     /// the preparation's reads of the network take part of the transaction's time bound.
     /// `submit` retains the transaction before every send, so a transaction is pending once the
     /// journal holds it past `Prepared` (`Submitted` or `SubmissionUnknown`): the network may
@@ -602,6 +610,18 @@ impl Runtime {
         };
         let (mut signed, mut status) =
             this(store.load(id)?)?.unwrap_or((prepared, Status::Prepared));
+        // A fence that refused once stays closed for the call: no send follows a refusal.
+        let closed = std::cell::Cell::new(false);
+        let fence = || {
+            let open = !closed.get() && fence();
+            closed.set(!open);
+            open
+        };
+        // Live code needs nothing, unless a send of this transaction made it live: the journal
+        // then holds that send, whose receipt is the call's outcome.
+        let sent_elsewhere = |store: &dyn OperationStore| -> Result<Journaled> {
+            Ok(this(store.load(id)?)?.filter(|(_, status)| *status != Status::Prepared))
+        };
         let hash = expected.transaction_hash;
         let (now, started) = start;
         let clock = || now.saturating_add(started.elapsed().as_secs());
@@ -614,44 +634,65 @@ impl Runtime {
                 // Nothing is pending.
                 match self.provider.code_needed(&native::Signed(signed.0.clone())) {
                     Ok(true) => {}
-                    Ok(false) => return Ok(None),
+                    Ok(false) => match sent_elsewhere(&*store)? {
+                        Some((original, journaled)) => {
+                            signed = original;
+                            status = journaled;
+                        }
+                        None => return Ok(None),
+                    },
                     Err(error) => {
                         last = Some(error);
                         continue;
                     }
                 }
-                status =
-                    match self.send_unless_journaled(store, &mut signed, id, &this, clock(), fence)
-                    {
-                        Ok(status) => status,
-                        // The journal tells whether the send that failed may be pending, and holds
-                        // the packet that the call follows. A journal that cannot be read leaves it
-                        // in doubt: it is looked up, never sent again.
-                        Err(error) => {
-                            last = Some(error);
-                            match store.load(id) {
-                                Ok(found) => match this(found)? {
-                                    Some((original, status)) => {
-                                        signed = original;
-                                        status
-                                    }
-                                    None => Status::Prepared,
-                                },
-                                Err(_) => Status::SubmissionUnknown,
-                            }
+            }
+            if status == Status::Prepared {
+                status = match self.send_unless_journaled(
+                    store,
+                    &mut signed,
+                    id,
+                    &this,
+                    clock(),
+                    &fence,
+                ) {
+                    Ok(status) => status,
+                    // The journal tells whether the send that failed may be pending, and holds
+                    // the packet that the call follows. A journal that cannot be read leaves it
+                    // in doubt: it is looked up, never sent again.
+                    Err(error) => {
+                        last = Some(error);
+                        match store.load(id) {
+                            Ok(found) => match this(found)? {
+                                Some((original, status)) => {
+                                    signed = original;
+                                    status
+                                }
+                                None => Status::Prepared,
+                            },
+                            Err(_) => Status::SubmissionUnknown,
                         }
-                    };
+                    }
+                };
                 if status == Status::Prepared {
-                    // The network accepted no send. After the last one, live code needs nothing.
+                    // The network accepted no send. After the last one, live code needs nothing,
+                    // unless another send of this transaction made it live.
                     if attempt + 1 == poll.attempts.max(1)
                         && matches!(
                             self.provider.code_needed(&native::Signed(signed.0.clone())),
                             Ok(false)
                         )
                     {
-                        return Ok(None);
+                        match sent_elsewhere(&*store)? {
+                            Some((original, journaled)) => {
+                                signed = original;
+                                status = journaled;
+                            }
+                            None => return Ok(None),
+                        }
+                    } else {
+                        continue;
                     }
-                    continue;
                 }
             }
             match self.observe(&signed) {
@@ -682,8 +723,8 @@ impl Runtime {
     }
     /// Send the code transaction `signed` once, unless the journal's read just before the send,
     /// whose packet `this` checks, holds it already: its retained packet becomes the one that the
-    /// call follows, and a status past `Prepared` is looked up, never sent again, also when
-    /// another caller of a shared journal sent it.
+    /// call follows, and a status past `Prepared` is looked up, never sent again. A journal has one
+    /// writer ([`OperationStore`]).
     fn send_unless_journaled(
         &self,
         store: &mut dyn OperationStore,
@@ -1345,7 +1386,8 @@ mod code_transactions {
             assert_eq!((chain.sends, chain.lookups), (0, 0), "{foreign}");
         }
     }
-    /// A shared journal that holds nothing at the first read and another transaction under the
+    /// A journal whose content changes between reads, as a durable one after another run: it
+    /// holds nothing at the first read and another transaction under the
     /// operation ID later: the call never takes that transaction's status for its own.
     #[test]
     fn a_journal_that_shows_another_transaction_later_stops_the_call() {
@@ -1485,6 +1527,87 @@ mod code_transactions {
             assert_eq!(chain.lock().unwrap().sends, usize::from(open));
             assert!(!store.pending());
         }
+    }
+    /// A fence that refused once stays closed for the call, also when it would open again: a
+    /// round that lost its lease for a moment sends nothing more.
+    #[test]
+    fn a_fence_that_refused_once_stays_closed() {
+        let chain = Arc::new(Mutex::new(Chain {
+            outcome: Some(Status::Confirmed),
+            ..Chain::default()
+        }));
+        let runtime = Runtime {
+            provider: Box::new(Rail(chain.clone())),
+        };
+        let asked = std::cell::Cell::new(0);
+        let fence = || {
+            asked.set(asked.get() + 1);
+            asked.get() > 1
+        };
+        let poll = Poll {
+            attempts: 3,
+            interval: std::time::Duration::ZERO,
+        };
+        let mut store = MemoryOperations::default();
+        assert!(
+            runtime
+                .renew_code(&mut store, &[3; 32], 10_000, poll, 1, &fence)
+                .is_err()
+        );
+        assert_eq!(chain.lock().unwrap().sends, 0);
+    }
+    /// Code that an earlier send of this transaction, which the journal holds, made live: the call
+    /// follows that send to its receipt instead of answering that nothing was needed.
+    #[test]
+    fn code_made_live_by_this_transaction_elsewhere_returns_its_receipt() {
+        /// Holds nothing at the first read, then this transaction as confirmed.
+        struct Shared {
+            loads: std::cell::Cell<usize>,
+            sent: Signed,
+        }
+        impl OperationStore for Shared {
+            fn load(&self, _: [u8; 32]) -> Result<Option<(Signed, Status)>> {
+                self.loads.set(self.loads.get() + 1);
+                Ok((self.loads.get() > 1).then(|| (self.sent.clone(), Status::Confirmed)))
+            }
+            fn record(&mut self, _: [u8; 32], _: &Signed, _: Status) -> Result<()> {
+                Ok(())
+            }
+        }
+        let mut store = Shared {
+            loads: std::cell::Cell::new(0),
+            sent: Signed(
+                native::Packet::new(NETWORK, &serde_json::json!({ "code": 1 }), &PACKETS).unwrap(),
+            ),
+        };
+        // The other send made the code live before this call checked it.
+        let chain = Arc::new(Mutex::new(Chain {
+            live_at_send: None,
+            outcome: Some(Status::Confirmed),
+            ..Chain::default()
+        }));
+        let runtime = Runtime {
+            provider: Box::new(Rail(chain.clone())),
+        };
+        let prepared = Signed(
+            native::Packet::new(NETWORK, &serde_json::json!({ "code": 1 }), &PACKETS).unwrap(),
+        );
+        chain.lock().unwrap().live = true;
+        let poll = Poll {
+            attempts: 2,
+            interval: std::time::Duration::ZERO,
+        };
+        let receipt = runtime
+            .send_code(
+                &mut store,
+                prepared,
+                poll,
+                (1, std::time::Instant::now()),
+                &|| true,
+            )
+            .unwrap();
+        assert!(receipt.is_some());
+        assert_eq!(chain.lock().unwrap().sends, 0);
     }
     /// A send carries the time of the call, which the preparation's reads of the network take
     /// part of: the clock starts when the call does.
