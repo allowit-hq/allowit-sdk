@@ -1071,6 +1071,41 @@ fn a_rail_skips_the_custom_build_exactly_when_it_has_no_hook() {
     assert!(!custom_build::supported("unknown:network"));
 }
 
+/// A host checks a source against the Custom wallet of a network without building it: the SDK
+/// gives exactly what the rail's own hook gives for the same source, a refusal included. Each rail
+/// states its own limits; its tests hold them.
+#[test]
+fn a_host_checks_a_source_against_the_rails_custom_wallet_without_building() {
+    let writes = |keys: usize| -> String {
+        (1..=keys)
+            .map(|i| format!("    allowit::set_state(ctx, \"k{i}\", ctx.request.amount)?;\n"))
+            .collect()
+    };
+    let source = |writes: &str| {
+        format!(
+            "use allowit::prelude::*;\npub fn execute(ctx: &AllowitContext) -> allowit::Result {{\n{writes}    Ok(())\n}}\n"
+        )
+    };
+    let outcome =
+        |result: allowit_sdk::error::Result<()>| result.map_err(|error| error.to_string());
+    testkit::each(Feature::CustomBuild, |rail, _| {
+        let network = rail.test_support().network;
+        let hook = rail
+            .custom_wallet_build()
+            .expect("the rail builds a Custom wallet");
+        for keys in [1, 9] {
+            let source = source(&writes(keys));
+            assert_eq!(
+                outcome(custom_build::check(network, &source)),
+                outcome(hook.check(network, &source)),
+                "{} with {keys} keys",
+                rail.id()
+            );
+        }
+    });
+    assert!(custom_build::check("unknown:network", &source("")).is_err());
+}
+
 #[test]
 fn a_host_builds_only_the_signed_source_and_compares_the_code() {
     use custom_build::code;
