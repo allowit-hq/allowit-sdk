@@ -121,7 +121,7 @@ function sameInputs(value, identity) {
  * later changes nothing that this run signs, checks or registers. Null when the policy names none. The workflow
  * carries the asset to the rail and never reads it.
  */
-const carried = asset => asset === undefined || asset === null ? null : structuredClone(asset);
+const carried = asset => asset === undefined || asset === null ? null : {symbol: asset.symbol, issuer: asset.issuer};
 
 /**
  * Asks the rail whether a keypair wallet's bytes move `asset`, the carried asset of the reviewed policy: signed setup
@@ -237,6 +237,9 @@ async function setUpKeypairWallet(setup, chain, {network, owner, agent, server, 
     }
     journal.remove(key);
   }
+  // A rail that sets up keypair wallets without checking their asset cannot set one up: nothing is prepared.
+  if (typeof setup.checkAsset !== 'function')
+    throw new OwnerFlowError('This network cannot check the asset of a wallet setup. Nothing was signed.', ASSET_MISMATCH, false);
   onStep('Preparing the wallet…');
   const failed = cause => new OwnerFlowError(cause instanceof Error && cause.message ? cause.message : 'The wallet account could not be set up.', null, false, cause);
   const prepared = await setup.prepare({network, owner, agent, server, amount, asset}).catch(cause => {throw failed(cause);});
@@ -250,6 +253,8 @@ async function setUpKeypairWallet(setup, chain, {network, owner, agent, server, 
   } catch (cause) {
     throw failed(cause);
   }
+  // The rail reads the signed bytes: a setup of another asset is neither saved nor sent, so it moves nothing.
+  await checkAsset(setup, signedPayload, network, asset);
   // The signed bytes are saved before they leave: an unknown result is settled from them, never signed again.
   journal.set(key, JSON.stringify({hash: step.hash, signedPayload, owner, agent, server, amount}));
   onStep('Waiting for the network to confirm…');
@@ -453,6 +458,18 @@ async function run(chain, {network, ask, sign, journal, key, policyId, agent, am
   let wallet;
   // True when the deployment names a keypair wallet: its funding step pays the reviewed asset, which the rail checks.
   let keypairWallet = false;
+  /** The funding step of this policy, as the service prepares it; a keypair wallet's step is checked by the rail. */
+  const prepareFunding = async () => {
+    onStep('Preparing the funding…');
+    const funding = await ask('native/owner/prepare', {policyId, action: 'fund', amount});
+    const step = stepOf(funding?.step);
+    if (!object(funding) || funding.policyId !== policyId || !step || step.action !== 'fund') throw new OwnerFlowError('The funding reply differs from this policy.', null, false);
+    // A keypair wallet is funded in the asset of the reviewed policy: the rail checks the step before the owner signs.
+    if (keypairWallet) await checkAsset(chain.keypairSetup, step.payload, network, asset);
+    return step;
+  };
+  // The funding step of a keypair wallet that still needs it, prepared and checked before the owner signs anything.
+  let pendingFunding = null;
   // True once this run set up the wallet account of a keypair policy: the deployment then names the wallet.
   let keypairSetUp = false;
   const walletSetupKey = `${key}:wallet-setup`;
@@ -519,6 +536,9 @@ async function run(chain, {network, ask, sign, journal, key, policyId, agent, am
       // policy. A wallet account that this workflow did not fund is funded below.
       if (await retainedSetup(chain, journal.get(walletSetupKey), network, wallet, identity, asset)) journal.set(fundedKey, JSON.stringify(identity));
       journal.remove(walletSetupKey);
+      // A wallet that this run cannot show funded is funded after its approval. Its funding step is checked first, so
+      // a refusal of its asset leaves the approval unsigned.
+      if (reply.approved !== true && !funded(journal, fundedKey, identity)) pendingFunding = await prepareFunding();
       if (reply.approved !== true) await approvePolicy(wallet);
       break;
     }
@@ -530,12 +550,8 @@ async function run(chain, {network, ask, sign, journal, key, policyId, agent, am
   if (!wallet) throw new OwnerFlowError('The wallet installation could not be confirmed.', null, true);
   // A confirmed funding is never prepared or signed again, including after a reload or a failed export.
   if (!funded(journal, fundedKey, identity)) {
-    onStep('Preparing the funding…');
-    const funding = await ask('native/owner/prepare', {policyId, action: 'fund', amount});
-    const step = stepOf(funding?.step);
-    if (!object(funding) || funding.policyId !== policyId || !step || step.action !== 'fund') throw new OwnerFlowError('The funding reply differs from this policy.', null, false);
-    // A keypair wallet is funded in the asset of the reviewed policy: the rail checks the step before the owner signs.
-    if (keypairWallet) await checkAsset(chain.keypairSetup, step.payload, network, asset);
+    // A step prepared before the approval is signed while it lasts; past its time bound the service prepares a new one.
+    const step = pendingFunding && pendingFunding.expiresAt > Math.floor(Date.now() / 1000) ? pendingFunding : await prepareFunding();
     await signAndSubmit(step);
   }
   return {wallet, receipts};

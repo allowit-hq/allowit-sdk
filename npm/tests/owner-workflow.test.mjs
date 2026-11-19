@@ -1088,3 +1088,54 @@ test('the asset is copied at the call: a host that changes it while the workflow
     if (before) Object.defineProperty(globalThis, 'navigator', before); else delete globalThis.navigator;
   }
 });
+
+test('the funding step is checked before the approval: a refusal of its asset leaves the approval unsigned', async () => {
+  for (const [payloadAsset, refused] of [['|NET|', true], ['|TKN|ISSUER', false]]) {
+    const {world, chain} = assetRail(), signed = [], calls = [];
+    world.owners.set('WALLET-9', OWNER);
+    let approved = false;
+    const ask = async (path, body) => {
+      calls.push([path, body]);
+      if (path === 'native/deploy/prepare') return {policyId, installed: true, approved, walletKind: 'native', wallet: 'WALLET-9', installation: {wallet: 'WALLET-9'}};
+      if (path === 'native/approval') return {required: !approved, message: approvalMessage({wallet: 'WALLET-9', asset: TKN})};
+      if (path === 'micro/allocation/confirm') {approved = true; return {active: true};}
+      if (path === 'native/owner/prepare') return {policyId, step: {...step('fund', 4), payload: `unsigned-fund-4${payloadAsset}`}};
+      if (path === 'native/owner/submit') return confirmed({payload: 'x-fund-4'});
+      throw new Error(path);
+    };
+    const input = {ask, sign: ownerSigns(signed), journal: journalOf(), key: 'existing', policyId, agent, amount, reviewed: {...reviewed(), asset: TKN}, onStep() {}};
+    if (refused) {
+      await assert.rejects(installAndFund(input, chain), error => error instanceof OwnerFlowError && error.code === 'asset_mismatch');
+      assert.deepEqual([signed, calls.some(([path]) => path === 'micro/allocation/confirm')], [[], false]);
+    } else {
+      await installAndFund(input, chain);
+      assert.deepEqual(signed, ['approve_policy', 'fund']);
+    }
+  }
+});
+
+test('a fresh setup is checked by the rail before it is saved or sent; a rail without the check prepares nothing', async () => {
+  // The rail sets up keypair wallets and has no check of their asset: nothing is prepared or signed.
+  const plain = assetRail();
+  const {checkAsset, ...without} = plain.chain.keypairSetup;
+  void checkAsset;
+  const service = keypairService(), signed = [];
+  await assert.rejects(installAndFund({ask: service.ask, sign: ownerSigns(signed), journal: journalOf(), key: 'flow', policyId, agent, amount, reviewed: {...reviewed(), asset: TKN}, onStep() {}},
+    {...plain.chain, keypairSetup: without}), error => error instanceof OwnerFlowError && error.code === 'asset_mismatch');
+  assert.deepEqual([plain.world.preparedAssets, signed], [[], []]);
+  // A setup that the rail builds for another asset than the reviewed one is neither saved nor sent.
+  const {world, chain} = assetRail(), journal = journalOf(), other = keypairService(), owner = [];
+  const wrong = {...chain, keypairSetup: {...chain.keypairSetup, prepare: input => chain.keypairSetup.prepare({...input, asset: null})}};
+  await assert.rejects(installAndFund({ask: other.ask, sign: ownerSigns(owner), journal, key: 'flow', policyId, agent, amount, reviewed: {...reviewed(), asset: TKN}, onStep() {}}, wrong),
+    error => error instanceof OwnerFlowError && error.code === 'asset_mismatch');
+  assert.deepEqual([journal.get('flow:wallet-setup'), world.sent, other.calls.some(([path]) => path === 'native/register')], [null, [], false]);
+});
+
+test('the asset of a reactive host is copied by its fields: a proxy of it installs the wallet', async () => {
+  const {world, chain} = assetRail(), signed = [];
+  const service = keypairService();
+  const ask = async (path, body) => path === 'native/approval' ? {required: !service.state.approved, message: approvalMessage({wallet: service.state.wallet, asset: TKN})} : service.ask(path, body);
+  const asset = new Proxy({...TKN}, {});
+  await installAndFund({ask, sign: ownerSigns(signed), journal: journalOf(), key: 'flow', policyId, agent, amount, reviewed: {...reviewed(), asset}, onStep() {}}, chain);
+  assert.deepEqual([world.preparedAssets, signed], [[TKN], ['set_up_wallet', 'approve_policy']]);
+});
