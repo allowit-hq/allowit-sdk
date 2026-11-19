@@ -6,7 +6,8 @@ import * as workflow from './owner-workflow.js';
 
 export {OwnerFlowError, ownerArchiveKey, OWNER_TRANSACTION_EXPIRED, OWNER_TRANSACTION_PENDING, OWNER_TRANSACTION_SETTLED,
   OWNER_TRANSACTION_FAILED, NETWORK_UNAVAILABLE, PARAM_INVALID, PARAM_OUT_OF_RANGE, UPDATE_UNAVAILABLE, REVISION_CHANGED,
-  UPDATE_PARAMS, ASSET_MISMATCH, WALLET_SETUP_REQUIRED, SET_UP_WALLET, APPROVE_POLICY} from './owner-workflow.js';
+  UPDATE_PARAMS, ASSET_MISMATCH, WALLET_SETUP_REQUIRED, SET_UP_WALLET, APPROVE_POLICY, CUSTOM_BUILD_MISSING,
+  CUSTOM_CODE_HASH_MISMATCH} from './owner-workflow.js';
 
 const RAILS = Object.freeze(Object.values(registered));
 
@@ -90,22 +91,30 @@ export function walletKindIdOf(document) {
   return typeof id === 'string' && WALLET_KIND_IDS.has(id) ? id : null;
 }
 
-/** A quantity `{units, asset, text}` of a server document, or null when the value is not one. */
+/**
+ * A quantity `{units, asset, text}` of a server document, or null when the value is not one. Its asset is Core's
+ * `AssetDisplay` in full: `symbol`, `decimals`, `name` and `native`.
+ */
 function quantity(value) {
   const item = record(value);
   const asset = record(item?.asset);
   return item && asset && typeof item.units === 'string' && /^-?[0-9]+$/.test(item.units)
     && typeof item.text === 'string' && typeof asset.symbol === 'string'
     && Number.isInteger(asset.decimals) && asset.decimals >= 0
+    && typeof asset.name === 'string' && typeof asset.native === 'boolean'
     ? item
     : null;
 }
 
-/** The settlement `{height, fee, amount}` of a status or receipt document, or null. */
+/**
+ * The settlement `{height, fee, amount}` of a status or receipt document, or null. A settlement that reports no amount
+ * has `amount: null`, as Core declares it.
+ */
 export function settlementOf(document) {
   const item = record(record(document)?.settlement);
   if (!item || !Number.isSafeInteger(item.height) || !quantity(item.fee)) return null;
-  return item.amount === null || item.amount === undefined || quantity(item.amount) ? item : null;
+  if (item.amount === null || item.amount === undefined) return {...item, amount: null};
+  return quantity(item.amount) ? item : null;
 }
 
 /**
@@ -270,8 +279,9 @@ export function reviewParamLines(network, params) {
 
 /**
  * Install the reviewed policy wallet, then fund it. The host supplies its transport, the signing of one owner step and a
- * journal. The SDK settles a saved signed step before it signs another one; the rail of the network reads its records
- * and checks its signatures. An unknown network rejects.
+ * journal, and for a Custom wallet the wait for the owner's build (`input.build`). The SDK settles a saved signed step
+ * before it signs another one, and signs a Custom wallet's creation only for the code of the owner's build; the rail of
+ * the network reads its records and checks its signatures. An unknown network rejects.
  */
 export async function installAndFund(network, input) {
   const hit = hitOf(network);

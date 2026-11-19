@@ -161,7 +161,21 @@ export interface InstallAndFundInput {
    * it, and the approval must name it. Without one it is the asset of the network itself.
    */
   reviewed?: {source: string; params: Record<string, ParamValue>; rules?: unknown; tier?: unknown; asset?: WalletAsset | null | undefined};
+  /**
+   * The wallet kind that the owner reviewed. It decides the workflow, never the service's reply: whether the owner sets
+   * up a wallet account (`native`) and whether a creation needs the owner's build (`custom`). A deployment reply that
+   * names another kind is refused, and nothing is signed.
+   */
+  walletKind: WalletKindId;
   onStep: (text: string) => void;
+  /**
+   * Waits for the owner's build of a Custom wallet's code from the reviewed source and resolves with its code hash (64
+   * lowercase hex digits). The workflow decides when a build is needed: when the service holds none
+   * (`custom_build_missing`), and before the owner signs a Custom wallet's creation. It calls `build` once, and the owner
+   * signs only a creation that names that code hash; another one is refused with `custom_code_hash_mismatch` and
+   * nothing is signed. Without it a Custom deployment is refused with `custom_build_missing` before anything is signed.
+   */
+  build?: () => Promise<string>;
 }
 /** One typed param value: Core's `PolicyValue`, the JSON of a policy value. An integer is canonical decimal text. */
 export type {ParamValue};
@@ -196,7 +210,9 @@ export type OwnerFlowCode =
   | 'param_out_of_range'
   | 'update_unavailable'
   | 'revision_changed'
-  | 'asset_mismatch';
+  | 'asset_mismatch'
+  | 'custom_build_missing'
+  | 'custom_code_hash_mismatch';
 /** The error that `installAndFund` and `updateParams` reject with. */
 export interface OwnerFlowFailure extends Error {
   code: OwnerFlowCode | string | null;
@@ -337,6 +353,8 @@ export const ASSET_MISMATCH: 'asset_mismatch';
 export const WALLET_SETUP_REQUIRED: 'wallet_setup_required';
 export const SET_UP_WALLET: 'set_up_wallet';
 export const APPROVE_POLICY: 'approve_policy';
+export const CUSTOM_BUILD_MISSING: 'custom_build_missing';
+export const CUSTOM_CODE_HASH_MISMATCH: 'custom_code_hash_mismatch';
 
 export class AllowitRail extends HTMLElement {
   data: ElementData[ElementKind] | undefined;

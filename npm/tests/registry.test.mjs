@@ -254,7 +254,7 @@ for (const rail of sdk.rails()) {
     const input = {
       ask: async () => { throw offline; }, sign: async (step) => (signed.push(step), 'signed'),
       journal: {get: (k) => journal.get(k) ?? null, set: (k, v) => void journal.set(k, v), remove: (k) => void journal.delete(k)},
-      key: 'k', policyId: 'p', agent: fixtures.address, amount: '5', onStep() {},
+      key: 'k', policyId: 'p', agent: fixtures.address, amount: '5', walletKind: 'standard', onStep() {},
     };
     await assert.rejects(sdk.installAndFund(network, input), (error) => error === offline);
     for (const alias of rail.networks.find((n) => n.id === network).aliases) {
@@ -317,6 +317,17 @@ test('server documents give their wallet kind, settlement, charged fee and limit
   assert.equal(sdk.limitsOf({limits: [{param: '', limit: {}, spent: {}, remaining: {}}]}), null);
   assert.equal(sdk.paymentLimitsOf({paymentLimits: [{param: '', limit: {}}]}), null);
   assert.equal(sdk.paymentLimitsOf({paymentLimits: {param: 'payment_limit'}}), null);
+  // The readers return Core's declarations: an asset without Core's `name` and `native` is no quantity, and a
+  // settlement that reports no amount has `amount: null`.
+  const partial = {symbol: 'XYZ', decimals: 2};
+  for (const asset of [partial, {...partial, name: 'Example'}, {...partial, native: false}, {...unit, native: 'no'}]) {
+    const short = {units: '150', asset, text: '1.50 XYZ'};
+    assert.equal(sdk.feeChargedOf({feeCharged: short}), null);
+    assert.equal(sdk.settlementOf({settlement: {height: 3, fee: short, amount: null}}), null);
+    assert.equal(sdk.limitsOf({limits: [{param: 'p', limit: short, spent: short, remaining: short}]}), null);
+  }
+  const fee = {units: '150', asset: unit, text: '1.50 XYZ'};
+  assert.deepEqual(sdk.settlementOf({settlement: {height: 3, fee}}), {height: 3, fee, amount: null});
 });
 
 test('a receipt document gives its bounded paid-service context', async () => {

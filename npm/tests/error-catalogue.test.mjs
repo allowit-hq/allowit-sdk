@@ -33,6 +33,16 @@ test('each declared code constant has the literal type of its value', async () =
   for (const name of constants) assert.ok(declared.some(([one]) => one === name), `${name} has no declaration`);
 });
 
+test('each declared constant is a named export of @allowit/sdk with its literal value', async () => {
+  // A host imports the package, not its internal modules: a declared constant that the entry point does not export
+  // type-checks but fails to load.
+  const declarations = await readFile(new URL('../src/registry.d.ts', import.meta.url), 'utf8');
+  const declared = [...declarations.matchAll(/^export const ([A-Z][A-Z0-9_]+): '([^']+)';$/gm)].map(match => [match[1], match[2]]);
+  assert.ok(declared.length >= 8, 'the declared constants were not found');
+  const sdk = await import('@allowit/sdk');
+  for (const [name, literal] of declared) assert.equal(sdk[name], literal, `@allowit/sdk exports ${name}`);
+});
+
 test('every code that the declarations name has a catalogue entry', async () => {
   const declarations = await readFile(new URL('../src/registry.d.ts', import.meta.url), 'utf8');
   const union = name => {

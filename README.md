@@ -76,6 +76,9 @@ rail supplies only `ownerChain`, which implements Core's `OwnerChain` contract f
 steps of a keypair wallet's setup (build, read and send its transaction) and the check of the owner's approval
 signature. The SDK keeps each signed step and setup in the host's journal and replaces one only when the rail proves
 that it can never apply.
+`installAndFund` takes the wallet kind that the owner reviewed (`walletKind`). That kind, never the service's reply,
+decides whether the owner sets up a wallet account and whether a creation needs the owner's build, and a deployment
+reply that names another kind is refused before anything is signed.
 
 A host never prints a unit of its own. An asset without a known unit is an error in Rust and `null` in npm.
 `npm/src/wallet-kinds.js` is generated from Core by the test `npm_wallet_kinds_equal_the_core_description`;
