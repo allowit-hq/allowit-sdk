@@ -125,6 +125,24 @@ function sameAsset(signed, asset) {
   return !!read && read.symbol === issued.symbol && read.issuer === issued.issuer;
 }
 
+/** A decimal amount without leading zeros and without trailing zeros of its fraction, or null for any other text. */
+function plainDecimal(text) {
+  const match = typeof text === 'string' ? /^([0-9]+)(?:\.([0-9]+))?$/.exec(text) : null;
+  if (!match) return null;
+  const whole = match[1].replace(/^0+(?=[0-9])/, ''), fraction = (match[2] ?? '').replace(/0+$/, '');
+  return fraction ? `${whole}.${fraction}` : whole;
+}
+/**
+ * True when signed setup bytes fund the wallet with `amount`. A rail that reads the amount from the bytes states it,
+ * and then the bytes decide: the amount that the journal saved beside them is unsigned. A rail that states none
+ * leaves the saved amount as the only record.
+ */
+function sameAmount(signed, amount) {
+  if (signed.amount === undefined) return true;
+  const stated = plainDecimal(signed.amount);
+  return stated !== null && stated === plainDecimal(amount);
+}
+
 /**
  * Reads a retained signed setup of a keypair wallet when the service reports it installed. True when the setup created
  * `wallet` for this agent with this funding amount: the server registers a wallet only after the network confirmed its
@@ -139,7 +157,7 @@ function retainedSetup(chain, raw, network, wallet, identity, asset) {
   } catch { /* refused below */ }
   const setup = object(value) && typeof value.signedPayload === 'string' ? chain.keypairSetup?.read(value.signedPayload, network) : null;
   if (!object(value) || !setup || setup.wallet !== wallet || value.agent !== identity.agent || setup.agent !== identity.agent
-    || value.amount !== identity.amount || !sameAsset(setup, asset))
+    || value.amount !== identity.amount || !sameAmount(setup, identity.amount) || !sameAsset(setup, asset))
     throw changed(identity);
   return true;
 }
@@ -177,6 +195,9 @@ async function setUpKeypairWallet(setup, chain, {network, owner, agent, server, 
     if (!object(signed) || signed.hash !== saved.hash || signed.owner !== owner || signed.agent !== agent || signed.server !== server
       || !Number.isSafeInteger(signed.validUntil))
       throw unreadable();
+    // The signed bytes state the amount that they fund, when the rail reads it. They decide, not the saved amount.
+    if (!sameAmount(signed, amount))
+      throw new OwnerFlowError('A signed wallet setup with another agent key or amount is saved. It stays saved; use the agent key and amount of that setup.', null, false);
     // The signed bytes name the asset of their wallet. A setup of another asset than the reviewed policy's is kept.
     if (!sameAsset(signed, asset))
       throw new OwnerFlowError('A signed wallet setup for another asset is saved. It stays saved; resume the policy of that setup.', null, false);

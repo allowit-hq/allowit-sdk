@@ -719,9 +719,10 @@ function assetRail() {
       world.assets.set(prepared.wallet, input.asset?.issuer ? input.asset : own);
       return prepared;
     },
+    // The fake bytes state their funding in their sixth field, and the rail reads it back.
     read: (signedPayload, net) => {
       const read = base.read(signedPayload, net);
-      return read ? {...read, asset: world.assets.get(read.wallet) ?? own} : null;
+      return read ? {...read, asset: world.assets.get(read.wallet) ?? own, amount: signedPayload.split('|')[5]} : null;
     },
     configuration: (net, wallet, owner, forAgent, server, asset) => ({...base.configuration(net, wallet, owner, forAgent, server), asset: asset?.issuer ? asset : own}),
   };
@@ -782,6 +783,26 @@ test('a saved signed setup of another asset is kept and refused: a resume never 
   // The resume with the asset of the setup registers that wallet and signs no second setup.
   const ask = async (path, body) => path === 'native/approval' ? {required: !service.state.approved, message: approvalMessage({wallet: service.state.wallet, asset: TKN})} : service.ask(path, body);
   const result = await installAndFund({...input(TKN), ask}, chain);
+  assert.deepEqual([signed, world.created, result.wallet], [['set_up_wallet', 'approve_policy'], [service.state.wallet], service.state.wallet]);
+});
+
+test('the signed setup bytes decide the funded amount: a saved amount that differs from them funds nothing and registers nothing', async () => {
+  // The registration fails once, so the signed setup that funds 5 stays in the journal.
+  const {world, chain} = assetRail(), signed = [], journal = journalOf();
+  const service = keypairService({registerFails: 1});
+  const input = funding => ({ask: service.ask, sign: ownerSigns(signed), journal, key: 'flow', policyId, agent, amount: funding, reviewed: {...reviewed(), asset: TKN}, onStep() {}});
+  await assert.rejects(installAndFund(input('5'), chain));
+  const saved = JSON.parse(journal.get('flow:wallet-setup'));
+  assert.equal(saved.amount, '5');
+  // The saved amount is rewritten to 10. The bytes still fund 5, so a resume for 10 is refused and keeps the setup.
+  const rewritten = JSON.stringify({...saved, amount: '10'});
+  journal.set('flow:wallet-setup', rewritten);
+  await assert.rejects(installAndFund(input('10'), chain), error => error instanceof OwnerFlowError && /another agent key or amount is saved/.test(error.message) && error.retry === false);
+  assert.deepEqual([journal.get('flow:wallet-setup'), signed, world.created.length, service.state.wallet], [rewritten, ['set_up_wallet'], 1, null]);
+  // The same amount in another spelling is the same amount.
+  journal.set('flow:wallet-setup', JSON.stringify({...saved, amount: '5.0'}));
+  const ask = async (path, body) => path === 'native/approval' ? {required: !service.state.approved, message: approvalMessage({wallet: service.state.wallet, asset: TKN})} : service.ask(path, body);
+  const result = await installAndFund({...input('5.0'), ask}, chain);
   assert.deepEqual([signed, world.created, result.wallet], [['set_up_wallet', 'approve_policy'], [service.state.wallet], service.state.wallet]);
 });
 
