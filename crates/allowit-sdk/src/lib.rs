@@ -11,6 +11,9 @@ pub use allowit_core::client::progress;
 pub use allowit_core::client::store::Store;
 /// Stable Core digest used for source and caller-owned record identities.
 pub use allowit_core::digest;
+/// The error catalogue: the title and the help page of each typed error code. Hosts show the
+/// title, then the sender's own message as the cause and the step, then the help link.
+pub use allowit_core::errors;
 /// JSON representation of a Core portable policy value.
 pub use allowit_core::policy::PolicyValue;
 /// Bounded HTTP/RPC transport used by caller-owned service adapters.
