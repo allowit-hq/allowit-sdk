@@ -1,5 +1,5 @@
 // A host's view of the SDK types. The owner workflows' rail hooks, the catalog and the param values are Core's contract.
-import type {OwnerChain, OwnerStep, TransactionRecord, RailPlugin, InstallAndFundInput} from '../src/registry.js';
+import type {OwnerChain, OwnerStep, TransactionRecord, RailPlugin, InstallAndFundInput, UpdateParamsInput} from '../src/registry.js';
 import type {CatalogEntry, SearchResult, Ranking, ParamValue, AccessKind} from '../src/registry.js';
 import type {Quantity, Settlement, LimitReport, PaidService, PaymentChallenge, PaymentProof, WalletKindInfo} from '../src/registry.js';
 import type {WalletKindId, AssetDisplay, PaymentLimit, WalletLimits, OperationReports} from '../src/registry.js';
@@ -12,6 +12,12 @@ const chain: OwnerChain = {transaction: async () => record, expiredRecord: async
 const plugin: RailPlugin | undefined = rails()[0];
 const hooks: OwnerChain | undefined = plugin?.ownerChain;
 const input: Omit<InstallAndFundInput, 'ask' | 'sign' | 'journal'> = {key: 'k', policyId: 'p', agent: 'a', amount: '5', onStep() {}};
+// Core's reviewed policy, with an asset that a host leaves explicitly undefined, is the reviewed input of both workflows.
+const reviewedPolicy: Core.ReviewedPolicy = {source: 's', params: {}, asset: undefined};
+const reviewedInput: Omit<InstallAndFundInput, 'ask' | 'sign' | 'journal'> = {...input, reviewed: reviewedPolicy};
+const installedInput: UpdateParamsInput['installed'] = {wallet: 'w', source: 's', rules: [], params: {}, asset: undefined};
+void reviewedInput;
+void installedInput;
 // @ts-expect-error A transaction record states whether it succeeded.
 const unclear: TransactionRecord = {hash: step.hash, ledger: 7};
 
