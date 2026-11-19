@@ -64,6 +64,8 @@ The complete authorization must be durable before the second native simulation s
 Retention failure prevents that RPC step. The caller retains the returned final packet before exposing it to an agent.
 
 `wallet::local_signer` selects the compiled key provider without exposing native private-key bytes.
+`wallet::LocalSigner::from_seed` builds the same signer from a seed that the caller holds, such as
+a server's sending account: the server keeps the seed, and the rail derives the key and signs.
 Native key formats, cryptography and message domains live in the vendor library.
 SDK engine retains secure files, configuration, sessions and workflow sequencing.
 `generation::generate` requires a matching signer network before selecting its registered backend capability.
