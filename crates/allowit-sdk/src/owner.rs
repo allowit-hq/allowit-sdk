@@ -289,6 +289,142 @@ pub fn typed_changes(
     Ok((typed, changes))
 }
 
+/// What the ledger shows of an installed wallet: whether its owner closed or paused it, at the
+/// observed height. This read, never a stored status, says whether a policy is active.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct WalletObservation {
+    /// The wallet is gone from its network: its owner closed it.
+    pub closed: bool,
+    /// The agent cannot pay: the owner paused the wallet, or closed it.
+    pub paused: bool,
+    pub observed_height: u64,
+}
+impl WalletObservation {
+    /// `active`, `stopped` or `closed`.
+    pub fn state(&self) -> &'static str {
+        match (self.closed, self.paused) {
+            (true, _) => "closed",
+            (false, true) => "stopped",
+            (false, false) => "active",
+        }
+    }
+}
+/// What the ledger shows of the wallet of `configuration` now ([`WalletObservation`]): a closed
+/// wallet (`Runtime::wallet_closed`) is closed and paused; another is paused as its snapshot shows
+/// it. `accounting` is the server's account of a wallet whose server keeps one.
+pub fn observe_wallet(
+    runtime: &crate::runtime::Runtime,
+    configuration: &crate::runtime::owner::Configuration,
+    accounting: Option<&crate::runtime::Accounting>,
+) -> Result<WalletObservation> {
+    let installation = crate::runtime::Installation::from_configuration(configuration);
+    if runtime.wallet_closed(&installation)? {
+        return Ok(WalletObservation {
+            closed: true,
+            paused: true,
+            observed_height: runtime.current_height()?,
+        });
+    }
+    let snapshot = runtime.discover_snapshot(configuration, accounting)?;
+    Ok(WalletObservation {
+        closed: false,
+        paused: snapshot.paused,
+        observed_height: snapshot.observed_height,
+    })
+}
+/// A step of an owner's stop.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum StopStep {
+    /// Pause the wallet: its agent can no longer pay.
+    Pause,
+    /// Return every spendable amount to the owner. The wallet stays.
+    Return,
+}
+/// The step of a stop that the ledger asks for next: the pause of a wallet whose agent can pay,
+/// then the return of a paused one. A closed wallet has no step. The rail says whether a paused
+/// wallet still holds something to return.
+pub fn stop_step(seen: &WalletObservation) -> Option<StopStep> {
+    match (seen.closed, seen.paused) {
+        (true, _) => None,
+        (false, false) => Some(StopStep::Pause),
+        (false, true) => Some(StopStep::Return),
+    }
+}
+/// Run the preparation of an owner step, `prepare`, once more when its reads of the ledger
+/// crossed a ledger (`STALE_OWNER_OBSERVATION`): nothing was signed or retained. The typed code
+/// decides, never the message; a second stale read is the answer.
+pub fn retry_stale_observation<T>(mut prepare: impl FnMut() -> Result<T>) -> Result<T> {
+    match prepare() {
+        Err(error)
+            if error.api_code.as_deref() == Some(crate::runtime::STALE_OWNER_OBSERVATION) =>
+        {
+            prepare()
+        }
+        result => result,
+    }
+}
+
+#[cfg(test)]
+mod stop_tests {
+    use super::*;
+    fn seen(closed: bool, paused: bool) -> WalletObservation {
+        WalletObservation {
+            closed,
+            paused,
+            observed_height: 5,
+        }
+    }
+    /// The stop walk: an active wallet pauses, a paused one returns, a closed one has no step.
+    #[test]
+    fn the_stop_walk_pauses_then_returns_and_ends_at_a_closed_wallet() {
+        assert_eq!(stop_step(&seen(false, false)), Some(StopStep::Pause));
+        assert_eq!(stop_step(&seen(false, true)), Some(StopStep::Return));
+        assert_eq!(stop_step(&seen(true, true)), None);
+        assert_eq!(stop_step(&seen(true, false)), None);
+        assert_eq!(
+            [seen(false, false), seen(false, true), seen(true, true)].map(|s| s.state()),
+            ["active", "stopped", "closed"]
+        );
+    }
+    /// A stale observation is prepared once more, by its typed code alone; a second one is the
+    /// answer, and another refusal is never retried.
+    #[test]
+    fn a_stale_observation_is_prepared_once_more() {
+        let stale = || {
+            let mut e = Error::config("Owner observation is stale");
+            e.api_code = Some(crate::runtime::STALE_OWNER_OBSERVATION.into());
+            e
+        };
+        let mut calls = 0;
+        let prepared = retry_stale_observation(|| {
+            calls += 1;
+            if calls == 1 {
+                Err(stale())
+            } else {
+                Ok("unsigned")
+            }
+        });
+        assert_eq!((prepared.unwrap(), calls), ("unsigned", 2));
+        let mut calls = 0;
+        let repeated = retry_stale_observation::<()>(|| {
+            calls += 1;
+            Err(stale())
+        });
+        assert_eq!(
+            (repeated.unwrap_err().api_code.as_deref(), calls),
+            (Some(crate::runtime::STALE_OWNER_OBSERVATION), 2)
+        );
+        // The message text alone never starts a retry.
+        let mut calls = 0;
+        let uncoded = retry_stale_observation::<()>(|| {
+            calls += 1;
+            Err(Error::config("Owner observation is stale"))
+        });
+        assert!(uncoded.is_err());
+        assert_eq!(calls, 1);
+    }
+}
+
 #[cfg(test)]
 mod route_tests {
     use super::check_route;
