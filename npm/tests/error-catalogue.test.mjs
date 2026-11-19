@@ -19,6 +19,20 @@ test('every code constant of the owner workflow has a catalogue entry', () => {
   for (const name of STEPS) assert.equal(errorEntry(workflow[name]), null, name);
 });
 
+test('each declared code constant has the literal type of its value', async () => {
+  // registry.d.ts declares each constant of the owner workflow with a literal type; a mistyped declaration would name
+  // a code that the workflow never gives.
+  const declarations = await readFile(new URL('../src/registry.d.ts', import.meta.url), 'utf8');
+  const declared = [...declarations.matchAll(/^export const ([A-Z][A-Z0-9_]+): '([^']+)';$/gm)].map(match => [match[1], match[2]]);
+  assert.ok(declared.length >= 8, 'the declared constants were not found');
+  for (const [name, literal] of declared) {
+    if (!(name in workflow)) continue;
+    assert.equal(literal, workflow[name], `${name} is declared as '${literal}'`);
+  }
+  const constants = Object.keys(workflow).filter(name => /^[A-Z][A-Z0-9_]+$/.test(name) && typeof workflow[name] === 'string');
+  for (const name of constants) assert.ok(declared.some(([one]) => one === name), `${name} has no declaration`);
+});
+
 test('every code that the declarations name has a catalogue entry', async () => {
   const declarations = await readFile(new URL('../src/registry.d.ts', import.meta.url), 'utf8');
   const union = name => {

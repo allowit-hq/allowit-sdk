@@ -126,6 +126,7 @@ fn every_code_that_the_sdk_names_has_a_catalogue_entry() {
         code::CODE_HASH_MISMATCH,
         code::TOOLCHAIN_MISSING,
         code::BUILD_FAILED,
+        code::SOURCE_REJECTED,
         code::BUILD_MISSING,
     ] {
         assert!(errors::entry(named).is_some(), "{named} has no entry");
