@@ -119,7 +119,7 @@ test('a wallet installed without funding is funded after its installation', asyn
 
 /** A saved step past its time bound, and the service's expiry reply for it. */
 function expiredStep(action) {
-  const lost = {step: savedStep(action, 9), signedPayload: `signed-${action}-9`};
+  const lost = {step: savedStep(action, 9), signedPayload: `signed-${action}-9`, policyId, agent, amount};
   const refuse = () => { throw refusal('owner_transaction_expired', {policyId, action, transactionHash: hash(9)}); };
   return {lost, refuse};
 }
@@ -133,7 +133,8 @@ test('a lost send that expired and never applied is archived, and the owner sign
   const result = await installAndFund({ask, sign: signer(signed), journal, key, policyId, agent, amount, onStep() {}}, chain);
   assert.deepEqual(signed, ['create_wallet']);
   assert.deepEqual(result.receipts.map(r => r.transactionHash), [hash(1)]);
-  assert.deepEqual(JSON.parse(journal.get(ownerArchiveKey(key, hash(9)))), lost);
+  // The archive keeps the step and its signed bytes.
+  assert.deepEqual(JSON.parse(journal.get(ownerArchiveKey(key, hash(9)))), {step: lost.step, signedPayload: lost.signedPayload});
   assert.equal(journal.get(key), null);
   // The rail reads the record of exactly the saved signed bytes.
   assert.deepEqual(asked, [[hash(9), lost.signedPayload]]);
@@ -186,7 +187,7 @@ test('one workflow runs per journal key, so a second call never signs', async ()
 });
 
 test('a saved step that already settled is done without a second signature', async () => {
-  const saved = {step: savedStep('fund', 5), signedPayload: 'signed-fund-5'};
+  const saved = {step: savedStep('fund', 5), signedPayload: 'signed-fund-5', policyId, agent, amount};
   const signed = [], journal = journalOf({[key]: JSON.stringify(saved)});
   const {ask, state} = service({submit: () => { throw refusal('owner_transaction_settled', {policyId, action: 'fund', transactionHash: hash(5), ledger: 7}); }});
   state.installed = true;
@@ -197,7 +198,7 @@ test('a saved step that already settled is done without a second signature', asy
 });
 
 test('pending, unavailable, foreign and untyped replies keep the saved step and sign nothing', async () => {
-  const saved = {step: savedStep('fund', 5), signedPayload: 'signed-fund-5'};
+  const saved = {step: savedStep('fund', 5), signedPayload: 'signed-fund-5', policyId, agent, amount};
   const cases = [
     [refusal('owner_transaction_pending', {policyId, action: 'fund', transactionHash: hash(5)}), 'owner_transaction_pending', true],
     [refusal('network_unavailable', {retry: 'same_request_id'}, 503), 'network_unavailable', true],
@@ -252,12 +253,25 @@ test('a resume with another amount, agent or policy is refused before anything i
     assert.deepEqual([signed, calls], [[], []]);
     assert.deepEqual(journal.map, before);
   }
-  // A step and a marker saved without inputs predate them; the same inputs resume them.
-  const journal = journalOf({[key]: JSON.stringify({step: savedStep('fund', 5), signedPayload: 'signed-fund-5'}), [`${key}:funded`]: 'confirmed'});
-  const {ask, state} = service({submit: confirmed});
+});
+
+test('a saved step that names no inputs is not a match: nothing is sent, signed or reported done', async () => {
+  const legacy = JSON.stringify({step: savedStep('fund', 5), signedPayload: 'signed-fund-5'});
+  const journal = journalOf({[key]: legacy}), signed = [];
+  const {ask, calls, state} = service({submit: confirmed});
   state.installed = true;
-  const result = await installAndFund({ask, sign: signer([]), journal, key, policyId, agent, amount, onStep() {}});
-  assert.deepEqual(result.receipts.map(r => r.action), ['fund']);
+  await assert.rejects(installAndFund({ask, sign: signer(signed), journal, key, policyId, agent, amount, onStep() {}}),
+    error => error instanceof OwnerFlowError && /original wallet setup/.test(error.message));
+  assert.deepEqual([signed, calls, journal.get(key)], [[], [], legacy]);
+});
+
+test('a funded marker that names no inputs is not a match: the run reports no funding that it cannot show', async () => {
+  const journal = journalOf({[`${key}:funded`]: 'confirmed'}), signed = [];
+  const {ask, calls, state} = service({submit: confirmed});
+  state.installed = true;
+  await assert.rejects(installAndFund({ask, sign: signer(signed), journal, key, policyId, agent, amount, onStep() {}}),
+    error => error instanceof OwnerFlowError && /original wallet setup/.test(error.message));
+  assert.deepEqual([signed, calls, journal.get(`${key}:funded`)], [[], [], 'confirmed']);
 });
 
 test('a failed transaction is replaced only when the network holds that exact failure', async () => {
@@ -443,6 +457,13 @@ function keypairRail({owners} = {}) {
       return 8;
     },
     configuration: (net, wallet, owner, forAgent, server) => ({wallet, owner, agent: forAgent, server}),
+    // This rail sets up wallets of the network's own asset only.
+    // A funding step that the fake service prepares is `unsigned-fund-<n>`, in the network's own asset too.
+    checkAsset: (payload, net, asset) => {
+      world.checked = (world.checked ?? 0) + 1;
+      if (!(keypair.read(payload, net) || payload.startsWith('unsigned-fund-')) || (asset !== undefined && asset !== null))
+        throw Object.assign(new Error('The wallet transaction moves another asset.'), {code: 'asset_mismatch'});
+    },
   };
   const canonical = value => JSON.stringify(value, (_, v) => v && typeof v === 'object' && !Array.isArray(v) ? Object.fromEntries(Object.entries(v).sort()) : v);
   const approval = {
@@ -713,6 +734,134 @@ function approvals(message, answers) {
 const done = () => ({policyId, action: 'update_params', status: 'confirmed'});
 const change = {payment_limit: {Int: '5'}};
 
+/**
+ * A fake rail whose wallets hold one asset: the setup takes it, the signed bytes name it, the installation document
+ * states it and an approval holds only in it. A wallet without an asset holds the asset of the network itself.
+ */
+function assetRail() {
+  const {world, chain} = keypairRail();
+  world.assets = new Map();
+  world.preparedAssets = [];
+  const base = chain.keypairSetup, own = {symbol: 'NET', issuer: null};
+  const keypairSetup = {
+    ...base,
+    prepare: async input => {
+      world.preparedAssets.push(input.asset);
+      const prepared = await base.prepare(input);
+      world.assets.set(prepared.wallet, input.asset?.issuer ? input.asset : own);
+      return prepared;
+    },
+    // The fake bytes state their funding in their sixth field, and the rail reads it back.
+    read: (signedPayload, net) => {
+      const read = base.read(signedPayload, net);
+      return read ? {...read, asset: world.assets.get(read.wallet) ?? own, amount: signedPayload.split('|')[5]} : null;
+    },
+    configuration: (net, wallet, owner, forAgent, server, asset) => ({...base.configuration(net, wallet, owner, forAgent, server), asset: asset?.issuer ? asset : own}),
+    // A funding step names its asset after the step: `unsigned-fund-<n>|<symbol>|<issuer>`, or none for `own`.
+    checkAsset: (signedPayload, net, asset) => {
+      const read = base.read(signedPayload, net), [head, symbol, issuer] = signedPayload.split('|');
+      const funding = head.startsWith('unsigned-fund-') ? (symbol ? {symbol, issuer} : own) : null;
+      const held = read ? world.assets.get(read.wallet) ?? own : funding, expected = asset?.issuer ? asset : own;
+      if (!held || held.symbol !== expected.symbol || held.issuer !== expected.issuer)
+        throw Object.assign(new Error('The signed wallet setup is for another asset than the reviewed policy.'), {code: 'asset_mismatch'});
+    },
+  };
+  const sameAsset = (stated, asset) => (asset?.issuer ? asset.symbol === stated?.symbol && asset.issuer === stated?.issuer : stated?.issuer === null);
+  const approval = {...chain.approval, holds: (fields, wallet, policy) => chain.approval.holds(fields, wallet, policy) && sameAsset(fields.asset, policy.asset)};
+  return {world, chain: {...chain, keypairSetup, approval}};
+}
+const TKN = {symbol: 'TKN', issuer: 'ISSUER'}, NET = {symbol: 'NET', issuer: null};
+
+test('a keypair wallet holds the asset of the reviewed policy: the setup, the installation document and the approval name it', async () => {
+  const {world, chain} = assetRail(), signed = [], journal = journalOf();
+  const service = keypairService();
+  const ask = async (path, body) => path === 'native/approval' && service.state.wallet && !service.state.approved
+    ? (service.calls.push([path, body]), {required: true, message: approvalMessage({wallet: service.state.wallet, asset: TKN})}) : service.ask(path, body);
+  const input = {ask, sign: ownerSigns(signed), journal, key: 'flow', policyId, agent, amount, reviewed: {...reviewed(), asset: TKN}, walletKind: 'native', onStep() {}};
+  const result = await installAndFund(input, chain);
+  assert.deepEqual(signed, ['set_up_wallet', 'approve_policy']);
+  // The rail's setup hook got the asset, and the server registers the document of that asset.
+  assert.deepEqual(world.preparedAssets, [TKN]);
+  const registered = service.calls.find(([path]) => path === 'native/register')[1];
+  assert.deepEqual(registered, {configuration: {wallet: result.wallet, owner: OWNER, agent, server: SERVER, asset: TKN}, policyId});
+  assert.equal(service.state.approved, true);
+});
+
+test('an approval in another asset than the reviewed policy\'s is not signed', async () => {
+  for (const [stated, policyAsset] of [[NET, TKN], [TKN, undefined], [TKN, null], [TKN, NET], [{symbol: 'TKN', issuer: 'OTHER'}, TKN]]) {
+    const {chain} = assetRail(), signed = [];
+    const service = keypairService();
+    const ask = async (path, body) => path === 'native/approval' ? {required: true, message: approvalMessage({wallet: service.state.wallet, asset: stated})} : service.ask(path, body);
+    const policy = policyAsset === undefined ? reviewed() : {...reviewed(), asset: policyAsset};
+    await assert.rejects(installAndFund({ask, sign: ownerSigns(signed), journal: journalOf(), key: 'flow', policyId, agent, amount, reviewed: policy, walletKind: 'native', onStep() {}}, chain),
+      /differs from the policy that you reviewed/, JSON.stringify([stated, policyAsset]));
+    // The setup is signed for the asset of the reviewed policy; no approval is.
+    assert.deepEqual(signed, ['set_up_wallet']);
+  }
+  // Without an asset in the reviewed policy the wallet holds the network's own asset, and so does the approval.
+  const {world, chain} = assetRail(), signed = [];
+  const service = keypairService();
+  const ask = async (path, body) => path === 'native/approval' ? {required: !service.state.approved, message: approvalMessage({wallet: service.state.wallet, asset: NET})} : service.ask(path, body);
+  await installAndFund({ask, sign: ownerSigns(signed), journal: journalOf(), key: 'flow', policyId, agent, amount, reviewed: reviewed(), walletKind: 'native', onStep() {}}, chain);
+  assert.deepEqual([signed, world.preparedAssets], [['set_up_wallet', 'approve_policy'], [null]]);
+});
+
+test('a saved signed setup of another asset is kept and refused: a resume never registers a wallet of the wrong asset', async () => {
+  // The registration fails once, so the signed setup of a TKN wallet stays in the journal.
+  const {world, chain} = assetRail(), signed = [], journal = journalOf();
+  const service = keypairService({registerFails: 1});
+  const input = asset => ({ask: service.ask, sign: ownerSigns(signed), journal, key: 'flow', policyId, agent, amount, reviewed: asset === undefined ? reviewed() : {...reviewed(), asset}, walletKind: 'native', onStep() {}});
+  await assert.rejects(installAndFund(input(TKN), chain));
+  const saved = journal.get('flow:wallet-setup');
+  assert.ok(saved);
+  // A resume that reviews the same policy in another asset, or in none, signs nothing and keeps the saved setup.
+  for (const other of [undefined, null, NET, {symbol: 'TKN', issuer: 'OTHER'}, {symbol: 'OTH', issuer: 'ISSUER'}]) {
+    await assert.rejects(installAndFund(input(other), chain), error => error instanceof OwnerFlowError && error.code === 'asset_mismatch' && error.retry === false, JSON.stringify(other));
+    assert.equal(journal.get('flow:wallet-setup'), saved);
+  }
+  assert.deepEqual([signed, world.created.length, service.state.wallet], [['set_up_wallet'], 1, null]);
+  // The resume with the asset of the setup registers that wallet and signs no second setup.
+  const ask = async (path, body) => path === 'native/approval' ? {required: !service.state.approved, message: approvalMessage({wallet: service.state.wallet, asset: TKN})} : service.ask(path, body);
+  const result = await installAndFund({...input(TKN), ask}, chain);
+  assert.deepEqual([signed, world.created, result.wallet], [['set_up_wallet', 'approve_policy'], [service.state.wallet], service.state.wallet]);
+});
+
+test('the signed setup bytes decide the funded amount: a saved amount that differs from them funds nothing and registers nothing', async () => {
+  // The registration fails once, so the signed setup that funds 5 stays in the journal.
+  const {world, chain} = assetRail(), signed = [], journal = journalOf();
+  const service = keypairService({registerFails: 1});
+  const input = funding => ({ask: service.ask, sign: ownerSigns(signed), journal, key: 'flow', policyId, agent, amount: funding, reviewed: {...reviewed(), asset: TKN}, walletKind: 'native', onStep() {}});
+  await assert.rejects(installAndFund(input('5'), chain));
+  const saved = JSON.parse(journal.get('flow:wallet-setup'));
+  assert.equal(saved.amount, '5');
+  // The saved amount is rewritten to 10. The bytes still fund 5, so a resume for 10 is refused and keeps the setup.
+  const rewritten = JSON.stringify({...saved, amount: '10'});
+  journal.set('flow:wallet-setup', rewritten);
+  await assert.rejects(installAndFund(input('10'), chain), error => error instanceof OwnerFlowError && /another agent key or amount is saved/.test(error.message) && error.retry === false);
+  assert.deepEqual([journal.get('flow:wallet-setup'), signed, world.created.length, service.state.wallet], [rewritten, ['set_up_wallet'], 1, null]);
+  // The same amount in another spelling is the same amount.
+  journal.set('flow:wallet-setup', JSON.stringify({...saved, amount: '5.0'}));
+  const ask = async (path, body) => path === 'native/approval' ? {required: !service.state.approved, message: approvalMessage({wallet: service.state.wallet, asset: TKN})} : service.ask(path, body);
+  const result = await installAndFund({...input('5.0'), ask}, chain);
+  assert.deepEqual([signed, world.created, result.wallet], [['set_up_wallet', 'approve_policy'], [service.state.wallet], service.state.wallet]);
+});
+
+test('a keypair change approves only in the asset of the installed policy that the owner reviewed', async () => {
+  const {world, chain} = assetRail(), signed = [];
+  world.owners.set('WALLET-1', OWNER);
+  const attempt = (stated, asset, n) => updateParams({ask: approvals(approvalMessage({revision: 3, asset: stated}), [done]).ask, sign: ownerSigns(signed), journal: journalOf(),
+    key: `change-${n}`, policyId, params: change, installed: asset === undefined ? installed('WALLET-1') : {...installed('WALLET-1'), asset}, onStep() {}}, chain);
+  // The approval names another asset than the installed policy's: nothing is signed.
+  let n = 0;
+  for (const [stated, policyAsset] of [[NET, TKN], [TKN, undefined], [TKN, null], [TKN, NET], [{symbol: 'TKN', issuer: 'OTHER'}, TKN]])
+    await assert.rejects(attempt(stated, policyAsset, ++n), OwnerFlowError, JSON.stringify([stated, policyAsset]));
+  assert.deepEqual(signed, []);
+  const result = await attempt(TKN, TKN, ++n);
+  assert.deepEqual([result.done, signed], [true, ['approve_policy']]);
+  // An installed policy that states no asset approves in the network's own asset, as before.
+  assert.equal((await attempt(NET, undefined, ++n)).done, true);
+});
+
 test('a value change of a keypair wallet is one approval signature and no transaction', async () => {
   const {world, chain} = keypairRail({owners: new Map([['WALLET-1', OWNER]])}), signed = [], journal = journalOf();
   const message = approvalMessage({revision: 3});
@@ -933,4 +1082,177 @@ test('a Custom wallet that is already installed is funded only with the build ho
     build: async () => (builds.push(1), hash(9))});
   assert.equal(result.wallet, 'CWALLET');
   assert.deepEqual([signed, builds], [['fund'], []]);
+});
+
+test('the rail decides whether a saved setup is of the reviewed asset; a rail without that check keeps the setup saved', async () => {
+  const {world, chain} = assetRail(), signed = [], journal = journalOf();
+  const service = keypairService({registerFails: 1});
+  const input = {ask: service.ask, sign: ownerSigns(signed), journal, key: 'flow', policyId, agent, amount, reviewed: {...reviewed(), asset: TKN}, walletKind: 'native', onStep() {}};
+  await assert.rejects(installAndFund(input, chain));
+  const saved = journal.get('flow:wallet-setup');
+  // The rail without the check: nothing is sent, registered or signed, and the setup stays saved.
+  const {checkAsset, ...without} = chain.keypairSetup;
+  await assert.rejects(installAndFund(input, {...chain, keypairSetup: without}), error => error instanceof OwnerFlowError && error.code === 'asset_mismatch' && error.retry === false);
+  assert.deepEqual([journal.get('flow:wallet-setup'), signed, world.created.length, service.state.wallet], [saved, ['set_up_wallet'], 1, null]);
+  // A refusal of the rail reaches the host with the rail's own message and code.
+  const refusing = {...chain, keypairSetup: {...chain.keypairSetup, checkAsset: () => { throw Object.assign(new Error('The rail refuses this setup.'), {code: 'asset_mismatch'}); }}};
+  await assert.rejects(installAndFund(input, refusing), error => error.code === 'asset_mismatch' && error.message === 'The rail refuses this setup.');
+  // An asynchronous check of a rail is awaited: its refusal stops the resume as well.
+  const later = {...chain, keypairSetup: {...chain.keypairSetup, checkAsset: async () => { throw Object.assign(new Error('Later refusal.'), {code: 'asset_mismatch'}); }}};
+  await assert.rejects(installAndFund(input, later), error => error.code === 'asset_mismatch' && error.message === 'Later refusal.');
+  assert.deepEqual([journal.get('flow:wallet-setup'), signed, service.state.wallet], [saved, ['set_up_wallet'], null]);
+  void checkAsset;
+});
+
+test('the registration names the asset of the signed setup: a host that changes its asset object during the run changes nothing', async () => {
+  for (const resume of [false, true]) {
+    const {chain} = assetRail(), signed = [], journal = journalOf();
+    const service = keypairService({registerFails: resume ? 1 : 0});
+    const ask = async (path, body) => path === 'native/approval' ? {required: !service.state.approved, message: approvalMessage({wallet: service.state.wallet, asset: TKN})} : service.ask(path, body);
+    const asset = {...TKN};
+    const input = {ask, sign: ownerSigns(signed), journal, key: 'flow', policyId, agent, amount, reviewed: {...reviewed(), asset}, walletKind: 'native', onStep() {}};
+    if (resume) await assert.rejects(installAndFund(input, chain));
+    // The host's object changes while the workflow waits for the network.
+    const transaction = chain.transaction;
+    const changing = {...chain, transaction: async (...args) => { asset.issuer = 'OTHER'; return transaction(...args); }};
+    if (!resume) input.sign = async step => { asset.issuer = 'OTHER'; return ownerSigns(signed)(step); };
+    await installAndFund(input, changing);
+    const registered = service.calls.filter(([path]) => path === 'native/register').at(-1)[1];
+    assert.deepEqual(registered.configuration.asset, TKN, `resume ${resume}`);
+    asset.issuer = TKN.issuer;
+  }
+});
+
+test('the funded marker holds the asset: an install of another asset never reports the earlier funding', async () => {
+  const {chain} = assetRail(), signed = [], journal = journalOf();
+  const service = keypairService();
+  const ask = async (path, body) => path === 'native/approval' ? {required: !service.state.approved, message: approvalMessage({wallet: service.state.wallet, asset: TKN})} : service.ask(path, body);
+  const input = asset => ({ask, sign: ownerSigns(signed), journal, key: 'flow', policyId, agent, amount, reviewed: asset === undefined ? reviewed() : {...reviewed(), asset}, walletKind: 'native', onStep() {}});
+  const result = await installAndFund(input(TKN), chain);
+  assert.equal(journal.get('flow:wallet-setup'), null);
+  // The same key and amount with the same asset is done; with another asset or none it is refused.
+  assert.deepEqual((await installAndFund(input(TKN), chain)).receipts, []);
+  for (const other of [undefined, null, NET, {symbol: 'TKN', issuer: 'OTHER'}])
+    await assert.rejects(installAndFund(input(other), chain), error => error instanceof OwnerFlowError && /original wallet setup/.test(error.message), JSON.stringify(other));
+  assert.deepEqual([signed, service.state.wallet], [['set_up_wallet', 'approve_policy'], result.wallet]);
+});
+
+test('a saved approval of a change is refused before it is sent when the installed policy now names another asset', async () => {
+  const {world, chain} = assetRail(), signed = [], journal = journalOf();
+  world.owners.set('WALLET-1', OWNER);
+  let lose = true;
+  const {ask, submitted} = approvals(approvalMessage({revision: 3, asset: TKN}), [done]);
+  const losing = async (path, body) => {
+    if (path === 'native/owner/submit' && lose) {lose = false; throw new Error('The reply was lost.');}
+    return ask(path, body);
+  };
+  const input = asset => ({ask: losing, sign: ownerSigns(signed), journal, key: 'change', policyId, params: change, installed: {...installed('WALLET-1'), asset}, onStep() {}});
+  await assert.rejects(updateParams(input(TKN), chain), /reply was lost/);
+  const saved = journal.get('change:approval');
+  assert.ok(saved);
+  const before = submitted.length;
+  for (const other of [null, NET, {symbol: 'TKN', issuer: 'OTHER'}])
+    await assert.rejects(updateParams(input(other), chain), error => error instanceof OwnerFlowError && /another change/.test(error.message), JSON.stringify(other));
+  assert.deepEqual([journal.get('change:approval'), submitted.length, signed], [saved, before, ['approve_policy']]);
+  // The same change in the same asset sends the saved approval and signs nothing new.
+  assert.equal((await updateParams(input(TKN), chain)).done, true);
+  assert.deepEqual(signed, ['approve_policy']);
+});
+
+test('the funding step of an installed keypair wallet is checked by the rail before the owner signs it', async () => {
+  for (const [payloadAsset, refusedStep] of [['|NET|', true], ['', true], ['|TKN|OTHER', true], ['|TKN|ISSUER', false]]) {
+    const {chain} = assetRail(), signed = [], calls = [];
+    const ask = async (path, body) => {
+      calls.push([path, body]);
+      if (path === 'native/deploy/prepare') return {policyId, installed: true, approved: true, walletKind: 'native', wallet: 'WALLET-9', installation: {wallet: 'WALLET-9'}};
+      if (path === 'native/owner/prepare') return {policyId, step: {...step('fund', 4), payload: `unsigned-fund-4${payloadAsset}`}};
+      if (path === 'native/owner/submit') return confirmed({payload: 'x-fund-4'});
+      throw new Error(path);
+    };
+    const input = {ask, sign: ownerSigns(signed), journal: journalOf(), key: 'existing', policyId, agent, amount, reviewed: {...reviewed(), asset: TKN}, walletKind: 'native', onStep() {}};
+    if (refusedStep) {
+      await assert.rejects(installAndFund(input, chain), error => error instanceof OwnerFlowError && error.code === 'asset_mismatch', payloadAsset);
+      assert.deepEqual([signed, calls.filter(([path]) => path === 'native/owner/submit')], [[], []], payloadAsset);
+    } else {
+      await installAndFund(input, chain);
+      assert.deepEqual(signed, ['fund']);
+    }
+  }
+});
+
+test('the asset is copied at the call: a host that changes it while the workflow waits for the lock changes nothing', async () => {
+  // Web Locks that grant the lock one task later, as a browser can.
+  const before = Object.getOwnPropertyDescriptor(globalThis, 'navigator');
+  Object.defineProperty(globalThis, 'navigator', {configurable: true, value: {locks: {request: (name, options, callback) => new Promise(resolve => setTimeout(() => resolve(callback({name})), 0))}}});
+  try {
+    const {world, chain} = assetRail(), signed = [];
+    const service = keypairService();
+    const ask = async (path, body) => path === 'native/approval' ? {required: !service.state.approved, message: approvalMessage({wallet: service.state.wallet, asset: TKN})} : service.ask(path, body);
+    const asset = {...TKN};
+    const running = installAndFund({ask, sign: ownerSigns(signed), journal: journalOf(), key: 'flow', policyId, agent, amount, reviewed: {...reviewed(), asset}, walletKind: 'native', onStep() {}}, chain);
+    asset.issuer = 'OTHER';
+    await running;
+    const registered = service.calls.find(([path]) => path === 'native/register')[1];
+    assert.deepEqual([world.preparedAssets, registered.configuration.asset], [[TKN], TKN]);
+    // The same for a change: the approval holds in the asset of the call.
+    world.owners.set('WALLET-1', OWNER);
+    const installedAsset = {...TKN};
+    const changing = updateParams({ask: approvals(approvalMessage({revision: 3, asset: TKN}), [done]).ask, sign: ownerSigns(signed), journal: journalOf(), key: 'change',
+      policyId, params: change, installed: {...installed('WALLET-1'), asset: installedAsset}, onStep() {}}, chain);
+    installedAsset.issuer = 'OTHER';
+    assert.equal((await changing).done, true);
+  } finally {
+    if (before) Object.defineProperty(globalThis, 'navigator', before); else delete globalThis.navigator;
+  }
+});
+
+test('the funding step is checked before the approval: a refusal of its asset leaves the approval unsigned', async () => {
+  for (const [payloadAsset, refused] of [['|NET|', true], ['|TKN|ISSUER', false]]) {
+    const {world, chain} = assetRail(), signed = [], calls = [];
+    world.owners.set('WALLET-9', OWNER);
+    let approved = false;
+    const ask = async (path, body) => {
+      calls.push([path, body]);
+      if (path === 'native/deploy/prepare') return {policyId, installed: true, approved, walletKind: 'native', wallet: 'WALLET-9', installation: {wallet: 'WALLET-9'}};
+      if (path === 'native/approval') return {required: !approved, message: approvalMessage({wallet: 'WALLET-9', asset: TKN})};
+      if (path === 'micro/allocation/confirm') {approved = true; return {active: true};}
+      if (path === 'native/owner/prepare') return {policyId, step: {...step('fund', 4), payload: `unsigned-fund-4${payloadAsset}`}};
+      if (path === 'native/owner/submit') return confirmed({payload: 'x-fund-4'});
+      throw new Error(path);
+    };
+    const input = {ask, sign: ownerSigns(signed), journal: journalOf(), key: 'existing', policyId, agent, amount, reviewed: {...reviewed(), asset: TKN}, walletKind: 'native', onStep() {}};
+    if (refused) {
+      await assert.rejects(installAndFund(input, chain), error => error instanceof OwnerFlowError && error.code === 'asset_mismatch');
+      assert.deepEqual([signed, calls.some(([path]) => path === 'micro/allocation/confirm')], [[], false]);
+    } else {
+      await installAndFund(input, chain);
+      assert.deepEqual(signed, ['approve_policy', 'fund']);
+    }
+  }
+});
+
+test('a fresh setup is checked by the rail before it is saved or sent; a rail without the check prepares nothing', async () => {
+  // The rail sets up keypair wallets and has no check of their asset: nothing is prepared or signed.
+  const plain = assetRail();
+  const {checkAsset, ...without} = plain.chain.keypairSetup;
+  void checkAsset;
+  const service = keypairService(), signed = [];
+  await assert.rejects(installAndFund({ask: service.ask, sign: ownerSigns(signed), journal: journalOf(), key: 'flow', policyId, agent, amount, reviewed: {...reviewed(), asset: TKN}, walletKind: 'native', onStep() {}},
+    {...plain.chain, keypairSetup: without}), error => error instanceof OwnerFlowError && error.code === 'asset_mismatch');
+  assert.deepEqual([plain.world.preparedAssets, signed], [[], []]);
+  // A setup that the rail builds for another asset than the reviewed one is neither saved nor sent.
+  const {world, chain} = assetRail(), journal = journalOf(), other = keypairService(), owner = [];
+  const wrong = {...chain, keypairSetup: {...chain.keypairSetup, prepare: input => chain.keypairSetup.prepare({...input, asset: null})}};
+  await assert.rejects(installAndFund({ask: other.ask, sign: ownerSigns(owner), journal, key: 'flow', policyId, agent, amount, reviewed: {...reviewed(), asset: TKN}, walletKind: 'native', onStep() {}}, wrong),
+    error => error instanceof OwnerFlowError && error.code === 'asset_mismatch');
+  assert.deepEqual([journal.get('flow:wallet-setup'), world.sent, other.calls.some(([path]) => path === 'native/register')], [null, [], false]);
+});
+
+test('the asset of a reactive host is copied by its fields: a proxy of it installs the wallet', async () => {
+  const {world, chain} = assetRail(), signed = [];
+  const service = keypairService();
+  const ask = async (path, body) => path === 'native/approval' ? {required: !service.state.approved, message: approvalMessage({wallet: service.state.wallet, asset: TKN})} : service.ask(path, body);
+  const asset = new Proxy({...TKN}, {});
+  await installAndFund({ask, sign: ownerSigns(signed), journal: journalOf(), key: 'flow', policyId, agent, amount, reviewed: {...reviewed(), asset}, walletKind: 'native', onStep() {}}, chain);
+  assert.deepEqual([world.preparedAssets, signed], [[TKN], ['set_up_wallet', 'approve_policy']]);
 });

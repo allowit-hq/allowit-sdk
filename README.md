@@ -85,6 +85,15 @@ A host never prints a unit of its own. An asset without a known unit is an error
 run it with `ALLOWIT_WRITE_WALLET_KINDS=1` after a Core change.
 `progress::set_sink` installs the sink for the progress lines of long provider steps.
 
+A typed code names its entry in Core's error catalogue: a title and the help page `<app origin>/help/<code>`. A host
+shows the title, then the sender's own message as the cause and the step, then the help link. A newer server can send
+a code that this release does not know: `errors::entry` then gives no entry, and the host shows the sender's message
+and still links the code's help page. `allowit_sdk::errors` is that catalogue for Rust hosts (`errors::entry(code)`,
+`errors::help_url(origin, code)`), and `@allowit/core` exports it for JavaScript hosts (`errorEntry`,
+`errorHelpPath`). `crates/allowit-sdk/tests/error_catalogue.rs` fails for a code that the SDK's Rust source names
+without an entry, and `npm/tests/error-catalogue.test.mjs` for a code constant of the owner workflow or a declared
+code type without one.
+
 ## Write a portable policy
 
 Policies are synchronous Rust against the `allowit` package:
