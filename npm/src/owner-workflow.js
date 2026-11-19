@@ -115,9 +115,10 @@ function sameInputs(value, identity) {
 }
 
 /**
- * True when signed setup bytes set up a wallet of `asset`, the asset of the reviewed policy. A rail that reads no asset
- * from the bytes states none, and its wallets hold the asset of the network itself. A reviewed policy without an asset,
- * or with an asset that has no issuer, names that same asset.
+ * True when signed setup bytes set up a wallet of `asset`, the asset of the reviewed policy. A reviewed policy without
+ * an asset, or with an asset that has no issuer, pays in the asset of the network itself. A rail that reports no asset
+ * for the bytes gives nothing to compare: such bytes pass only for a policy in the network's own asset, which is the
+ * one asset that a rail without this report sets up, and never for a policy in another asset.
  */
 function sameAsset(signed, asset) {
   const read = object(signed.asset) ? signed.asset : null, issued = object(asset) && asset.issuer !== null ? asset : null;
