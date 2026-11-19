@@ -502,7 +502,8 @@ impl Runtime {
     /// The journal `store` decides. Its packet is the transaction: when it holds one under the
     /// same operation ID, this follows that original and its status, not the new preparation.
     /// A journal packet that names another operation ID, transaction hash or network stops the
-    /// call before any send or lookup. The clock of each send counts from the call's start, so
+    /// call, at the first read before any send or lookup, and at a later read before its status
+    /// counts. The clock of each send counts from the call's start, so
     /// the preparation's reads of the network take part of the transaction's time bound.
     /// `submit` retains the transaction before every send, so a transaction is pending once the
     /// journal holds it past `Prepared` (`Submitted` or `SubmissionUnknown`): the network may
@@ -569,22 +570,27 @@ impl Runtime {
     ) -> Result<Option<Receipt>> {
         let expected = prepared.info()?;
         let id = expected.operation_id;
-        let (signed, mut status) = match store.load(id)? {
-            Some((original, status)) => {
-                // The journal's packet is followed only when it is this transaction.
-                let held = original.info()?;
-                if held.operation_id != id
-                    || held.transaction_hash != expected.transaction_hash
-                    || original.network() != prepared.network()
-                {
-                    return Err(crate::error::Error::config(
-                        "The journal holds another transaction under the code transaction's operation ID",
-                    ));
+        let network = prepared.network().to_owned();
+        // The journal's packet is followed, and its status taken, only when it is this
+        // transaction: at the first read and at every read after it.
+        let this = |found: Option<(Signed, Status)>| -> Result<Option<(Signed, Status)>> {
+            match found {
+                Some((original, status)) => {
+                    let held = original.info()?;
+                    if held.operation_id != id
+                        || held.transaction_hash != expected.transaction_hash
+                        || original.network() != network
+                    {
+                        return Err(crate::error::Error::config(
+                            "The journal holds another transaction under the code transaction's operation ID",
+                        ));
+                    }
+                    Ok(Some((original, status)))
                 }
-                (original, status)
+                None => Ok(None),
             }
-            None => (prepared, Status::Prepared),
         };
+        let (signed, mut status) = this(store.load(id)?)?.unwrap_or((prepared, Status::Prepared));
         let hash = expected.transaction_hash;
         let (now, started) = start;
         let clock = || now.saturating_add(started.elapsed().as_secs());
@@ -610,7 +616,9 @@ impl Runtime {
                     Err(error) => {
                         last = Some(error);
                         match store.load(id) {
-                            Ok(found) => found.map_or(Status::Prepared, |(_, status)| status),
+                            Ok(found) => {
+                                this(found)?.map_or(Status::Prepared, |(_, status)| status)
+                            }
                             Err(_) => Status::SubmissionUnknown,
                         }
                     }
@@ -635,10 +643,10 @@ impl Runtime {
             }
         }
         // A journal that cannot be read now keeps what this call knew of the send.
-        let journal = store.load(id).map_or_else(
-            |_| Some(status.clone()),
-            |found| found.map(|(_, status)| status),
-        );
+        let journal = match store.load(id) {
+            Ok(found) => this(found)?.map(|(_, status)| status),
+            Err(_) => Some(status.clone()),
+        };
         match journal {
             Some(status) if pending(&status) => {
                 Err(crate::error::Error::uncertain(format!(
@@ -1265,6 +1273,53 @@ mod code_transactions {
             );
             let chain = chain.lock().unwrap();
             assert_eq!((chain.sends, chain.lookups), (0, 0), "{foreign}");
+        }
+    }
+    /// A shared journal that holds nothing at the first read and another transaction under the
+    /// operation ID later: the call never takes that transaction's status for its own.
+    #[test]
+    fn a_journal_that_shows_another_transaction_later_stops_the_call() {
+        /// Shows the foreign packet from the `from`th read on.
+        struct Shared {
+            loads: std::cell::Cell<usize>,
+            from: usize,
+            foreign: Signed,
+        }
+        impl OperationStore for Shared {
+            fn load(&self, _: [u8; 32]) -> Result<Option<(Signed, Status)>> {
+                self.loads.set(self.loads.get() + 1);
+                Ok((self.loads.get() >= self.from)
+                    .then(|| (self.foreign.clone(), Status::Submitted)))
+            }
+            fn record(&mut self, _: [u8; 32], _: &Signed, _: Status) -> Result<()> {
+                Ok(())
+            }
+        }
+        // From the read of `submit`, which refuses it, or from the last read, after this call's
+        // own send.
+        for from in [2, 3] {
+            let mut store = Shared {
+                loads: std::cell::Cell::new(0),
+                from,
+                foreign: Signed(
+                    native::Packet::new(NETWORK, &serde_json::json!({ "hash": 9 }), &PACKETS)
+                        .unwrap(),
+                ),
+            };
+            let chain = Arc::new(Mutex::new(Chain {
+                pending_lookups: 10,
+                ..Chain::default()
+            }));
+            let refused = run_on(chain.clone(), &mut store, 1).unwrap_err();
+            assert!(!names_transaction(&refused), "{from}: {refused:?}");
+            assert!(
+                refused.message.contains("another transaction"),
+                "{from}: {refused:?}"
+            );
+            if from == 2 {
+                let chain = chain.lock().unwrap();
+                assert_eq!((chain.sends, chain.lookups), (0, 0));
+            }
         }
     }
     /// A send carries the time of the call, which the preparation's reads of the network take
