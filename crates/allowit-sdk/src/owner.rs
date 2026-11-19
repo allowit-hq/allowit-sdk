@@ -108,6 +108,72 @@ pub fn setup(cx: &Context<'_>, request: Setup<'_>) -> Result<serde_json::Value> 
         .owner()
         .setup(&cx.provider_context(&store), request)
 }
+/// The asset of a new Native wallet, as the server's template of its network states it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct NativeWalletAsset {
+    /// The asset's code, such as `USDC`, or the network's own asset, such as `XLM`.
+    pub symbol: String,
+    /// The issuer of an issued asset; `None` for the network's own asset.
+    pub issuer: Option<String>,
+}
+/// The asset of a new Native wallet on the context's network, from the server's template. The
+/// owner signs in to read it and signs nothing else, so a host shows it before [`setup`] asks
+/// for the owner's signature. The setup reads the template again and checks the asset that it
+/// signs.
+pub fn native_wallet_asset(cx: &Context<'_>) -> Result<NativeWalletAsset> {
+    let network = routing::normalize(cx.network)?;
+    let reply = call(
+        cx,
+        &format!("/api/native/templates?network={network}"),
+        &serde_json::json!({}),
+    )?;
+    template_asset(&reply, network, cx.authority.public_key())
+}
+/// The asset of the one template of `network` in the server's `native/templates` reply, whose
+/// signer must be `server`, the configured server authority.
+fn template_asset(
+    reply: &serde_json::Value,
+    network: &str,
+    server: &str,
+) -> Result<NativeWalletAsset> {
+    use serde_json::Value;
+    let invalid = || Error::uncertain("The server's wallet asset of this network is invalid");
+    if reply.get("server").and_then(Value::as_str) != Some(server) {
+        return Err(Error::config(
+            "The server's signer on this network differs from the configured server authority",
+        ));
+    }
+    let templates = reply
+        .get("templates")
+        .and_then(Value::as_array)
+        .ok_or_else(invalid)?;
+    let mut matching = templates.iter().filter(|template| {
+        template
+            .get("network")
+            .and_then(Value::as_str)
+            .and_then(|named| routing::normalize(named).ok())
+            == Some(network)
+    });
+    let (Some(template), None) = (matching.next(), matching.next()) else {
+        return Err(Error::config(
+            "The server offers no Native wallet on this network",
+        ));
+    };
+    let symbol = template
+        .get("assetSymbol")
+        .and_then(Value::as_str)
+        .filter(|symbol| !symbol.is_empty())
+        .ok_or_else(invalid)?;
+    let issuer = match template.get("assetIssuer") {
+        None | Some(Value::Null) => None,
+        Some(Value::String(issuer)) if !issuer.is_empty() => Some(issuer.clone()),
+        _ => return Err(invalid()),
+    };
+    Ok(NativeWalletAsset {
+        symbol: symbol.into(),
+        issuer,
+    })
+}
 pub fn status(root: &Path, network: &str, rpc_url: &str, id: &str) -> Result<serde_json::Value> {
     let store = owner_store(root, network)?;
     for_network(network)?
@@ -324,5 +390,74 @@ mod route_tests {
             assert!(check_route(path).is_err(), "{path}");
         }
         assert!(check_route(&format!("/api/{}", "a".repeat(600))).is_err());
+    }
+}
+#[cfg(test)]
+mod wallet_asset_tests {
+    use super::{NativeWalletAsset, template_asset};
+    use serde_json::json;
+
+    const SERVER: &str = "GSERVER";
+    const ISSUER: &str = "GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN";
+
+    fn reply(templates: serde_json::Value) -> serde_json::Value {
+        json!({ "templates": templates, "server": SERVER })
+    }
+
+    #[test]
+    fn the_asset_is_the_one_of_the_named_networks_template() {
+        let templates = json!([
+            { "network": "stellar:pubnet", "assetSymbol": "USDC", "assetIssuer": ISSUER },
+            { "network": "stellar:testnet", "assetSymbol": "XLM", "assetIssuer": null },
+        ]);
+        assert_eq!(
+            template_asset(&reply(templates.clone()), "stellar:pubnet", SERVER).unwrap(),
+            NativeWalletAsset {
+                symbol: "USDC".into(),
+                issuer: Some(ISSUER.into())
+            }
+        );
+        assert_eq!(
+            template_asset(&reply(templates), "stellar:testnet", SERVER).unwrap(),
+            NativeWalletAsset {
+                symbol: "XLM".into(),
+                issuer: None
+            }
+        );
+    }
+
+    #[test]
+    fn an_answer_that_names_no_single_asset_of_the_server_is_refused() {
+        let usdc =
+            json!({ "network": "stellar:pubnet", "assetSymbol": "USDC", "assetIssuer": ISSUER });
+        for (answer, network) in [
+            // Another network's template, two templates of one network, none.
+            (reply(json!([usdc])), "stellar:testnet"),
+            (reply(json!([usdc, usdc])), "stellar:pubnet"),
+            (reply(json!([])), "stellar:pubnet"),
+            // Another signer than the configured server authority, or none.
+            (
+                json!({ "templates": [usdc], "server": "GOTHER" }),
+                "stellar:pubnet",
+            ),
+            (json!({ "templates": [usdc] }), "stellar:pubnet"),
+            // No symbol, or an issuer that is no text.
+            (
+                reply(json!([{ "network": "stellar:pubnet", "assetIssuer": ISSUER }])),
+                "stellar:pubnet",
+            ),
+            (
+                reply(
+                    json!([{ "network": "stellar:pubnet", "assetSymbol": "USDC", "assetIssuer": 7 }]),
+                ),
+                "stellar:pubnet",
+            ),
+            (json!({ "server": SERVER }), "stellar:pubnet"),
+        ] {
+            assert!(
+                template_asset(&answer, network, SERVER).is_err(),
+                "{answer} {network}"
+            );
+        }
     }
 }
