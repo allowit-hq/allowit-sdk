@@ -47,11 +47,17 @@ pub fn post_flight(counters: &Counters, now: u64, usage: &Usage) -> Result<Count
     Counters::read(&after).map_err(refused)
 }
 
-/// The server's account of a wallet after the settlement `s` of one of its operations, evaluated
-/// at `evaluated_at` (Unix seconds) with the debit `debit` in asset units: what Core says the
-/// operation adds (`Settlement::usage_for`) counts with Core's post-flight in the day of the
-/// evaluation, the day whose limits admitted the operation, and the nonce is the settlement's when
-/// it gives one. An operation that did not execute changes no figure. The server stores the gas
+/// The server's account of a wallet with the operation part of the settlement `s` of one of its
+/// operations, evaluated at `evaluated_at` (Unix seconds) with the debit `debit` in asset units:
+/// what Core says the operation adds (`Settlement::usage_for`) counts with Core's post-flight in
+/// the day of the evaluation, the day whose limits admitted the operation, and the nonce is the
+/// settlement's when it gives one. An operation that did not execute adds no usage.
+///
+/// The settlement's fee is the caller's other step: for a wallet that counts no gas itself
+/// (`Settlement::counted_gas` is `None`, as a keypair wallet), the caller prices
+/// `Settlement::fee_units` with the rail's `ServerHooks::price_fee` and charges the price with
+/// Core's `accounting::charge_fee`, once for each operation and transaction, also when the
+/// operation failed or stays open, by Core's rule of a reserved fee. The server stores the gas
 /// carry `s.gas_carry` beside the account.
 pub fn apply_settlement(
     accounting: &crate::runtime::Accounting,
@@ -177,7 +183,35 @@ mod tests {
             (keypair.spent_total, keypair.volume_daily, keypair.nonce),
             (500, 0, 5)
         );
-        // An operation that did not execute changes no figure.
+        // A vault operation with figures of an earlier day: the day rolls over, and its spent
+        // units and its gross volume count apart.
+        let earlier = crate::runtime::Accounting {
+            nonce: 4,
+            calls: 7,
+            spent_total: 9_000,
+            spent_day: 2,
+            spent_daily: 800,
+            volume_daily: 900,
+            ..Default::default()
+        };
+        let vault = apply_settlement(
+            &earlier,
+            3 * DAY + 10,
+            999,
+            &settlement(Executed, Some(usage(100_000, 300, 1_300, false)), None),
+        )
+        .unwrap();
+        assert_eq!(
+            (
+                vault.calls,
+                vault.spent_day,
+                vault.spent_total,
+                vault.spent_daily,
+                vault.volume_daily
+            ),
+            (8, 3, 10_300, 1_300, 100_300)
+        );
+        // An operation that did not execute adds no usage.
         for outcome in [Failed, Open] {
             let same = apply_settlement(
                 &start,
