@@ -160,7 +160,7 @@ export interface InstallAndFundInput {
    * the asset that the policy pays in, as the policy names it. A keypair wallet is set up to hold it, `amount` is in
    * it, and the approval must name it. Without one it is the asset of the network itself.
    */
-  reviewed?: {source: string; params: Record<string, ParamValue>; rules?: unknown; tier?: unknown; asset?: WalletAsset | null};
+  reviewed?: {source: string; params: Record<string, ParamValue>; rules?: unknown; tier?: unknown; asset?: WalletAsset | null | undefined};
   onStep: (text: string) => void;
 }
 /** One typed param value: Core's `PolicyValue`, the JSON of a policy value. An integer is canonical decimal text. */
@@ -182,7 +182,7 @@ export interface UpdateParamsInput {
    * whose change is an approval of the whole policy signs only this policy with the changed params replaced. `asset`
    * is the asset that the policy pays in; without one it is the asset of the network itself.
    */
-  installed?: {wallet: string; source: string; rules: unknown; params: Record<string, ParamValue>; tier?: unknown; asset?: WalletAsset | null};
+  installed?: {wallet: string; source: string; rules: unknown; params: Record<string, ParamValue>; tier?: unknown; asset?: WalletAsset | null | undefined};
   onStep: (text: string) => void;
 }
 /** Typed codes of the owner workflow. `OwnerFlowFailure.code` holds one, another server code or null. */
@@ -195,7 +195,8 @@ export type OwnerFlowCode =
   | 'param_invalid'
   | 'param_out_of_range'
   | 'update_unavailable'
-  | 'revision_changed';
+  | 'revision_changed'
+  | 'asset_mismatch';
 /** The error that `installAndFund` and `updateParams` reject with. */
 export interface OwnerFlowFailure extends Error {
   code: OwnerFlowCode | string | null;
@@ -332,6 +333,7 @@ export const PARAM_OUT_OF_RANGE: 'param_out_of_range';
 export const UPDATE_UNAVAILABLE: 'update_unavailable';
 export const REVISION_CHANGED: 'revision_changed';
 export const UPDATE_PARAMS: 'update_params';
+export const ASSET_MISMATCH: 'asset_mismatch';
 export const WALLET_SETUP_REQUIRED: 'wallet_setup_required';
 export const SET_UP_WALLET: 'set_up_wallet';
 export const APPROVE_POLICY: 'approve_policy';

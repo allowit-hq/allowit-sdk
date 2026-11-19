@@ -23,6 +23,8 @@ export const UPDATE_UNAVAILABLE = 'update_unavailable';
 export const REVISION_CHANGED = 'revision_changed';
 /** The action name of the owner step of a params update. */
 export const UPDATE_PARAMS = 'update_params';
+/** The rail's refusal of saved setup bytes of another asset than the reviewed policy's: Core's `keypairSetup.checkAsset`. */
+export const ASSET_MISMATCH = 'asset_mismatch';
 /** The service's refusal of a deployment whose keypair wallet needs its setup first. */
 export const WALLET_SETUP_REQUIRED = 'wallet_setup_required';
 /** Receipt labels of a keypair wallet's setup and of the owner's approval of its policy. */
@@ -104,10 +106,10 @@ const running = new Set();
 const busy = () => new OwnerFlowError('This wallet setup is already running in this or another tab.', null, true);
 
 /** The inputs that a saved step and a completion marker belong to: the wallet setup or one params update. */
-const FIELDS = ['policyId', 'agent', 'amount', 'update'];
+const FIELDS = ['policyId', 'agent', 'amount', 'asset', 'update'];
 const changed = identity => new OwnerFlowError('update' in identity
   ? 'The saved signed step belongs to another change. It stays saved; resume that change first.'
-  : 'Use the agent key and amount from the original wallet setup. The saved signed step stays saved.', null, false);
+  : 'Use the agent key, amount and asset of the original wallet setup. The saved signed step stays saved.', null, false);
 /** True when a saved value names these inputs. A value saved without inputs predates them and names none. */
 function sameInputs(value, identity) {
   const named = FIELDS.filter(field => value[field] !== undefined);
@@ -115,15 +117,26 @@ function sameInputs(value, identity) {
 }
 
 /**
- * True when signed setup bytes set up a wallet of `asset`, the asset of the reviewed policy. A reviewed policy without
- * an asset, or with an asset that has no issuer, pays in the asset of the network itself. A rail that reports no asset
- * for the bytes gives nothing to compare: such bytes pass only for a policy in the network's own asset, which is the
- * one asset that a rail without this report sets up, and never for a policy in another asset.
+ * A copy of the asset of a reviewed policy, taken before the workflow's first await: a host that changes its object
+ * later changes nothing that this run signs, checks or registers. Null when the policy names none. The workflow
+ * carries the asset to the rail and never reads it.
  */
-function sameAsset(signed, asset) {
-  const read = object(signed.asset) ? signed.asset : null, issued = object(asset) && asset.issuer !== null ? asset : null;
-  if (!issued) return !read || read.issuer === null;
-  return !!read && read.symbol === issued.symbol && read.issuer === issued.issuer;
+const carried = asset => asset === undefined || asset === null ? null : structuredClone(asset);
+
+/**
+ * Asks the rail whether signed setup bytes set up `asset`, the carried asset of the reviewed policy: the rail reads
+ * and compares the asset. Its refusal keeps the setup saved and reaches the host with the rail's typed code. A rail
+ * without the check cannot confirm a saved setup, which then stays saved.
+ */
+async function checkSetupAsset(setup, signedPayload, network, asset) {
+  if (typeof setup.checkAsset !== 'function')
+    throw new OwnerFlowError('This network cannot check the asset of a saved wallet setup. It stays saved; nothing was signed.', ASSET_MISMATCH, false);
+  try {
+    await setup.checkAsset(signedPayload, network, asset);
+  } catch (cause) {
+    const code = object(cause) && typeof cause.code === 'string' ? cause.code : ASSET_MISMATCH;
+    throw new OwnerFlowError(cause instanceof Error && cause.message ? cause.message : 'The saved wallet setup is for another asset than this policy. It stays saved.', code, false, cause);
+  }
 }
 
 /** A decimal amount without leading zeros and without trailing zeros of its fraction, or null for any other text. */
@@ -150,7 +163,7 @@ function sameAmount(signed, amount) {
  * setup, so that setup funded it. False when nothing is retained. Any other retained setup stays saved and is refused:
  * it names other inputs, and funding again under them could move the owner's funds twice.
  */
-function retainedSetup(chain, raw, network, wallet, identity, asset) {
+async function retainedSetup(chain, raw, network, wallet, identity, asset) {
   if (raw === null) return false;
   let value;
   try {
@@ -158,8 +171,9 @@ function retainedSetup(chain, raw, network, wallet, identity, asset) {
   } catch { /* refused below */ }
   const setup = object(value) && typeof value.signedPayload === 'string' ? chain.keypairSetup?.read(value.signedPayload, network) : null;
   if (!object(value) || !setup || setup.wallet !== wallet || value.agent !== identity.agent || setup.agent !== identity.agent
-    || value.amount !== identity.amount || !sameAmount(setup, identity.amount) || !sameAsset(setup, asset))
+    || value.amount !== identity.amount || !sameAmount(setup, identity.amount))
     throw changed(identity);
+  await checkSetupAsset(chain.keypairSetup, value.signedPayload, network, asset);
   return true;
 }
 
@@ -173,8 +187,9 @@ function retainedSetup(chain, raw, network, wallet, identity, asset) {
  * time bound lasts. It is dropped only when the network holds it as failed, or proves past its time bound that it never
  * applied; then a new setup is prepared, so one run never creates two wallets. Any unclear answer keeps it saved.
  *
- * `asset` is the asset of the reviewed policy, which the wallet holds; the rail builds the setup for it, and `amount`
- * is in it. A saved setup of another asset stays saved and is refused.
+ * `asset` is the carried asset of the reviewed policy, which the wallet holds; the rail builds the setup for it, and
+ * `amount` is in it. On a resume the rail confirms that the saved bytes set it up, so the registration names the asset
+ * of the signed setup. A saved setup of another asset stays saved and is refused.
  */
 async function setUpKeypairWallet(setup, chain, {network, owner, agent, server, amount, asset, sign, onStep, journal, key}) {
   const pending = cause => new OwnerFlowError('The network did not confirm the wallet setup. The signed setup stays saved: resume to check it. Nothing is signed twice.', null, true, cause);
@@ -199,9 +214,8 @@ async function setUpKeypairWallet(setup, chain, {network, owner, agent, server, 
     // The signed bytes state the amount that they fund, when the rail reads it. They decide, not the saved amount.
     if (!sameAmount(signed, amount))
       throw new OwnerFlowError('A signed wallet setup with another agent key or amount is saved. It stays saved; use the agent key and amount of that setup.', null, false);
-    // The signed bytes name the asset of their wallet. A setup of another asset than the reviewed policy's is kept.
-    if (!sameAsset(signed, asset))
-      throw new OwnerFlowError('A signed wallet setup for another asset is saved. It stays saved; resume the policy of that setup.', null, false);
+    // The rail checks that the signed bytes set up the asset of the reviewed policy; a setup of another asset is kept.
+    await checkSetupAsset(setup, saved.signedPayload, network, asset);
     const record = await chain.transaction(network, saved.hash).catch(() => null);
     if (object(record)) {
       // Only the record of this exact transaction settles it: successful, or failed in a ledger.
@@ -422,7 +436,9 @@ const noApproval = () => new OwnerFlowError('This network signs no policy approv
 
 async function run(chain, {network, ask, sign, journal, key, policyId, agent, amount, reviewed, onStep, historyPauseMs = 1_500}) {
   const fundedKey = `${key}:funded`;
-  const identity = {policyId, agent, amount};
+  // The asset belongs to the inputs of the run: a saved step or funded marker of another asset is refused.
+  const asset = carried(reviewed?.asset);
+  const identity = {policyId, agent, amount, ...(asset === null ? {} : {asset: canonical(asset)})};
   const {receipts, settleSaved, signAndSubmit} = stepper(chain, {network, historyPauseMs, ask, sign, journal, key, policyId, onStep, identity,
     // A confirmed funding is recorded before its signed bytes leave the journal. A contract wallet's creation funds it
     // in the same transaction, when this version saved it: an earlier version's creation funded nothing.
@@ -446,7 +462,7 @@ async function run(chain, {network, ask, sign, journal, key, policyId, agent, am
     // The signed setup stays in the journal until the server has registered the wallet, so a run that stops in
     // between finds the same account again.
     const setup = await setUpKeypairWallet(chain.keypairSetup, chain,
-      {network, owner: roles.owner, agent, server: roles.server, amount, asset: reviewed?.asset ?? null, sign, onStep, journal, key: walletSetupKey});
+      {network, owner: roles.owner, agent, server: roles.server, amount, asset, sign, onStep, journal, key: walletSetupKey});
     receipts.push({policyId, action: SET_UP_WALLET, status: 'confirmed', transactionHash: setup.transactionHash, ledger: setup.ledger});
     onStep('Registering the wallet…');
     const registered = await ask('native/register', {configuration: setup.configuration, policyId});
@@ -463,7 +479,7 @@ async function run(chain, {network, ask, sign, journal, key, policyId, agent, am
     if (!chain.approval) throw noApproval();
     const fields = chain.approval.read(approval.message, network);
     if (!reviewed) throw new OwnerFlowError('The policy that you reviewed is missing. Nothing was signed.', null, false);
-    if (!fields || fields.policyId !== policyId || fields.wallet !== account || !chain.approval.holds(fields, account, reviewed))
+    if (!fields || fields.policyId !== policyId || fields.wallet !== account || !chain.approval.holds(fields, account, {...reviewed, asset}))
       throw new OwnerFlowError('The approval differs from the policy that you reviewed or from its wallet account. Nothing was signed.', null, false);
     const {signer, signature} = await ownerApproval(chain, {network, sign, onStep}, approval.message, account,
       {then: 'Resume to read it again.', prompt: 'Sign the approval of the policy in your wallet…', kept: 'sent'});
@@ -497,7 +513,7 @@ async function run(chain, {network, ask, sign, journal, key, policyId, agent, am
       // before its reply kept the signed setup: when it names this wallet, agent and amount, the setup funded it, and
       // that funding is recorded before the setup leaves the journal. What remains is the owner's approval of the
       // policy. A wallet account that this workflow did not fund is funded below.
-      if (retainedSetup(chain, journal.get(walletSetupKey), network, wallet, identity, reviewed?.asset ?? null)) journal.set(fundedKey, JSON.stringify(identity));
+      if (await retainedSetup(chain, journal.get(walletSetupKey), network, wallet, identity, asset)) journal.set(fundedKey, JSON.stringify(identity));
       journal.remove(walletSetupKey);
       if (reply.approved !== true) await approvePolicy(wallet);
       break;
@@ -546,7 +562,10 @@ async function runUpdate(chain, {network, ask, sign, journal, key, policyId, par
   if (expectedRevision !== undefined && !(Number.isSafeInteger(expectedRevision) && expectedRevision >= 0))
     throw new OwnerFlowError('The expected revision is invalid.', REVISION_CHANGED, false);
   const updatedKey = `${key}:updated`;
-  const identity = {policyId, update: canonical({params, ...(expectedRevision === undefined ? {} : {expectedRevision})})};
+  // The asset of the installed policy belongs to the change: a saved approval of another asset is refused before it
+  // is sent.
+  const asset = carried(installed?.asset);
+  const identity = {policyId, update: canonical({params, ...(expectedRevision === undefined ? {} : {expectedRevision}), ...(asset === null ? {} : {asset})})};
   const {receipts, settleSaved, signAndSubmit} = stepper(chain, {network, historyPauseMs, ask, sign, journal, key, policyId, onStep, identity,
     // A confirmed update is recorded before its signed bytes leave the journal.
     confirmed: step => {if (step.action === UPDATE_PARAMS) journal.set(updatedKey, JSON.stringify(identity));}});
@@ -615,7 +634,7 @@ async function runUpdate(chain, {network, ask, sign, journal, key, policyId, par
     // at exactly its requested value, and every other value as it is installed.
     if (!installed || !object(installed.params))
       throw new OwnerFlowError('The installed policy that you reviewed is missing. Nothing was signed.', null, false);
-    if (!chain.approval.holds(fields, installed.wallet, {source: installed.source, rules: installed.rules, params: {...installed.params, ...params}, tier: installed.tier, asset: installed.asset}))
+    if (!chain.approval.holds(fields, installed.wallet, {source: installed.source, rules: installed.rules, params: {...installed.params, ...params}, tier: installed.tier, asset}))
       throw new OwnerFlowError('The approval names another policy or other values than this change. Nothing was signed.', null, false);
     const {signer, signature} = await ownerApproval(chain, {network, sign, onStep}, message, fields.wallet,
       {then: 'Nothing was signed; try again.', prompt: 'Sign the approval of the new values in your wallet…', kept: 'saved'});
