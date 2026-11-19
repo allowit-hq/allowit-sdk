@@ -192,7 +192,11 @@ export type OwnerFlowCode =
   | 'param_invalid'
   | 'param_out_of_range'
   | 'update_unavailable'
-  | 'revision_changed';
+  | 'revision_changed'
+  | 'wallet_setup_required'
+  | 'owner_account_unfunded'
+  | 'owner_balance_low'
+  | 'wallet_wrong_account';
 /** The error that `installAndFund` and `updateParams` reject with. */
 export interface OwnerFlowFailure extends Error {
   code: OwnerFlowCode | string | null;
@@ -330,6 +334,9 @@ export const UPDATE_UNAVAILABLE: 'update_unavailable';
 export const REVISION_CHANGED: 'revision_changed';
 export const UPDATE_PARAMS: 'update_params';
 export const WALLET_SETUP_REQUIRED: 'wallet_setup_required';
+export const OWNER_ACCOUNT_UNFUNDED: 'owner_account_unfunded';
+export const OWNER_BALANCE_LOW: 'owner_balance_low';
+export const WALLET_WRONG_ACCOUNT: 'wallet_wrong_account';
 export const SET_UP_WALLET: 'set_up_wallet';
 export const APPROVE_POLICY: 'approve_policy';
 

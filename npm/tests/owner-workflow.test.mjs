@@ -150,7 +150,8 @@ test('an expiry reply without the network\'s proof keeps the saved step and sign
     const {ask, state} = service({submit: refuse});
     state.installed = true;
     await assert.rejects(installAndFund({ask, sign: signer(signed), journal, key, policyId, agent, amount, onStep() {}}, chain),
-      error => error instanceof OwnerFlowError && error.code === 'owner_transaction_expired' && error.retry === true);
+      // Whether the signed step applied is not known: it is unconfirmed, and resume reads the network again.
+      error => error instanceof OwnerFlowError && error.code === 'owner_transaction_unconfirmed' && error.retry === true);
     assert.deepEqual(signed, []);
     assert.deepEqual(JSON.parse(journal.get(key)), saved);
     assert.equal(journal.get(ownerArchiveKey(key, hash(9))), null);
@@ -526,6 +527,21 @@ test('a registration that fails keeps the signed setup: the next run registers t
       error => error instanceof OwnerFlowError && error.retry === false && expected.test(error.message));
     assert.equal(kept.map.size, 0);
   }
+  // A rail's typed refusal of the setup, such as an owner account without funds, keeps its code for the host. A
+  // value that is no code is dropped.
+  for (const [thrown, code] of [[Object.assign(new Error('The network holds no account for the owner address.'), {code: 'owner_account_unfunded'}), 'owner_account_unfunded'],
+    [Object.assign(new Error('The owner account can spend 1 and this setup needs 8.'), {code: 'owner_balance_low'}), 'owner_balance_low'],
+    [Object.assign(new Error('Unreadable.'), {code: 'ECONNRESET'}), null], [Object.assign(new Error('Unreadable.'), {code: 404}), null],
+    // A code behind a getter is read once: a later read that returns another value changes nothing.
+    [(() => { let reads = 0; return Object.defineProperty(new Error('Too little.'), 'code', {get: () => (++reads > 1 ? 404 : 'owner_balance_low')}); })(), 'owner_balance_low'],
+    // A getter that throws leaves the refusal without a code and keeps its message.
+    [Object.defineProperty(new Error('Unreadable.'), 'code', {get: () => { throw new Error('getter'); }}), null]]) {
+    const unfunded = {...chain, keypairSetup: {...chain.keypairSetup, prepare: async () => { throw thrown; }}};
+    const kept = journalOf(), signedNow = [];
+    await assert.rejects(installAndFund({...input, sign: ownerSigns(signedNow), ask: keypairService().ask, journal: kept, key: 'k'}, unfunded),
+      error => error instanceof OwnerFlowError && error.code === code && error.retry === false && error.message === thrown.message);
+    assert.deepEqual([kept.map.size, signedNow.length], [0, 0]);
+  }
   // A network whose rail sets up no account refuses the setup.
   await assert.rejects(installAndFund({...input, ask: keypairService().ask, journal: journalOf(), key: 'k'}), /sets up no wallet account/);
 });
@@ -671,11 +687,11 @@ test('a deployment signs the approval only of the reviewed policy for the new wa
   // An owner that the network cannot name, or a signature of another account, sends nothing.
   for (const [owners, sign, expected, retry] of [
     [new Map(), ownerSigns([]), /could not be read/, true],
-    [undefined, ownerSigns([], 'STRANGER'), /another account than the owner/, false],
+    [undefined, ownerSigns([], 'STRANGER'), /does not verify for the owner account/, false],
     [undefined, async () => '', /did not return a message signature/, false],
     [undefined, async () => 'not base64!', /did not return a message signature/, false],
     // A signature of another length reaches the rail's check, which refuses it.
-    [undefined, async () => Buffer.from([1, 2, 3]).toString('base64'), /another account than the owner/, false],
+    [undefined, async () => Buffer.from([1, 2, 3]).toString('base64'), /does not verify for the owner account/, false],
   ]) {
     const {chain: other, world} = keypairRail({owners});
     const {ask, calls} = keypairService();
@@ -791,7 +807,8 @@ test('a keypair change signed by another account is refused before it is saved, 
   const journal = journalOf();
   const {ask, submitted} = approvals(approvalMessage(), [done]);
   const input = {journal, key: 'w', policyId, params: change, installed: installed('WALLET-1'), onStep() {}, ask};
-  await assert.rejects(updateParams({...input, sign: ownerSigns([], 'STRANGER')}, chain), /another account than the owner. Nothing was saved/);
+  await assert.rejects(updateParams({...input, sign: ownerSigns([], 'STRANGER')}, chain),
+    error => error.code === 'wallet_wrong_account' && /does not verify for the owner account and this step: another account signed, or the wallet signed an earlier message. Nothing was saved/.test(error.message));
   assert.deepEqual([journal.map.size, submitted.length], [0, 0]);
   // An owner that the network cannot name signs nothing.
   const {chain: unnamed} = keypairRail();

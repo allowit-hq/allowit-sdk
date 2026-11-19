@@ -129,7 +129,7 @@ test('<allowit-rail> reports an unknown network', () => {
   host.isConnected = true;
   host.connectedCallback();
   assert.equal(host.children.length, 0);
-  assert.equal(error?.code, 'unsupported');
+  assert.equal(error?.code, 'rail_element_unavailable');
 });
 
 for (const kind of ['constructor', 'toString', '__proto__', 'unknown-kind']) {
@@ -143,7 +143,7 @@ for (const kind of ['constructor', 'toString', '__proto__', 'unknown-kind']) {
     host.isConnected = true;
     host.connectedCallback();
     assert.equal(host.children.length, 0);
-    assert.equal(error?.code, 'unsupported');
+    assert.equal(error?.code, 'rail_element_unavailable');
   });
 }
 

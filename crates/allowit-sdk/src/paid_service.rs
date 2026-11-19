@@ -35,6 +35,10 @@ pub const MAX_BODY_BYTES: usize = 8 << 20;
 pub const SELLER_TIMEOUT: Duration = Duration::from_secs(30);
 const MAX_HEADERS: usize = 32;
 
+/// The catalogue code of a seller that refused or failed the call that carried the payment: the
+/// payment can have taken effect, so the caller reads the request before it pays again. A
+/// failure before any payment keeps [`SELLER_FAILED_NAME`].
+pub const SELLER_FAILED_AFTER_PAYMENT: &str = "seller_failed_after_payment";
 /// A seller error with [`SELLER_FAILED`].
 pub fn seller_failed(message: impl Into<String>) -> Error {
     let mut error = Error::unsupported(message);
@@ -230,13 +234,18 @@ pub fn send(request: &SellerRequest, proof: Option<&Proof>) -> Result<SellerResp
             None,
         )
         .map_err(|error| {
-            seller_failed(match error.kind {
+            let mut failed = seller_failed(match error.kind {
                 ErrorKind::Size => "The seller's reply exceeds 8 MiB.",
                 ErrorKind::Timeout | ErrorKind::Deadline => "The seller did not answer in time.",
                 ErrorKind::Connection => "The seller could not be reached.",
                 ErrorKind::Configuration => "The seller URL cannot be requested.",
                 _ => "The seller's reply could not be read.",
-            })
+            });
+            // The call that carried the payment can have reached the seller before it failed.
+            if proof.is_some() {
+                failed.api_code = Some(SELLER_FAILED_AFTER_PAYMENT.into());
+            }
+            failed
         })?;
     Ok(SellerResponse {
         status: response.status,
@@ -363,6 +372,16 @@ mod tests {
         // Port 1 on the loopback accepts no connection.
         let error = send(&get("http://127.0.0.1:1/report"), None).unwrap_err();
         assert_eq!(error.code, SELLER_FAILED);
+        assert_eq!(error.api_code, None);
+        // The call that carries the payment can have reached the seller: its failure says so.
+        let proof = Proof {
+            header: "X-PAYMENT".into(),
+            value: "proof".into(),
+        };
+        let after = send(&get("http://127.0.0.1:1/report"), Some(&proof)).unwrap_err();
+        assert_eq!(after.code, SELLER_FAILED);
+        assert_eq!(after.api_code.as_deref(), Some(SELLER_FAILED_AFTER_PAYMENT));
+        assert!(crate::errors::entry(SELLER_FAILED_AFTER_PAYMENT).is_some());
         assert_ne!(error.code, crate::transport_failure::NETWORK_UNAVAILABLE);
         assert_eq!(seller_failed("x").code, 8);
     }

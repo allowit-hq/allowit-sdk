@@ -8,6 +8,8 @@
 
 /** Typed codes of a refused `native/owner/submit`. The reply body is `{error, code, details}`. */
 export const OWNER_TRANSACTION_EXPIRED = 'owner_transaction_expired';
+/** A signed step passed its time limit and the network could not be read to tell whether it applied: resume checks it. */
+export const OWNER_TRANSACTION_UNCONFIRMED = 'owner_transaction_unconfirmed';
 export const OWNER_TRANSACTION_PENDING = 'owner_transaction_pending';
 export const OWNER_TRANSACTION_SETTLED = 'owner_transaction_settled';
 /** The transaction is in a ledger and failed. `details.ledger` names that ledger. */
@@ -25,6 +27,14 @@ export const REVISION_CHANGED = 'revision_changed';
 export const UPDATE_PARAMS = 'update_params';
 /** The service's refusal of a deployment whose keypair wallet needs its setup first. */
 export const WALLET_SETUP_REQUIRED = 'wallet_setup_required';
+/**
+ * A rail's refusal of a keypair wallet's setup before any signature: the network holds no account for the owner's
+ * address, or the account cannot pay for the setup.
+ */
+export const OWNER_ACCOUNT_UNFUNDED = 'owner_account_unfunded';
+export const OWNER_BALANCE_LOW = 'owner_balance_low';
+/** The owner's signature of an approval does not verify for the owner of the wallet account: another account signed, or the wallet signed an earlier message. */
+export const WALLET_WRONG_ACCOUNT = 'wallet_wrong_account';
 /** Receipt labels of a keypair wallet's setup and of the owner's approval of its policy. */
 export const SET_UP_WALLET = 'set_up_wallet';
 export const APPROVE_POLICY = 'approve_policy';
@@ -59,7 +69,7 @@ export function ownerArchiveKey(key, hash) {
 }
 
 const unverified = () => new OwnerFlowError('The network record of the signed step could not be checked. It stays saved; resume to check it again.', null, true);
-const unchecked = () => new OwnerFlowError('The expired signed step could not be checked on the network. It stays saved; resume to check it again.', OWNER_TRANSACTION_EXPIRED, true);
+const unchecked = () => new OwnerFlowError('The expired signed step could not be checked on the network. It stays saved; resume to check it again.', OWNER_TRANSACTION_UNCONFIRMED, true);
 
 /**
  * The ledger in which the network holds this transaction as successful. The service's word alone never clears a signed
@@ -86,6 +96,20 @@ async function failedOnChain(chain, network, step, ledger) {
 
 /** The most bytes of a message signature that the workflow keeps. The rail decides the exact shape. */
 const MAX_SIGNATURE_BYTES = 1024;
+/** The value of `get`, or null when reading it throws: a rail's error object can hold a getter. */
+const read = get => {
+  try {
+    return get();
+  } catch {
+    return null;
+  }
+};
+/** The typed code of a rail's refusal: its `code`, read once, when it has the form of a code; otherwise null. */
+function typedCode(cause) {
+  const code = read(() => cause?.code);
+  return typeof code === 'string' && /^[a-z][a-z0-9_]{2,63}$/.test(code) ? code : null;
+}
+
 /** True for a list of bytes that can hold a message signature; the rail's `signedBy` checks the signature itself. */
 const signatureShaped = bytes => Array.isArray(bytes) && bytes.length > 0 && bytes.length <= MAX_SIGNATURE_BYTES
   && bytes.every(b => Number.isInteger(b) && b >= 0 && b <= 255);
@@ -184,7 +208,9 @@ async function setUpKeypairWallet(setup, chain, {network, owner, agent, server, 
     journal.remove(key);
   }
   onStep('Preparing the wallet…');
-  const failed = cause => new OwnerFlowError(cause instanceof Error && cause.message ? cause.message : 'The wallet account could not be set up.', null, false, cause);
+  // A rail's typed refusal of the setup, such as an owner account without funds, keeps its code for the host.
+  const failed = cause => new OwnerFlowError(read(() => cause instanceof Error && typeof cause.message === 'string' && cause.message ? cause.message : null) ?? 'The wallet account could not be set up.',
+    typedCode(cause), false, cause);
   const prepared = await setup.prepare({network, owner, agent, server, amount}).catch(cause => {throw failed(cause);});
   const step = stepOf(prepared?.step);
   if (!object(prepared) || !step || typeof prepared.wallet !== 'string' || typeof prepared.complete !== 'function') throw failed();
@@ -376,7 +402,7 @@ async function ownerApproval(chain, {network, sign, onStep}, message, wallet, {t
   const step = chain.approval.step(message);
   const signature = signatureBytes(await sign(step));
   if (!chain.approval.signedBy(signer, step.hash, signature))
-    throw new OwnerFlowError(`Your wallet signed with another account than the owner. Nothing was ${kept}; sign with the owner account.`, null, false);
+    throw new OwnerFlowError(`The wallet's signature does not verify for the owner account and this step: another account signed, or the wallet signed an earlier message. Nothing was ${kept}; select the owner account and sign again.`, WALLET_WRONG_ACCOUNT, false);
   return {signer, signature};
 }
 const noApproval = () => new OwnerFlowError('This network signs no policy approval. Nothing was signed.', null, false);

@@ -4,9 +4,9 @@ import * as registered from './registered.js';
 import WALLET_KINDS from './wallet-kinds.js';
 import * as workflow from './owner-workflow.js';
 
-export {OwnerFlowError, ownerArchiveKey, OWNER_TRANSACTION_EXPIRED, OWNER_TRANSACTION_PENDING, OWNER_TRANSACTION_SETTLED,
+export {OwnerFlowError, ownerArchiveKey, OWNER_TRANSACTION_EXPIRED, OWNER_TRANSACTION_UNCONFIRMED, OWNER_TRANSACTION_PENDING, OWNER_TRANSACTION_SETTLED,
   OWNER_TRANSACTION_FAILED, NETWORK_UNAVAILABLE, PARAM_INVALID, PARAM_OUT_OF_RANGE, UPDATE_UNAVAILABLE, REVISION_CHANGED,
-  UPDATE_PARAMS, WALLET_SETUP_REQUIRED, SET_UP_WALLET, APPROVE_POLICY} from './owner-workflow.js';
+  UPDATE_PARAMS, WALLET_SETUP_REQUIRED, OWNER_ACCOUNT_UNFUNDED, OWNER_BALANCE_LOW, WALLET_WRONG_ACCOUNT, SET_UP_WALLET, APPROVE_POLICY} from './owner-workflow.js';
 
 const RAILS = Object.freeze(Object.values(registered));
 
@@ -332,7 +332,7 @@ export class AllowitRail extends Base {
         new CustomEvent('allowit-error', {
           bubbles: true,
           composed: true,
-          detail: {code: 'unsupported', message: `No ${kind} element for ${network}`},
+          detail: {code: 'rail_element_unavailable', message: `No ${kind} element for ${network}`},
         }),
       );
       return;

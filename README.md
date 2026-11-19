@@ -82,6 +82,14 @@ A host never prints a unit of its own. An asset without a known unit is an error
 run it with `ALLOWIT_WRITE_WALLET_KINDS=1` after a Core change.
 `progress::set_sink` installs the sink for the progress lines of long provider steps.
 
+A typed code names its entry in Core's error catalogue: a title and the help page `<app origin>/help/<code>`. A host
+shows the title, then the sender's own message as the cause and the step, then the help link. `allowit_sdk::errors` is that catalogue for Rust hosts (`errors::entry(code)`,
+`errors::help_url(origin, code)`), and `@allowit/core` exports it for JavaScript hosts (`errorEntry`,
+`errorHelpPath`). A rail's typed refusal of a keypair wallet's setup, such as `owner_account_unfunded` or
+`owner_balance_low`, comes before any signature and keeps its code in `OwnerFlowError.code`. The tests
+`crates/allowit-sdk/tests/error_catalogue.rs` and `npm/tests/error-catalogue.test.mjs` fail for a code that the SDK
+names without an entry.
+
 ## Write a portable policy
 
 Policies are synchronous Rust against the `allowit` package:
