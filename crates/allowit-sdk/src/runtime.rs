@@ -453,13 +453,21 @@ impl Runtime {
     /// pay for it: the upload of `wasm`, or without it the restoration of the installation's
     /// lapsed code, with the network fee bounded by `max_fee` in the rail's native units. `None`
     /// when nothing is needed. The rail prepares the transaction and signs it with a sending
-    /// account (`prepare_code_within`); this retains it in the journal `store` before its first
-    /// send and sends it with `submit`. A send that the network did not accept goes out again,
-    /// the first one included, only while the rail says that it is still needed (`code_needed`),
-    /// since another transaction can make the code live meanwhile. An accepted or uncertain send
-    /// is followed with `recover` within `poll`. The receipt is that of a confirmed
-    /// transaction: one that the ledger included and failed is an error whose details name its
-    /// `transactionHash` and the fee that its source paid, `nativeUnits`.
+    /// account (`prepare_code_within`). This sends it with `submit`, which retains it in the
+    /// journal `store` before its first send; a journal that holds it already decides the first
+    /// step by its retained status. A send that the network did not accept goes out again, the
+    /// first one included, only while the rail says that it is still needed (`code_needed`),
+    /// since another transaction can make the code live meanwhile. Once a send may have been
+    /// accepted, each attempt within `poll` reads its receipt, which gives the final status and
+    /// the fee in one lookup, and the journal records that status.
+    ///
+    /// The receipt is that of a confirmed transaction. An error names the transaction in its
+    /// details (`transactionHash`) once a send of it may have been accepted: with `nativeUnits`,
+    /// the fee that its source paid, when the ledger included it and failed it; without them
+    /// when it has no receipt yet, so that it can still apply. An error that names no
+    /// transaction sent nothing that is pending. A caller that keeps the journal looks a pending
+    /// transaction up again with `observe`, and drops it without a receipt only when
+    /// `code_lapsed` proves that it lapsed.
     pub fn make_code_live(
         &self,
         store: &mut dyn OperationStore,
@@ -477,53 +485,71 @@ impl Runtime {
         };
         let signed = Signed(prepared.0);
         let id = signed.info()?.operation_id;
+        let naming = |error: crate::error::Error| {
+            error.with_details(serde_json::json!({ "transactionHash": hex(&id) }))
+        };
         let started = std::time::Instant::now();
         let clock = || now.saturating_add(started.elapsed().as_secs());
-        let mut status = Status::Prepared;
+        let mut status = store
+            .load(id)?
+            .map(|(_, status)| status)
+            .unwrap_or(Status::Prepared);
+        // Whether a send of it may have been accepted.
+        let mut sent = status != Status::Prepared;
         for attempt in 0..poll.attempts.max(1) {
             if attempt > 0 {
                 std::thread::sleep(poll.interval);
             }
-            status = match status {
-                // Not sent yet, or not accepted: nothing is pending.
-                Status::Prepared => {
-                    if !self
-                        .provider
-                        .code_needed(&native::Signed(signed.0.clone()))?
-                    {
-                        return Ok(None);
-                    }
-                    self.submit(store, &signed, clock())?
+            if status == Status::Prepared {
+                // Nothing is pending.
+                match self.provider.code_needed(&native::Signed(signed.0.clone())) {
+                    Ok(true) => {}
+                    Ok(false) => return Ok(None),
+                    Err(error) if !sent => return Err(error),
+                    Err(_) => continue,
                 }
-                _ => self.recover(store, id)?,
-            };
-            if matches!(status, Status::Confirmed | Status::Failed) {
-                break;
+                status = match self.submit(store, &signed, clock()) {
+                    Ok(status) => status,
+                    Err(error) if !sent => return Err(error),
+                    Err(_) => continue,
+                };
+                if status == Status::Prepared {
+                    continue;
+                }
+                sent = true;
+            }
+            // A lookup that fails leaves the transaction pending within the poll.
+            if let Ok(Some(receipt)) = self.observe(&signed) {
+                let info = receipt.info().map_err(naming)?;
+                store
+                    .record(id, &signed, info.status.clone())
+                    .map_err(naming)?;
+                if info.status != Status::Confirmed {
+                    return Err(crate::error::Error::config(
+                        "The wallet code transaction failed on the ledger",
+                    )
+                    .with_details(serde_json::json!({
+                        "transactionHash": hex(&info.transaction_hash),
+                        "nativeUnits": info.fee.native_units.to_string(),
+                    })));
+                }
+                return Ok(Some(receipt));
             }
         }
-        if !matches!(status, Status::Confirmed | Status::Failed) {
-            return Err(crate::error::Error::uncertain(format!(
-                "The wallet code transaction {} has no final result yet; look it up again before any replacement",
-                hex(&id)
-            )));
-        }
-        let receipt = self.observe(&signed)?.ok_or_else(|| {
-            crate::error::Error::uncertain(format!(
-                "The wallet code transaction {} has no receipt yet; look it up again before any replacement",
-                hex(&id)
-            ))
-        })?;
-        let info = receipt.info()?;
-        if info.status != Status::Confirmed {
+        if !sent {
             return Err(crate::error::Error::config(
-                "The wallet code transaction failed on the ledger",
-            )
-            .with_details(serde_json::json!({
-                "transactionHash": hex(&info.transaction_hash),
-                "nativeUnits": info.fee.native_units.to_string(),
-            })));
+                "The network did not accept the wallet code transaction: nothing is pending",
+            ));
         }
-        Ok(Some(receipt))
+        Err(naming(crate::error::Error::uncertain(format!(
+            "The wallet code transaction {} has no receipt yet; look it up again before any replacement",
+            hex(&id)
+        ))))
+    }
+    /// Whether the code transaction `p` lapsed: it never applied and can no longer apply.
+    /// `false` means not proven.
+    pub fn code_lapsed(&self, p: &Signed) -> Result<bool> {
+        self.provider.code_lapsed(&native::Signed(p.0.clone()))
     }
     pub fn prepare_owner(
         &self,
@@ -631,7 +657,7 @@ mod code_transactions {
     //! answers its sends and lookups as each case sets.
     use super::*;
     use std::sync::{Arc, Mutex};
-    const NETWORK: &str = "stellar:testnet";
+    const NETWORK: &str = "test:network";
     #[derive(Default)]
     struct Chain {
         live: bool,
@@ -642,6 +668,11 @@ mod code_transactions {
         sends: usize,
         /// Lookups that still find the transaction pending.
         pending_lookups: usize,
+        /// Lookups that fail, as an unreachable RPC does, before the others answer.
+        failing_lookups: usize,
+        /// The first code check fails, as an unreachable RPC does.
+        failing_check: bool,
+        lookups: usize,
         /// The ledger's final status of the transaction, once it has one.
         outcome: Option<Status>,
     }
@@ -843,14 +874,24 @@ mod code_transactions {
         }
         fn status(&self, p: &native::Signed) -> Result<native::Status> {
             let mut chain = self.0.lock().unwrap();
+            // As Stellar's lookup of a transaction that it has not seen: uncertain.
             if chain.pending_lookups > 0 {
                 chain.pending_lookups -= 1;
-                return Ok(Status::Submitted);
+                return Ok(Status::SubmissionUnknown);
             }
             Ok(chain.outcome.clone().unwrap_or(Status::Submitted))
         }
         fn observe(&self, p: &native::Signed) -> Result<Option<native::Receipt>> {
-            let chain = self.0.lock().unwrap();
+            let mut chain = self.0.lock().unwrap();
+            chain.lookups += 1;
+            if chain.failing_lookups > 0 {
+                chain.failing_lookups -= 1;
+                return Err(crate::error::Error::config("The RPC is unreachable"));
+            }
+            if chain.pending_lookups > 0 {
+                chain.pending_lookups -= 1;
+                return Ok(None);
+            }
             chain
                 .outcome
                 .clone()
@@ -893,7 +934,11 @@ mod code_transactions {
             )?)))
         }
         fn code_needed(&self, p: &native::Signed) -> Result<bool> {
-            Ok(!self.0.lock().unwrap().live)
+            let mut chain = self.0.lock().unwrap();
+            if std::mem::take(&mut chain.failing_check) {
+                return Err(crate::error::Error::config("The RPC is unreachable"));
+            }
+            Ok(!chain.live)
         }
         fn read_owner_signed(
             &self,
@@ -936,18 +981,27 @@ mod code_transactions {
             authority: None,
         })
     }
-    fn run(chain: Chain) -> (Result<Option<Receipt>>, Arc<Mutex<Chain>>, MemoryOperations) {
+    fn run_with(
+        chain: Chain,
+        mut store: MemoryOperations,
+        attempts: u32,
+    ) -> (Result<Option<Receipt>>, Arc<Mutex<Chain>>, MemoryOperations) {
         let chain = Arc::new(Mutex::new(chain));
         let runtime = Runtime {
             provider: Box::new(Rail(chain.clone())),
         };
-        let mut store = MemoryOperations::default();
         let poll = Poll {
-            attempts: 4,
+            attempts,
             interval: std::time::Duration::ZERO,
         };
         let result = runtime.make_code_live(&mut store, &installation(), None, 10_000, poll, 1);
         (result, chain, store)
+    }
+    fn run(chain: Chain) -> (Result<Option<Receipt>>, Arc<Mutex<Chain>>, MemoryOperations) {
+        run_with(chain, MemoryOperations::default(), 4)
+    }
+    fn names_transaction(error: &crate::error::Error) -> bool {
+        error.detail("transactionHash") == Some(hex(&[7; 32]).as_str())
     }
     #[test]
     fn live_code_needs_no_transaction() {
@@ -972,6 +1026,19 @@ mod code_transactions {
         assert_eq!(store.load([7; 32]).unwrap().unwrap().1, Status::Confirmed);
     }
     #[test]
+    fn a_send_accepted_in_the_last_attempt_is_looked_up_in_it() {
+        let (result, chain, _) = run_with(
+            Chain {
+                outcome: Some(Status::Confirmed),
+                ..Chain::default()
+            },
+            MemoryOperations::default(),
+            1,
+        );
+        assert!(result.unwrap().is_some());
+        assert_eq!(chain.lock().unwrap().sends, 1);
+    }
+    #[test]
     fn a_send_that_was_not_accepted_goes_out_again_only_while_it_is_needed() {
         // Another transaction makes the code live while the first send waits: the transaction
         // is not sent again.
@@ -992,23 +1059,69 @@ mod code_transactions {
         assert!(result.unwrap().is_some());
         assert_eq!(chain.lock().unwrap().sends, 2);
         assert_eq!(store.load([7; 32]).unwrap().unwrap().1, Status::Confirmed);
+        // The network accepts none of the sends: nothing is pending, and the error names no
+        // transaction.
+        let (result, chain, _) = run(Chain {
+            answers: vec![Status::Prepared; 4],
+            ..Chain::default()
+        });
+        let refused = result.unwrap_err();
+        assert!(!names_transaction(&refused), "{refused:?}");
+        assert_eq!(chain.lock().unwrap().sends, 4);
     }
     #[test]
-    fn a_transaction_that_the_ledger_failed_names_itself_and_its_fee() {
-        let (result, _, _) = run(Chain {
+    fn a_check_that_fails_before_any_send_sends_nothing() {
+        let (result, chain, store) = run(Chain {
+            failing_check: true,
+            outcome: Some(Status::Confirmed),
+            ..Chain::default()
+        });
+        let refused = result.unwrap_err();
+        assert!(!names_transaction(&refused));
+        assert_eq!(chain.lock().unwrap().sends, 0);
+        assert!(store.load([7; 32]).unwrap().is_none());
+    }
+    #[test]
+    fn a_transaction_that_the_journal_holds_is_looked_up_not_sent_again() {
+        let (_, _, first) = run(Chain {
+            answers: vec![Status::SubmissionUnknown],
+            pending_lookups: 10,
+            ..Chain::default()
+        });
+        assert_eq!(
+            first.load([7; 32]).unwrap().unwrap().1,
+            Status::SubmissionUnknown
+        );
+        // The first lookup still finds nothing, as Stellar does for a transaction that it has
+        // not seen yet.
+        let (result, chain, store) = run_with(
+            Chain {
+                pending_lookups: 1,
+                outcome: Some(Status::Confirmed),
+                ..Chain::default()
+            },
+            first,
+            4,
+        );
+        assert!(result.unwrap().is_some());
+        assert_eq!(chain.lock().unwrap().sends, 0);
+        assert_eq!(store.load([7; 32]).unwrap().unwrap().1, Status::Confirmed);
+    }
+    #[test]
+    fn lookups_that_fail_stay_within_the_poll() {
+        let (result, chain, _) = run(Chain {
+            failing_lookups: 2,
             outcome: Some(Status::Failed),
             ..Chain::default()
         });
         let failed = result.unwrap_err();
         assert!(failed.message.contains("failed on the ledger"));
-        assert_eq!(
-            failed.detail("transactionHash"),
-            Some(hex(&[7; 32]).as_str())
-        );
+        assert!(names_transaction(&failed));
         assert_eq!(failed.detail("nativeUnits"), Some("250"));
+        assert_eq!(chain.lock().unwrap().lookups, 3);
     }
     #[test]
-    fn a_transaction_without_a_final_status_is_uncertain() {
+    fn a_transaction_without_a_receipt_is_uncertain_and_named() {
         let (result, chain, store) = run(Chain {
             pending_lookups: 10,
             outcome: Some(Status::Confirmed),
@@ -1020,6 +1133,8 @@ mod code_transactions {
             "{}",
             uncertain.message
         );
+        assert!(names_transaction(&uncertain));
+        assert!(uncertain.detail("nativeUnits").is_none());
         assert_eq!(chain.lock().unwrap().sends, 1);
         assert_eq!(store.load([7; 32]).unwrap().unwrap().1, Status::Submitted);
     }
