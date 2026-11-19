@@ -1071,6 +1071,34 @@ fn a_rail_skips_the_custom_build_exactly_when_it_has_no_hook() {
     assert!(!custom_build::supported("unknown:network"));
 }
 
+/// A host checks a source against the Custom wallet of a network without building it: the rail
+/// refuses what its build refuses, such as more state keys than its contract stores, and a key
+/// that the server keeps does not count.
+#[test]
+fn a_host_checks_a_source_against_the_rails_custom_wallet_without_building() {
+    let writes = |keys: usize| -> String {
+        (1..=keys)
+            .map(|i| format!("    allowit::set_state(ctx, \"k{i}\", ctx.request.amount)?;\n"))
+            .collect()
+    };
+    let source = |writes: &str| {
+        format!(
+            "use allowit::prelude::*;\npub fn execute(ctx: &AllowitContext) -> allowit::Result {{\n{writes}    Ok(())\n}}\n"
+        )
+    };
+    testkit::each(Feature::CustomBuild, |rail, _| {
+        let network = rail.test_support().network;
+        custom_build::check(network, &source(&writes(1))).unwrap();
+        // Nine keys that the contract keeps: one more than a contract of this kind stores.
+        assert!(
+            custom_build::check(network, &source(&writes(9))).is_err(),
+            "{}",
+            rail.id()
+        );
+    });
+    assert!(custom_build::check("unknown:network", &source("")).is_err());
+}
+
 #[test]
 fn a_host_builds_only_the_signed_source_and_compares_the_code() {
     use custom_build::code;
