@@ -543,14 +543,15 @@ impl Runtime {
         else {
             return Ok(None);
         };
-        self.send_code(store, Signed(prepared.0), poll, (now, started))
+        self.send_code(store, Signed(prepared.0), poll, (now, started), &|| true)
     }
     /// Renew the live wallet code `code` that the server uploaded and that wallets share, such as
     /// the code of a fixed tier, from the server's sending accounts, which pay for it, with the
     /// network fee bounded by `max_fee`, once the rail says that it is due
     /// (`prepare_code_renewal`). `None` before. The renewal is a code transaction that takes the
     /// path of `make_code_live`, with its journal. Code that lapsed is not renewed: nothing
-    /// restores it.
+    /// restores it. The caller's `fence` decides just before each send: once it answers `false`,
+    /// as for a round that lost its lease to another, nothing more is sent.
     pub fn renew_code(
         &self,
         store: &mut dyn OperationStore,
@@ -558,12 +559,13 @@ impl Runtime {
         max_fee: u64,
         poll: Poll,
         now: u64,
+        fence: &dyn Fn() -> bool,
     ) -> Result<Option<Receipt>> {
         let started = std::time::Instant::now();
         let Some(prepared) = self.provider.prepare_code_renewal(code, max_fee, now)? else {
             return Ok(None);
         };
-        self.send_code(store, Signed(prepared.0), poll, (now, started))
+        self.send_code(store, Signed(prepared.0), poll, (now, started), fence)
     }
     /// Send the code transaction `prepared` through the journal `store` and follow it to its
     /// receipt within `poll`. The clock counts from `start`, the time `now` at which the call
@@ -574,6 +576,7 @@ impl Runtime {
         prepared: Signed,
         poll: Poll,
         start: (u64, std::time::Instant),
+        fence: &dyn Fn() -> bool,
     ) -> Result<Option<Receipt>> {
         let expected = prepared.info()?;
         let id = expected.operation_id;
@@ -617,25 +620,27 @@ impl Runtime {
                         continue;
                     }
                 }
-                status = match self.send_unless_journaled(store, &mut signed, id, &this, clock()) {
-                    Ok(status) => status,
-                    // The journal tells whether the send that failed may be pending, and holds
-                    // the packet that the call follows. A journal that cannot be read leaves it
-                    // in doubt: it is looked up, never sent again.
-                    Err(error) => {
-                        last = Some(error);
-                        match store.load(id) {
-                            Ok(found) => match this(found)? {
-                                Some((original, status)) => {
-                                    signed = original;
-                                    status
-                                }
-                                None => Status::Prepared,
-                            },
-                            Err(_) => Status::SubmissionUnknown,
+                status =
+                    match self.send_unless_journaled(store, &mut signed, id, &this, clock(), fence)
+                    {
+                        Ok(status) => status,
+                        // The journal tells whether the send that failed may be pending, and holds
+                        // the packet that the call follows. A journal that cannot be read leaves it
+                        // in doubt: it is looked up, never sent again.
+                        Err(error) => {
+                            last = Some(error);
+                            match store.load(id) {
+                                Ok(found) => match this(found)? {
+                                    Some((original, status)) => {
+                                        signed = original;
+                                        status
+                                    }
+                                    None => Status::Prepared,
+                                },
+                                Err(_) => Status::SubmissionUnknown,
+                            }
                         }
-                    }
-                };
+                    };
                 if status == Status::Prepared {
                     // The network accepted no send. After the last one, live code needs nothing.
                     if attempt + 1 == poll.attempts.max(1)
@@ -686,12 +691,18 @@ impl Runtime {
         id: [u8; 32],
         this: &dyn Fn(Journaled) -> Result<Journaled>,
         now: u64,
+        fence: &dyn Fn() -> bool,
     ) -> Result<Status> {
         if let Some((original, status)) = this(store.load(id)?)? {
             *signed = original;
             if status != Status::Prepared {
                 return Ok(status);
             }
+        }
+        if !fence() {
+            return Err(crate::error::Error::config(
+                "The caller's fence closed: the code transaction is not sent",
+            ));
         }
         self.provider
             .validate_signed(&native::Signed(signed.0.clone()), now)?;
@@ -1279,7 +1290,7 @@ mod code_transactions {
         };
         let mut store = MemoryOperations::default();
         let receipt = runtime
-            .renew_code(&mut store, &[3; 32], 10_000, poll, 1)
+            .renew_code(&mut store, &[3; 32], 10_000, poll, 1, &|| true)
             .unwrap()
             .unwrap();
         assert_eq!(receipt.info().unwrap().status, Status::Confirmed);
@@ -1296,7 +1307,7 @@ mod code_transactions {
         };
         assert!(
             runtime
-                .renew_code(&mut store, &[3; 32], 10_000, poll, 1)
+                .renew_code(&mut store, &[3; 32], 10_000, poll, 1, &|| true)
                 .unwrap()
                 .is_none()
         );
@@ -1452,6 +1463,29 @@ mod code_transactions {
             );
         }
     }
+    /// The caller's fence decides just before each send: a renewal whose round lost its lease
+    /// sends nothing, and one that holds it sends.
+    #[test]
+    fn a_renewal_sends_nothing_once_its_fence_closes() {
+        let poll = || Poll {
+            attempts: 2,
+            interval: std::time::Duration::ZERO,
+        };
+        for open in [false, true] {
+            let chain = Arc::new(Mutex::new(Chain {
+                outcome: Some(Status::Confirmed),
+                ..Chain::default()
+            }));
+            let runtime = Runtime {
+                provider: Box::new(Rail(chain.clone())),
+            };
+            let mut store = MemoryOperations::default();
+            let renewed = runtime.renew_code(&mut store, &[3; 32], 10_000, poll(), 1, &|| open);
+            assert_eq!(renewed.is_ok(), open);
+            assert_eq!(chain.lock().unwrap().sends, usize::from(open));
+            assert!(!store.pending());
+        }
+    }
     /// A send carries the time of the call, which the preparation's reads of the network take
     /// part of: the clock starts when the call does.
     #[test]
@@ -1477,7 +1511,7 @@ mod code_transactions {
         };
         let mut store = MemoryOperations::default();
         runtime
-            .renew_code(&mut store, &[3; 32], 10_000, poll, 1)
+            .renew_code(&mut store, &[3; 32], 10_000, poll, 1, &|| true)
             .unwrap();
         assert!(
             chain.lock().unwrap().sent_at[1] >= 2,

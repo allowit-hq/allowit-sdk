@@ -300,7 +300,7 @@ fn a_rail_that_deploys_prepares_code_uploads_and_renewals_itself() {
             Runtime::with_sender(network, renewal.clone(), std::sync::Arc::new(Sending)).unwrap();
         let mut journal = runtime::MemoryOperations::default();
         let refused = sending
-            .renew_code(&mut journal, &[3; 32], 1_000_000, poll, 1)
+            .renew_code(&mut journal, &[3; 32], 1_000_000, poll, 1, &|| true)
             .unwrap_err();
         assert!(!refused_by_core(&refused), "{}: {refused:?}", rail.id());
 
