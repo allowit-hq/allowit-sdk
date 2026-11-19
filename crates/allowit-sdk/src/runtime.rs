@@ -159,6 +159,31 @@ impl Receipt {
         self.0.provider().receipt_info(&self.0)
     }
 }
+/// Lowercase hexadecimal of `bytes`.
+fn hex(bytes: &[u8]) -> String {
+    bytes.iter().map(|b| format!("{b:02x}")).collect()
+}
+/// A journal held in memory, for a caller that keeps no durable one: it retains each signed
+/// packet under its operation ID, refuses other bytes under the same ID, and lasts as long as
+/// the value.
+#[derive(Default)]
+pub struct MemoryOperations(std::collections::BTreeMap<[u8; 32], (Signed, Status)>);
+impl OperationStore for MemoryOperations {
+    fn load(&self, id: [u8; 32]) -> Result<Option<(Signed, Status)>> {
+        Ok(self.0.get(&id).cloned())
+    }
+    fn record(&mut self, id: [u8; 32], signed: &Signed, status: Status) -> Result<()> {
+        if let Some((original, _)) = self.0.get(&id)
+            && (original.bytes() != signed.bytes() || original.network() != signed.network())
+        {
+            return Err(crate::error::Error::config(
+                "Operation ID already binds different signed bytes",
+            ));
+        }
+        self.0.insert(id, (signed.clone(), status));
+        Ok(())
+    }
+}
 pub trait OperationStore {
     fn load(&self, id: [u8; 32]) -> Result<Option<(Signed, Status)>>;
     fn record(&mut self, id: [u8; 32], signed: &Signed, status: Status) -> Result<()>;
@@ -424,46 +449,81 @@ impl Runtime {
     pub fn usage(&self, p: &Prepared) -> Result<Option<Usage>> {
         self.provider.usage(&native::Prepared(p.0.clone()))
     }
-    /// Upload the wallet code of an installation from the server's sending accounts, which pay
-    /// for it. `None` when the network holds the code already.
-    pub fn upload_code(
+    /// Make the wallet code of an installation live from the server's sending accounts, which
+    /// pay for it: the upload of `wasm`, or without it the restoration of the installation's
+    /// lapsed code, with the network fee bounded by `max_fee` in the rail's native units. `None`
+    /// when nothing is needed. The rail prepares the transaction and signs it with a sending
+    /// account (`prepare_code_within`); this retains it in the journal `store` before its first
+    /// send and sends it with `submit`. A send that the network did not accept goes out again,
+    /// the first one included, only while the rail says that it is still needed (`code_needed`),
+    /// since another transaction can make the code live meanwhile. An accepted or uncertain send
+    /// is followed with `recover` within `poll`. The receipt is that of a confirmed
+    /// transaction: one that the ledger included and failed is an error whose details name its
+    /// `transactionHash` and the fee that its source paid, `nativeUnits`.
+    pub fn make_code_live(
         &self,
+        store: &mut dyn OperationStore,
         i: &Installation,
-        wasm: &[u8],
-        poll: Poll,
-        now: u64,
-    ) -> Result<Option<Receipt>> {
-        self.provider
-            .upload_code(&i.0, wasm, poll, now)
-            .map(|r| r.map(|r| Receipt(r.0)))
-    }
-    /// As `upload_code`, with the network fee bounded by `max_fee` in the rail's native units:
-    /// an upload above it is refused before anything is signed.
-    pub fn upload_code_within(
-        &self,
-        i: &Installation,
-        wasm: &[u8],
+        wasm: Option<&[u8]>,
         max_fee: u64,
         poll: Poll,
         now: u64,
     ) -> Result<Option<Receipt>> {
-        self.provider
-            .upload_code_within(&i.0, wasm, max_fee, poll, now)
-            .map(|r| r.map(|r| Receipt(r.0)))
-    }
-    /// Make the installation's wallet code live again when it lapsed, from the server's sending
-    /// account, with the network fee bounded by `max_fee`. `None` when the code is live. The
-    /// restoration names the code by its hash and needs no code bytes.
-    pub fn restore_code_within(
-        &self,
-        i: &Installation,
-        max_fee: u64,
-        poll: Poll,
-        now: u64,
-    ) -> Result<Option<Receipt>> {
-        self.provider
-            .restore_code_within(&i.0, max_fee, poll, now)
-            .map(|r| r.map(|r| Receipt(r.0)))
+        let Some(prepared) = self
+            .provider
+            .prepare_code_within(&i.0, wasm, max_fee, now)?
+        else {
+            return Ok(None);
+        };
+        let signed = Signed(prepared.0);
+        let id = signed.info()?.operation_id;
+        let started = std::time::Instant::now();
+        let clock = || now.saturating_add(started.elapsed().as_secs());
+        let mut status = Status::Prepared;
+        for attempt in 0..poll.attempts.max(1) {
+            if attempt > 0 {
+                std::thread::sleep(poll.interval);
+            }
+            status = match status {
+                // Not sent yet, or not accepted: nothing is pending.
+                Status::Prepared => {
+                    if !self
+                        .provider
+                        .code_needed(&native::Signed(signed.0.clone()))?
+                    {
+                        return Ok(None);
+                    }
+                    self.submit(store, &signed, clock())?
+                }
+                _ => self.recover(store, id)?,
+            };
+            if matches!(status, Status::Confirmed | Status::Failed) {
+                break;
+            }
+        }
+        if !matches!(status, Status::Confirmed | Status::Failed) {
+            return Err(crate::error::Error::uncertain(format!(
+                "The wallet code transaction {} has no final result yet; look it up again before any replacement",
+                hex(&id)
+            )));
+        }
+        let receipt = self.observe(&signed)?.ok_or_else(|| {
+            crate::error::Error::uncertain(format!(
+                "The wallet code transaction {} has no receipt yet; look it up again before any replacement",
+                hex(&id)
+            ))
+        })?;
+        let info = receipt.info()?;
+        if info.status != Status::Confirmed {
+            return Err(crate::error::Error::config(
+                "The wallet code transaction failed on the ledger",
+            )
+            .with_details(serde_json::json!({
+                "transactionHash": hex(&info.transaction_hash),
+                "nativeUnits": info.fee.native_units.to_string(),
+            })));
+        }
+        Ok(Some(receipt))
     }
     pub fn prepare_owner(
         &self,
@@ -562,5 +622,405 @@ impl Runtime {
     }
     pub fn problem(&self, error: &crate::error::Error) -> Problem {
         self.provider.problem(error)
+    }
+}
+
+#[cfg(test)]
+mod code_transactions {
+    //! `make_code_live` over a rail that prepares a code transaction and a network that
+    //! answers its sends and lookups as each case sets.
+    use super::*;
+    use std::sync::{Arc, Mutex};
+    const NETWORK: &str = "stellar:testnet";
+    #[derive(Default)]
+    struct Chain {
+        live: bool,
+        /// The answers of the next sends; `Submitted` once they are used up.
+        answers: Vec<Status>,
+        /// Another transaction makes the code live during this send, counted from one.
+        live_at_send: Option<usize>,
+        sends: usize,
+        /// Lookups that still find the transaction pending.
+        pending_lookups: usize,
+        /// The ledger's final status of the transaction, once it has one.
+        outcome: Option<Status>,
+    }
+    struct Packets;
+    static PACKETS: Packets = Packets;
+    impl native::PacketProvider for Packets {
+        fn request_id(&self, _: &Packet) -> Result<[u8; 32]> {
+            unimplemented!()
+        }
+        fn owner_info(&self, _: &Packet) -> Result<native::OwnerInfo> {
+            unimplemented!()
+        }
+        fn prepared_metadata(&self, _: &Packet) -> Result<native::PreparedMetadata> {
+            unimplemented!()
+        }
+        fn info(&self, _: &Packet, _: Kind) -> Result<PacketInfo> {
+            Ok(PacketInfo {
+                operation_id: [7; 32],
+                transaction_hash: [7; 32],
+                wallet: String::new(),
+                expires_at: u64::MAX,
+            })
+        }
+        fn validate_signed(&self, _: &Packet) -> Result<()> {
+            Ok(())
+        }
+        fn signed_preparation(&self, _: &Packet) -> Result<native::Prepared> {
+            unimplemented!()
+        }
+        fn verify_consent(&self, _: &Snapshot, _: &str, _: &[Signature]) -> Result<()> {
+            unimplemented!()
+        }
+        fn signer_weight(&self, _: &Snapshot, _: &str) -> Result<u32> {
+            unimplemented!()
+        }
+        fn authority_document(&self, _: &Snapshot) -> Result<serde_json::Value> {
+            unimplemented!()
+        }
+        fn same_snapshot(&self, _: &Snapshot, _: &Snapshot) -> Result<bool> {
+            unimplemented!()
+        }
+        fn verify_receipt(&self, _: &Packet, _: &Packet) -> Result<()> {
+            Ok(())
+        }
+        fn receipt_info(&self, p: &Packet) -> Result<ReceiptInfo> {
+            let document: serde_json::Value = serde_json::from_str(p.document().get()).unwrap();
+            Ok(ReceiptInfo {
+                transaction_hash: [7; 32],
+                status: serde_json::from_value(document["status"].clone()).unwrap(),
+                observed_height: 1,
+                fee: native::Fee {
+                    native_units: 250,
+                    charged_units: 0,
+                    repaid_native_units: 0,
+                },
+                debits: Vec::new(),
+                settlement_hash: None,
+            })
+        }
+    }
+    struct Rail(Arc<Mutex<Chain>>);
+    #[allow(unused_variables)]
+    impl allowit_core::vendor::RuntimeProvider for Rail {
+        fn discover_snapshot(
+            &self,
+            configuration: &native::owner::Configuration,
+            accounting: Option<&native::Accounting>,
+        ) -> Result<native::Snapshot> {
+            unimplemented!()
+        }
+        fn current_height(&self) -> Result<u64> {
+            unimplemented!()
+        }
+        fn observe_hash(&self, hash: &[u8; 32]) -> Result<Option<native::Receipt>> {
+            unimplemented!()
+        }
+        fn import(
+            &self,
+            a: &allowit_core::vendor::config::ServerAuthority,
+            b: &[u8],
+        ) -> Result<native::Installation> {
+            unimplemented!()
+        }
+        fn request(
+            &self,
+            i: &native::Installation,
+            id: [u8; 32],
+            a: native::Action,
+            accounting: Option<&native::Accounting>,
+        ) -> Result<native::RequestPacket> {
+            unimplemented!()
+        }
+        fn read_request(
+            &self,
+            i: &native::Installation,
+            b: &[u8],
+        ) -> Result<native::RequestPacket> {
+            unimplemented!()
+        }
+        fn snapshot(
+            &self,
+            i: &native::Installation,
+            a: Option<&native::Accounting>,
+        ) -> Result<native::Snapshot> {
+            unimplemented!()
+        }
+        fn action(
+            &self,
+            i: &native::Installation,
+            r: &native::RequestPacket,
+        ) -> Result<native::Action> {
+            unimplemented!()
+        }
+        fn resources(&self, i: &native::Installation) -> Result<native::Resources> {
+            unimplemented!()
+        }
+        fn redeemable(&self, i: &native::Installation, v: &str, shares: i128) -> Result<i128> {
+            unimplemented!()
+        }
+        fn finish<'a>(
+            &self,
+            i: &native::Installation,
+            p: &native::Prepared,
+            retain: Box<dyn FnOnce(&native::Prepared) -> Result<()> + 'a>,
+        ) -> Result<native::Prepared> {
+            unimplemented!()
+        }
+        fn prepare(
+            &self,
+            i: &native::Installation,
+            r: &native::RequestPacket,
+            t: &native::Terms,
+            a: Option<&native::Accounting>,
+            v: native::Validity,
+        ) -> Result<native::Prepared> {
+            unimplemented!()
+        }
+        fn authorize_preparation(
+            &self,
+            i: &native::Installation,
+            p: &native::Prepared,
+            signer: &dyn native::Signer,
+            evaluator: Option<native::Evaluator<'_>>,
+            now: u64,
+        ) -> Result<native::Prepared> {
+            unimplemented!()
+        }
+        fn finalize<'a>(
+            &self,
+            i: &native::Installation,
+            p: &native::Prepared,
+            s: &dyn native::Signer,
+            e: Option<native::Evaluator<'_>>,
+            now: u64,
+            retain: Box<dyn FnOnce(&native::Prepared) -> Result<()> + 'a>,
+        ) -> Result<native::Prepared> {
+            unimplemented!()
+        }
+        fn revalidate(
+            &self,
+            i: &native::Installation,
+            p: &native::Prepared,
+            now: u64,
+        ) -> Result<native::Prepared> {
+            unimplemented!()
+        }
+        fn sign(
+            &self,
+            i: &native::Installation,
+            p: &native::Prepared,
+            s: &dyn native::Signer,
+            now: u64,
+        ) -> Result<native::Signature> {
+            unimplemented!()
+        }
+        fn authorize(
+            &self,
+            i: &native::Installation,
+            p: &native::Prepared,
+            s: &[native::Signature],
+            now: u64,
+        ) -> Result<native::Signed> {
+            unimplemented!()
+        }
+        fn validate_signed(&self, p: &native::Signed, now: u64) -> Result<()> {
+            Ok(())
+        }
+        fn broadcast(&self, p: &native::Signed, now: u64) -> Result<native::Status> {
+            let mut chain = self.0.lock().unwrap();
+            chain.sends += 1;
+            if chain.live_at_send == Some(chain.sends) {
+                chain.live = true;
+            }
+            Ok(if chain.answers.is_empty() {
+                Status::Submitted
+            } else {
+                chain.answers.remove(0)
+            })
+        }
+        fn status(&self, p: &native::Signed) -> Result<native::Status> {
+            let mut chain = self.0.lock().unwrap();
+            if chain.pending_lookups > 0 {
+                chain.pending_lookups -= 1;
+                return Ok(Status::Submitted);
+            }
+            Ok(chain.outcome.clone().unwrap_or(Status::Submitted))
+        }
+        fn observe(&self, p: &native::Signed) -> Result<Option<native::Receipt>> {
+            let chain = self.0.lock().unwrap();
+            chain
+                .outcome
+                .clone()
+                .map(|status| {
+                    native::Packet::new(NETWORK, &serde_json::json!({ "status": status }), &PACKETS)
+                        .map(native::Receipt)
+                })
+                .transpose()
+        }
+        fn observe_authorizations(
+            &self,
+            p: &[native::Prepared],
+        ) -> Result<Vec<native::ObservedAuthorization>> {
+            unimplemented!()
+        }
+        fn prepare_owner(
+            &self,
+            i: &native::Installation,
+            a: native::OwnerAction,
+            fee: u64,
+            now: u64,
+        ) -> Result<native::OwnerPacket> {
+            unimplemented!()
+        }
+        fn prepare_code_within(
+            &self,
+            i: &native::Installation,
+            wasm: Option<&[u8]>,
+            max_fee: u64,
+            now: u64,
+        ) -> Result<Option<native::Signed>> {
+            let chain = self.0.lock().unwrap();
+            if chain.live {
+                return Ok(None);
+            }
+            Ok(Some(native::Signed(native::Packet::new(
+                NETWORK,
+                &serde_json::json!({"code": 1}),
+                &PACKETS,
+            )?)))
+        }
+        fn code_needed(&self, p: &native::Signed) -> Result<bool> {
+            Ok(!self.0.lock().unwrap().live)
+        }
+        fn read_owner_signed(
+            &self,
+            p: &native::OwnerPacket,
+            signed_payload: &[u8],
+        ) -> Result<native::OwnerSigned> {
+            unimplemented!()
+        }
+        fn submit_owner<'a>(
+            &self,
+            p: &native::OwnerSigned,
+            retain: Box<dyn FnOnce(&native::OwnerSigned) -> Result<()> + 'a>,
+            poll: native::Poll,
+            now: u64,
+        ) -> Result<native::Receipt> {
+            unimplemented!()
+        }
+        fn observe_owner(&self, p: &native::OwnerSigned) -> Result<Option<native::Receipt>> {
+            unimplemented!()
+        }
+    }
+    fn installation() -> Installation {
+        Installation(native::Installation {
+            description: crate::profiles::Description {
+                network: NETWORK.into(),
+                wallet: String::new(),
+                agent: String::new(),
+                policy_id: String::new(),
+                owner: String::new(),
+                server: String::new(),
+                asset: String::new(),
+                asset_symbol: String::new(),
+                source: String::new(),
+                source_hash: String::new(),
+                module_digest: String::new(),
+                params: Default::default(),
+            },
+            config: RawValue::from_string("{}".into()).unwrap(),
+            export: None,
+            authority: None,
+        })
+    }
+    fn run(chain: Chain) -> (Result<Option<Receipt>>, Arc<Mutex<Chain>>, MemoryOperations) {
+        let chain = Arc::new(Mutex::new(chain));
+        let runtime = Runtime {
+            provider: Box::new(Rail(chain.clone())),
+        };
+        let mut store = MemoryOperations::default();
+        let poll = Poll {
+            attempts: 4,
+            interval: std::time::Duration::ZERO,
+        };
+        let result = runtime.make_code_live(&mut store, &installation(), None, 10_000, poll, 1);
+        (result, chain, store)
+    }
+    #[test]
+    fn live_code_needs_no_transaction() {
+        let (result, chain, store) = run(Chain {
+            live: true,
+            ..Chain::default()
+        });
+        assert!(result.unwrap().is_none());
+        assert_eq!(chain.lock().unwrap().sends, 0);
+        assert!(store.load([7; 32]).unwrap().is_none());
+    }
+    #[test]
+    fn a_confirmed_restoration_is_retained_and_returned() {
+        let (result, chain, store) = run(Chain {
+            pending_lookups: 1,
+            outcome: Some(Status::Confirmed),
+            ..Chain::default()
+        });
+        let receipt = result.unwrap().unwrap();
+        assert_eq!(receipt.info().unwrap().status, Status::Confirmed);
+        assert_eq!(chain.lock().unwrap().sends, 1);
+        assert_eq!(store.load([7; 32]).unwrap().unwrap().1, Status::Confirmed);
+    }
+    #[test]
+    fn a_send_that_was_not_accepted_goes_out_again_only_while_it_is_needed() {
+        // Another transaction makes the code live while the first send waits: the transaction
+        // is not sent again.
+        let (result, chain, _) = run(Chain {
+            answers: vec![Status::Prepared],
+            live_at_send: Some(1),
+            outcome: Some(Status::Confirmed),
+            ..Chain::default()
+        });
+        assert!(result.unwrap().is_none());
+        assert_eq!(chain.lock().unwrap().sends, 1);
+        // While it is needed, the same bytes go out again.
+        let (result, chain, store) = run(Chain {
+            answers: vec![Status::Prepared],
+            outcome: Some(Status::Confirmed),
+            ..Chain::default()
+        });
+        assert!(result.unwrap().is_some());
+        assert_eq!(chain.lock().unwrap().sends, 2);
+        assert_eq!(store.load([7; 32]).unwrap().unwrap().1, Status::Confirmed);
+    }
+    #[test]
+    fn a_transaction_that_the_ledger_failed_names_itself_and_its_fee() {
+        let (result, _, _) = run(Chain {
+            outcome: Some(Status::Failed),
+            ..Chain::default()
+        });
+        let failed = result.unwrap_err();
+        assert!(failed.message.contains("failed on the ledger"));
+        assert_eq!(
+            failed.detail("transactionHash"),
+            Some(hex(&[7; 32]).as_str())
+        );
+        assert_eq!(failed.detail("nativeUnits"), Some("250"));
+    }
+    #[test]
+    fn a_transaction_without_a_final_status_is_uncertain() {
+        let (result, chain, store) = run(Chain {
+            pending_lookups: 10,
+            outcome: Some(Status::Confirmed),
+            ..Chain::default()
+        });
+        let uncertain = result.unwrap_err();
+        assert!(
+            uncertain.message.contains("look it up again"),
+            "{}",
+            uncertain.message
+        );
+        assert_eq!(chain.lock().unwrap().sends, 1);
+        assert_eq!(store.load([7; 32]).unwrap().unwrap().1, Status::Submitted);
     }
 }
