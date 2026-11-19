@@ -817,3 +817,57 @@ test('the rail decides the shape of an approval signature: a longer signature of
   assert.deepEqual([result.done, signed.length, submitted.length], [true, 1, 2]);
   assert.equal(submitted[1].sourceApproval[0].signature.length, 96);
 });
+
+/**
+ * A Custom wallet runs code that the owner builds from the policy source. The workflow decides when that build is
+ * needed: when the service has none (`custom_build_missing`), and before the owner signs a Custom wallet's creation.
+ * It asks the host's `build` once, keeps the code hash, and signs only a creation that names that hash.
+ */
+function customService({held = false, named} = {}) {
+  const calls = [], state = {held, installed: false, prepared: 0};
+  const ask = async (path, body) => {
+    calls.push([path, body]);
+    if (path === 'native/deploy/prepare') {
+      if (!state.held) throw refusal('custom_build_missing', {policyId});
+      return state.installed ? {policyId, installed: true, installation: {wallet: 'CWALLET'}}
+        : {policyId, walletKind: 'custom', wallet: 'CWALLET', step: step('create_wallet', ++state.prepared),
+          deployment: {wasmHash: named ?? hash(9)}};
+    }
+    if (path === 'native/owner/submit') {
+      const reply = confirmed(body);
+      if (reply.action === 'create_wallet') state.installed = true;
+      return reply;
+    }
+    throw new Error(path);
+  };
+  return {ask, calls, state};
+}
+
+test('a Custom deployment waits for the owner build once and signs the creation of its code', async () => {
+  const signed = [], builds = [];
+  const svc = customService();
+  const build = async () => { builds.push(1); svc.state.held = true; return hash(9); };
+  const result = await installAndFund({ask: svc.ask, sign: signer(signed), journal: journalOf(), key, policyId, agent, amount, onStep() {}, build});
+  assert.equal(result.wallet, 'CWALLET');
+  assert.deepEqual(builds, [1]);
+  assert.deepEqual(signed, ['create_wallet']);
+  // A build that the service already holds is still the owner's: the creation is checked against it.
+  const held = customService({held: true}), again = [];
+  await installAndFund({ask: held.ask, sign: signer(again), journal: journalOf(), key, policyId, agent, amount, onStep() {}, build: async () => hash(9)});
+  assert.deepEqual(again, ['create_wallet']);
+});
+
+test('a Custom creation that names other code than the owner build is never signed', async () => {
+  const signed = [];
+  const svc = customService({held: true, named: hash(8)});
+  await assert.rejects(
+    installAndFund({ask: svc.ask, sign: signer(signed), journal: journalOf(), key, policyId, agent, amount, onStep() {}, build: async () => hash(9)}),
+    error => error instanceof OwnerFlowError && error.code === 'custom_code_hash_mismatch' && /Nothing was signed/.test(error.message));
+  assert.deepEqual(signed, []);
+  // Without a build hook the workflow cannot check the code: it signs nothing.
+  const missing = customService({held: true});
+  await assert.rejects(
+    installAndFund({ask: missing.ask, sign: signer(signed), journal: journalOf(), key, policyId, agent, amount, onStep() {}}),
+    error => error instanceof OwnerFlowError && error.code === 'custom_build_missing');
+  assert.deepEqual(signed, []);
+});

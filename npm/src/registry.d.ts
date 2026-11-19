@@ -160,6 +160,14 @@ export interface InstallAndFundInput {
    */
   reviewed?: {source: string; params: Record<string, ParamValue>; rules?: unknown; tier?: unknown};
   onStep: (text: string) => void;
+  /**
+   * Waits for the owner's build of a Custom wallet's code from the reviewed source and resolves with its code hash (64
+   * lowercase hex digits). The workflow decides when a build is needed: when the service holds none
+   * (`custom_build_missing`), and before the owner signs a Custom wallet's creation. It calls `build` once, and the owner
+   * signs only a creation that names that code hash; another one is refused with `custom_code_hash_mismatch` and
+   * nothing is signed. Without it a Custom deployment is refused with `custom_build_missing` before anything is signed.
+   */
+  build?: () => Promise<string>;
 }
 /** One typed param value: Core's `PolicyValue`, the JSON of a policy value. An integer is canonical decimal text. */
 export type {ParamValue};

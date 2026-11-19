@@ -25,6 +25,10 @@ export const REVISION_CHANGED = 'revision_changed';
 export const UPDATE_PARAMS = 'update_params';
 /** The service's refusal of a deployment whose keypair wallet needs its setup first. */
 export const WALLET_SETUP_REQUIRED = 'wallet_setup_required';
+/** The service holds no build of a Custom wallet's code, or the host gave the workflow no way to wait for one. */
+export const CUSTOM_BUILD_MISSING = 'custom_build_missing';
+/** A Custom wallet's creation names other code than the owner's build. */
+export const CUSTOM_CODE_HASH_MISMATCH = 'custom_code_hash_mismatch';
 /** Receipt labels of a keypair wallet's setup and of the owner's approval of its policy. */
 export const SET_UP_WALLET = 'set_up_wallet';
 export const APPROVE_POLICY = 'approve_policy';
@@ -381,7 +385,7 @@ async function ownerApproval(chain, {network, sign, onStep}, message, wallet, {t
 }
 const noApproval = () => new OwnerFlowError('This network signs no policy approval. Nothing was signed.', null, false);
 
-async function run(chain, {network, ask, sign, journal, key, policyId, agent, amount, reviewed, onStep, historyPauseMs = 1_500}) {
+async function run(chain, {network, ask, sign, journal, key, policyId, agent, amount, reviewed, onStep, build, historyPauseMs = 1_500}) {
   const fundedKey = `${key}:funded`;
   const identity = {policyId, agent, amount};
   const {receipts, settleSaved, signAndSubmit} = stepper(chain, {network, historyPauseMs, ask, sign, journal, key, policyId, onStep, identity,
@@ -432,6 +436,20 @@ async function run(chain, {network, ask, sign, journal, key, policyId, agent, am
     receipts.push({policyId, action: APPROVE_POLICY, status: 'confirmed', transactionHash: ''});
   };
 
+  // The code hash of the owner's build of a Custom wallet's code, once this run has it. The host's `build` waits for the
+  // build of the reviewed source and returns its code hash; the workflow asks it once.
+  let built = null;
+  const ownerBuild = async () => {
+    if (built !== null) return built;
+    if (typeof build !== 'function')
+      throw new OwnerFlowError('This Custom wallet runs code that you build from its policy. Build it, then deploy again. Nothing was signed.', CUSTOM_BUILD_MISSING, false);
+    const codeHash = await build();
+    if (typeof codeHash !== 'string' || !/^[0-9a-f]{64}$/.test(codeHash))
+      throw new OwnerFlowError('The build returned no code hash. Nothing was signed.', null, false);
+    built = codeHash;
+    return built;
+  };
+
   // A deployment takes at most the wallet creation, which funds it, and a lifetime renewal. The server uploads the code
   // itself.
   for (let i = 0; i < 4 && !wallet; i++) {
@@ -446,6 +464,13 @@ async function run(chain, {network, ask, sign, journal, key, policyId, agent, am
       if (code === WALLET_SETUP_REQUIRED && !keypairSetUp) {
         await setUpWallet(details);
         keypairSetUp = true;
+        i--;
+        continue;
+      }
+      // A Custom wallet's code is the owner's build: the service holds none yet. Once the build arrives, the deployment
+      // is prepared again.
+      if (code === CUSTOM_BUILD_MISSING && built === null) {
+        await ownerBuild();
         i--;
         continue;
       }
@@ -466,6 +491,12 @@ async function run(chain, {network, ask, sign, journal, key, policyId, agent, am
     if (wallet) break;
     const step = stepOf(reply.step);
     if (!step) throw new OwnerFlowError('The service did not prepare an owner step for this policy.', null, false);
+    // The owner signs a Custom wallet's creation only for the code of the owner's own build.
+    if (reply.walletKind === 'custom' && step.action === 'create_wallet') {
+      const codeHash = await ownerBuild();
+      if (!object(reply.deployment) || reply.deployment.wasmHash !== codeHash)
+        throw new OwnerFlowError('The wallet creation names other code than your build. Nothing was signed.', CUSTOM_CODE_HASH_MISMATCH, false);
+    }
     await signAndSubmit(step);
   }
   if (!wallet) throw new OwnerFlowError('The wallet installation could not be confirmed.', null, true);

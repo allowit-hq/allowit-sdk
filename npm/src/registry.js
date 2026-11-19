@@ -270,8 +270,9 @@ export function reviewParamLines(network, params) {
 
 /**
  * Install the reviewed policy wallet, then fund it. The host supplies its transport, the signing of one owner step and a
- * journal. The SDK settles a saved signed step before it signs another one; the rail of the network reads its records
- * and checks its signatures. An unknown network rejects.
+ * journal, and for a Custom wallet the wait for the owner's build (`input.build`). The SDK settles a saved signed step
+ * before it signs another one, and signs a Custom wallet's creation only for the code of the owner's build; the rail of
+ * the network reads its records and checks its signatures. An unknown network rejects.
  */
 export async function installAndFund(network, input) {
   const hit = hitOf(network);
