@@ -702,6 +702,105 @@ function approvals(message, answers) {
 const done = () => ({policyId, action: 'update_params', status: 'confirmed'});
 const change = {payment_limit: {Int: '5'}};
 
+/**
+ * A fake rail whose wallets hold one asset: the setup takes it, the signed bytes name it, the installation document
+ * states it and an approval holds only in it. A wallet without an asset holds the asset of the network itself.
+ */
+function assetRail() {
+  const {world, chain} = keypairRail();
+  world.assets = new Map();
+  world.preparedAssets = [];
+  const base = chain.keypairSetup, own = {symbol: 'NET', issuer: null};
+  const keypairSetup = {
+    ...base,
+    prepare: async input => {
+      world.preparedAssets.push(input.asset);
+      const prepared = await base.prepare(input);
+      world.assets.set(prepared.wallet, input.asset?.issuer ? input.asset : own);
+      return prepared;
+    },
+    read: (signedPayload, net) => {
+      const read = base.read(signedPayload, net);
+      return read ? {...read, asset: world.assets.get(read.wallet) ?? own} : null;
+    },
+    configuration: (net, wallet, owner, forAgent, server, asset) => ({...base.configuration(net, wallet, owner, forAgent, server), asset: asset?.issuer ? asset : own}),
+  };
+  const sameAsset = (stated, asset) => (asset?.issuer ? asset.symbol === stated?.symbol && asset.issuer === stated?.issuer : stated?.issuer === null);
+  const approval = {...chain.approval, holds: (fields, wallet, policy) => chain.approval.holds(fields, wallet, policy) && sameAsset(fields.asset, policy.asset)};
+  return {world, chain: {...chain, keypairSetup, approval}};
+}
+const TKN = {symbol: 'TKN', issuer: 'ISSUER'}, NET = {symbol: 'NET', issuer: null};
+
+test('a keypair wallet holds the asset of the reviewed policy: the setup, the installation document and the approval name it', async () => {
+  const {world, chain} = assetRail(), signed = [], journal = journalOf();
+  const service = keypairService();
+  const ask = async (path, body) => path === 'native/approval' && service.state.wallet && !service.state.approved
+    ? (service.calls.push([path, body]), {required: true, message: approvalMessage({wallet: service.state.wallet, asset: TKN})}) : service.ask(path, body);
+  const input = {ask, sign: ownerSigns(signed), journal, key: 'flow', policyId, agent, amount, reviewed: {...reviewed(), asset: TKN}, onStep() {}};
+  const result = await installAndFund(input, chain);
+  assert.deepEqual(signed, ['set_up_wallet', 'approve_policy']);
+  // The rail's setup hook got the asset, and the server registers the document of that asset.
+  assert.deepEqual(world.preparedAssets, [TKN]);
+  const registered = service.calls.find(([path]) => path === 'native/register')[1];
+  assert.deepEqual(registered, {configuration: {wallet: result.wallet, owner: OWNER, agent, server: SERVER, asset: TKN}, policyId});
+  assert.equal(service.state.approved, true);
+});
+
+test('an approval in another asset than the reviewed policy\'s is not signed', async () => {
+  for (const [stated, policyAsset] of [[NET, TKN], [TKN, undefined], [TKN, null], [TKN, NET], [{symbol: 'TKN', issuer: 'OTHER'}, TKN]]) {
+    const {chain} = assetRail(), signed = [];
+    const service = keypairService();
+    const ask = async (path, body) => path === 'native/approval' ? {required: true, message: approvalMessage({wallet: service.state.wallet, asset: stated})} : service.ask(path, body);
+    const policy = policyAsset === undefined ? reviewed() : {...reviewed(), asset: policyAsset};
+    await assert.rejects(installAndFund({ask, sign: ownerSigns(signed), journal: journalOf(), key: 'flow', policyId, agent, amount, reviewed: policy, onStep() {}}, chain),
+      /differs from the policy that you reviewed/, JSON.stringify([stated, policyAsset]));
+    // The setup is signed for the asset of the reviewed policy; no approval is.
+    assert.deepEqual(signed, ['set_up_wallet']);
+  }
+  // Without an asset in the reviewed policy the wallet holds the network's own asset, and so does the approval.
+  const {world, chain} = assetRail(), signed = [];
+  const service = keypairService();
+  const ask = async (path, body) => path === 'native/approval' ? {required: !service.state.approved, message: approvalMessage({wallet: service.state.wallet, asset: NET})} : service.ask(path, body);
+  await installAndFund({ask, sign: ownerSigns(signed), journal: journalOf(), key: 'flow', policyId, agent, amount, reviewed: reviewed(), onStep() {}}, chain);
+  assert.deepEqual([signed, world.preparedAssets], [['set_up_wallet', 'approve_policy'], [null]]);
+});
+
+test('a saved signed setup of another asset is kept and refused: a resume never registers a wallet of the wrong asset', async () => {
+  // The registration fails once, so the signed setup of a TKN wallet stays in the journal.
+  const {world, chain} = assetRail(), signed = [], journal = journalOf();
+  const service = keypairService({registerFails: 1});
+  const input = asset => ({ask: service.ask, sign: ownerSigns(signed), journal, key: 'flow', policyId, agent, amount, reviewed: asset === undefined ? reviewed() : {...reviewed(), asset}, onStep() {}});
+  await assert.rejects(installAndFund(input(TKN), chain));
+  const saved = journal.get('flow:wallet-setup');
+  assert.ok(saved);
+  // A resume that reviews the same policy in another asset, or in none, signs nothing and keeps the saved setup.
+  for (const other of [undefined, null, NET, {symbol: 'TKN', issuer: 'OTHER'}, {symbol: 'OTH', issuer: 'ISSUER'}]) {
+    await assert.rejects(installAndFund(input(other), chain), error => error instanceof OwnerFlowError && /another asset is saved/.test(error.message) && error.retry === false, JSON.stringify(other));
+    assert.equal(journal.get('flow:wallet-setup'), saved);
+  }
+  assert.deepEqual([signed, world.created.length, service.state.wallet], [['set_up_wallet'], 1, null]);
+  // The resume with the asset of the setup registers that wallet and signs no second setup.
+  const ask = async (path, body) => path === 'native/approval' ? {required: !service.state.approved, message: approvalMessage({wallet: service.state.wallet, asset: TKN})} : service.ask(path, body);
+  const result = await installAndFund({...input(TKN), ask}, chain);
+  assert.deepEqual([signed, world.created, result.wallet], [['set_up_wallet', 'approve_policy'], [service.state.wallet], service.state.wallet]);
+});
+
+test('a keypair change approves only in the asset of the installed policy that the owner reviewed', async () => {
+  const {world, chain} = assetRail(), signed = [];
+  world.owners.set('WALLET-1', OWNER);
+  const attempt = (stated, asset, n) => updateParams({ask: approvals(approvalMessage({revision: 3, asset: stated}), [done]).ask, sign: ownerSigns(signed), journal: journalOf(),
+    key: `change-${n}`, policyId, params: change, installed: asset === undefined ? installed('WALLET-1') : {...installed('WALLET-1'), asset}, onStep() {}}, chain);
+  // The approval names another asset than the installed policy's: nothing is signed.
+  let n = 0;
+  for (const [stated, policyAsset] of [[NET, TKN], [TKN, undefined], [TKN, null], [TKN, NET], [{symbol: 'TKN', issuer: 'OTHER'}, TKN]])
+    await assert.rejects(attempt(stated, policyAsset, ++n), OwnerFlowError, JSON.stringify([stated, policyAsset]));
+  assert.deepEqual(signed, []);
+  const result = await attempt(TKN, TKN, ++n);
+  assert.deepEqual([result.done, signed], [true, ['approve_policy']]);
+  // An installed policy that states no asset approves in the network's own asset, as before.
+  assert.equal((await attempt(NET, undefined, ++n)).done, true);
+});
+
 test('a value change of a keypair wallet is one approval signature and no transaction', async () => {
   const {world, chain} = keypairRail({owners: new Map([['WALLET-1', OWNER]])}), signed = [], journal = journalOf();
   const message = approvalMessage({revision: 3});

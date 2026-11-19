@@ -1,4 +1,4 @@
-import type {OwnerChain, OwnerStep as CoreOwnerStep, PolicyValue as ParamValue} from '@allowit/core';
+import type {OwnerChain, OwnerStep as CoreOwnerStep, PolicyValue as ParamValue, WalletAsset} from '@allowit/core';
 import type {
   WalletKindId,
   WalletKindInfo,
