@@ -484,42 +484,43 @@ impl Runtime {
     pub fn usage(&self, p: &Prepared) -> Result<Option<Usage>> {
         self.provider.usage(&native::Prepared(p.0.clone()))
     }
-    /// Make the wallet code of an installation live from the server's sending accounts, which
-    /// pay for it: the upload of `wasm`, or without it the restoration of the installation's
-    /// lapsed code, with the network fee bounded by `max_fee` in the rail's native units. `None`
-    /// when nothing is needed. The rail prepares the transaction and signs it with a sending
-    /// account (`prepare_code_within`).
+    /// Upload the wallet code `wasm` for an installation from the server's sending accounts,
+    /// which pay for it, with the network fee bounded by `max_fee` in the rail's native units.
+    /// `None` when the code is live. The rail prepares the transaction and signs it with a
+    /// sending account (`prepare_code_within`), and this sends it as a code transaction. Nothing
+    /// restores code that lapsed.
     ///
-    /// A new preparation is a new transaction: its sending account, sequence and bounds give it
-    /// another hash, and so another operation ID, than an earlier one. This call therefore finds
-    /// no transaction of an earlier call that may still apply. The caller keeps the journal of
-    /// its code transactions beyond the call, and makes no call for the same code while that
+    /// A new preparation is a new transaction: its sending account, sequence and time bound give
+    /// it another hash, and so another operation ID, than an earlier one. This call therefore
+    /// finds no transaction of an earlier call that may still apply. The caller keeps the journal
+    /// of its code transactions beyond the call, and makes no call for the same code while that
     /// journal holds one of them as pending: it looks that one up with `observe` instead, until
-    /// it resolves or `code_lapsed` proves that it lapsed.
+    /// it resolves. A send can apply only within the transaction's time bound
+    /// (`Signed::info().expires_at`).
     ///
     /// The journal `store` decides. Its packet is the transaction: when it holds one under the
-    /// same operation ID, this follows that original and its status, not the new preparation. `submit` retains the transaction before every send, so a
-    /// transaction is pending once the journal holds it past `Prepared` (`Submitted` or
-    /// `SubmissionUnknown`): the network may still include it. A send that the network did not
-    /// accept (`Prepared`) goes out again, the first one included, only while the rail says
-    /// that it is still needed (`code_needed`), since another transaction can make the code live
-    /// meanwhile; after the last attempt's refused send, live code needs nothing. A send that
-    /// failed is pending when the journal holds it as pending, and also when the journal cannot
-    /// be read: it is looked up, never sent again. Each attempt within `poll` after a send reads
-    /// the receipt, which gives the final status and the fee in one lookup. An error within the
-    /// poll moves on to the next attempt.
+    /// same operation ID, this follows that original and its status, not the new preparation.
+    /// `submit` retains the transaction before every send, so a transaction is pending once the
+    /// journal holds it past `Prepared` (`Submitted` or `SubmissionUnknown`): the network may
+    /// still include it. A send that the network did not accept (`Prepared`) goes out again, the
+    /// first one included, only while the rail says that it is still needed (`code_needed`),
+    /// since another transaction can do its work meanwhile; after the last attempt's refused
+    /// send, a transaction that is no longer needed needs nothing. A send that failed is pending
+    /// when the journal holds it as pending, and also when the journal cannot be read: it is
+    /// looked up, never sent again. Each attempt within `poll` after a send reads the receipt,
+    /// which gives the final status and the fee in one lookup. An error within the poll moves on
+    /// to the next attempt.
     ///
     /// The receipt is that of a confirmed transaction. One that the ledger included and failed
     /// is an error whose details name its `transactionHash` and the fee that its source paid,
     /// `nativeUnits`. Without a receipt, an error names the transaction's own `transactionHash`
     /// when the journal holds it as pending; a caller that keeps the journal looks it up again
-    /// with `observe`, and drops it without a receipt only when `code_lapsed` proves that it
-    /// lapsed.
+    /// with `observe`.
     pub fn make_code_live(
         &self,
         store: &mut dyn OperationStore,
         i: &Installation,
-        wasm: Option<&[u8]>,
+        wasm: &[u8],
         max_fee: u64,
         poll: Poll,
         now: u64,
@@ -530,7 +531,36 @@ impl Runtime {
         else {
             return Ok(None);
         };
-        let prepared = Signed(prepared.0);
+        self.send_code(store, Signed(prepared.0), poll, now)
+    }
+    /// Renew the live wallet code `code` that the server uploaded and that wallets share, such as
+    /// the code of a fixed tier, from the server's sending accounts, which pay for it, with the
+    /// network fee bounded by `max_fee`, once the rail says that it is due
+    /// (`prepare_code_renewal`). `None` before. The renewal is a code transaction that takes the
+    /// path of `make_code_live`, with its journal. Code that lapsed is not renewed: nothing
+    /// restores it.
+    pub fn renew_code(
+        &self,
+        store: &mut dyn OperationStore,
+        code: &[u8; 32],
+        max_fee: u64,
+        poll: Poll,
+        now: u64,
+    ) -> Result<Option<Receipt>> {
+        let Some(prepared) = self.provider.prepare_code_renewal(code, max_fee, now)? else {
+            return Ok(None);
+        };
+        self.send_code(store, Signed(prepared.0), poll, now)
+    }
+    /// Send the code transaction `prepared` through the journal `store` and follow it to its
+    /// receipt within `poll`. See [`Self::make_code_live`].
+    fn send_code(
+        &self,
+        store: &mut dyn OperationStore,
+        prepared: Signed,
+        poll: Poll,
+        now: u64,
+    ) -> Result<Option<Receipt>> {
         let id = prepared.info()?.operation_id;
         let (signed, mut status) = match store.load(id)? {
             Some((original, status)) => (original, status),
@@ -604,11 +634,6 @@ impl Runtime {
                 )
             })),
         }
-    }
-    /// Whether the code transaction `p` lapsed: it never applied and can no longer apply.
-    /// `false` means not proven.
-    pub fn code_lapsed(&self, p: &Signed) -> Result<bool> {
-        self.provider.code_lapsed(&native::Signed(p.0.clone()))
     }
     pub fn prepare_owner(
         &self,
@@ -735,6 +760,8 @@ mod code_transactions {
         lookups: usize,
         /// Each preparation signs new bytes of the same transaction.
         preparations: usize,
+        /// The renewals that the rail prepared.
+        renewals: usize,
         /// The packets that the lookups asked about.
         observed: Vec<Vec<u8>>,
         /// The ledger's final status of the transaction, once it has one.
@@ -798,6 +825,21 @@ mod code_transactions {
         }
     }
     struct Rail(Arc<Mutex<Chain>>);
+    impl Rail {
+        /// A code transaction, signed: new bytes for each preparation. Live code needs none.
+        fn prepare(&self) -> Result<Option<native::Signed>> {
+            let mut chain = self.0.lock().unwrap();
+            if chain.live {
+                return Ok(None);
+            }
+            chain.preparations += 1;
+            Ok(Some(native::Signed(native::Packet::new(
+                NETWORK,
+                &serde_json::json!({ "code": chain.preparations }),
+                &PACKETS,
+            )?)))
+        }
+    }
     #[allow(unused_variables)]
     impl allowit_core::vendor::RuntimeProvider for Rail {
         fn discover_snapshot(
@@ -987,20 +1029,20 @@ mod code_transactions {
         fn prepare_code_within(
             &self,
             i: &native::Installation,
-            wasm: Option<&[u8]>,
+            wasm: &[u8],
             max_fee: u64,
             now: u64,
         ) -> Result<Option<native::Signed>> {
-            let mut chain = self.0.lock().unwrap();
-            if chain.live {
-                return Ok(None);
-            }
-            chain.preparations += 1;
-            Ok(Some(native::Signed(native::Packet::new(
-                NETWORK,
-                &serde_json::json!({ "code": chain.preparations }),
-                &PACKETS,
-            )?)))
+            self.prepare()
+        }
+        fn prepare_code_renewal(
+            &self,
+            code: &[u8; 32],
+            max_fee: u64,
+            now: u64,
+        ) -> Result<Option<native::Signed>> {
+            self.0.lock().unwrap().renewals += 1;
+            self.prepare()
         }
         fn code_needed(&self, p: &native::Signed) -> Result<bool> {
             let mut chain = self.0.lock().unwrap();
@@ -1105,7 +1147,7 @@ mod code_transactions {
             attempts,
             interval: std::time::Duration::ZERO,
         };
-        runtime.make_code_live(store, &installation(), None, 10_000, poll, 1)
+        runtime.make_code_live(store, &installation(), b"wasm", 10_000, poll, 1)
     }
     fn run(chain: Chain) -> (Result<Option<Receipt>>, Arc<Mutex<Chain>>, MemoryOperations) {
         let chain = Arc::new(Mutex::new(chain));
@@ -1120,6 +1162,47 @@ mod code_transactions {
     fn status(store: &dyn OperationStore) -> Option<Status> {
         store.load([7; 32]).unwrap().map(|(_, status)| status)
     }
+    /// A renewal of shared code takes the path of an upload: the rail prepares it once it is due,
+    /// and it is sent through the journal and followed to its receipt.
+    #[test]
+    fn a_due_renewal_is_sent_and_followed_to_its_receipt() {
+        let chain = Arc::new(Mutex::new(Chain {
+            pending_lookups: 1,
+            outcome: Some(Status::Confirmed),
+            ..Chain::default()
+        }));
+        let runtime = Runtime {
+            provider: Box::new(Rail(chain.clone())),
+        };
+        let poll = Poll {
+            attempts: 4,
+            interval: std::time::Duration::ZERO,
+        };
+        let mut store = MemoryOperations::default();
+        let receipt = runtime
+            .renew_code(&mut store, &[3; 32], 10_000, poll, 1)
+            .unwrap()
+            .unwrap();
+        assert_eq!(receipt.info().unwrap().status, Status::Confirmed);
+        {
+            let chain = chain.lock().unwrap();
+            assert_eq!((chain.renewals, chain.sends), (1, 1));
+        }
+        assert_eq!(status(&store), Some(Status::Confirmed));
+        // Not due: nothing is prepared or sent.
+        chain.lock().unwrap().live = true;
+        let poll = Poll {
+            attempts: 4,
+            interval: std::time::Duration::ZERO,
+        };
+        assert!(
+            runtime
+                .renew_code(&mut store, &[3; 32], 10_000, poll, 1)
+                .unwrap()
+                .is_none()
+        );
+        assert_eq!(chain.lock().unwrap().sends, 1);
+    }
     #[test]
     fn live_code_needs_no_transaction() {
         let (result, chain, store) = run(Chain {
@@ -1132,7 +1215,7 @@ mod code_transactions {
         assert!(!store.pending());
     }
     #[test]
-    fn a_confirmed_restoration_is_retained_and_returned() {
+    fn a_confirmed_upload_is_retained_and_returned() {
         let (result, chain, store) = run(Chain {
             pending_lookups: 1,
             outcome: Some(Status::Confirmed),
