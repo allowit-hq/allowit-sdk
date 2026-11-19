@@ -108,7 +108,7 @@ test('a wallet installed without funding is funded after its installation', asyn
 
 /** A saved step past its time bound, and the service's expiry reply for it. */
 function expiredStep(action) {
-  const lost = {step: savedStep(action, 9), signedPayload: `signed-${action}-9`};
+  const lost = {step: savedStep(action, 9), signedPayload: `signed-${action}-9`, policyId, agent, amount};
   const refuse = () => { throw refusal('owner_transaction_expired', {policyId, action, transactionHash: hash(9)}); };
   return {lost, refuse};
 }
@@ -122,7 +122,8 @@ test('a lost send that expired and never applied is archived, and the owner sign
   const result = await installAndFund({ask, sign: signer(signed), journal, key, policyId, agent, amount, onStep() {}}, chain);
   assert.deepEqual(signed, ['create_wallet']);
   assert.deepEqual(result.receipts.map(r => r.transactionHash), [hash(1)]);
-  assert.deepEqual(JSON.parse(journal.get(ownerArchiveKey(key, hash(9)))), lost);
+  // The archive keeps the step and its signed bytes.
+  assert.deepEqual(JSON.parse(journal.get(ownerArchiveKey(key, hash(9)))), {step: lost.step, signedPayload: lost.signedPayload});
   assert.equal(journal.get(key), null);
   // The rail reads the record of exactly the saved signed bytes.
   assert.deepEqual(asked, [[hash(9), lost.signedPayload]]);
@@ -175,7 +176,7 @@ test('one workflow runs per journal key, so a second call never signs', async ()
 });
 
 test('a saved step that already settled is done without a second signature', async () => {
-  const saved = {step: savedStep('fund', 5), signedPayload: 'signed-fund-5'};
+  const saved = {step: savedStep('fund', 5), signedPayload: 'signed-fund-5', policyId, agent, amount};
   const signed = [], journal = journalOf({[key]: JSON.stringify(saved)});
   const {ask, state} = service({submit: () => { throw refusal('owner_transaction_settled', {policyId, action: 'fund', transactionHash: hash(5), ledger: 7}); }});
   state.installed = true;
@@ -186,7 +187,7 @@ test('a saved step that already settled is done without a second signature', asy
 });
 
 test('pending, unavailable, foreign and untyped replies keep the saved step and sign nothing', async () => {
-  const saved = {step: savedStep('fund', 5), signedPayload: 'signed-fund-5'};
+  const saved = {step: savedStep('fund', 5), signedPayload: 'signed-fund-5', policyId, agent, amount};
   const cases = [
     [refusal('owner_transaction_pending', {policyId, action: 'fund', transactionHash: hash(5)}), 'owner_transaction_pending', true],
     [refusal('network_unavailable', {retry: 'same_request_id'}, 503), 'network_unavailable', true],
@@ -241,12 +242,25 @@ test('a resume with another amount, agent or policy is refused before anything i
     assert.deepEqual([signed, calls], [[], []]);
     assert.deepEqual(journal.map, before);
   }
-  // A step and a marker saved without inputs predate them; the same inputs resume them.
-  const journal = journalOf({[key]: JSON.stringify({step: savedStep('fund', 5), signedPayload: 'signed-fund-5'}), [`${key}:funded`]: 'confirmed'});
-  const {ask, state} = service({submit: confirmed});
+});
+
+test('a saved step that names no inputs is not a match: nothing is sent, signed or reported done', async () => {
+  const legacy = JSON.stringify({step: savedStep('fund', 5), signedPayload: 'signed-fund-5'});
+  const journal = journalOf({[key]: legacy}), signed = [];
+  const {ask, calls, state} = service({submit: confirmed});
   state.installed = true;
-  const result = await installAndFund({ask, sign: signer([]), journal, key, policyId, agent, amount, onStep() {}});
-  assert.deepEqual(result.receipts.map(r => r.action), ['fund']);
+  await assert.rejects(installAndFund({ask, sign: signer(signed), journal, key, policyId, agent, amount, onStep() {}}),
+    error => error instanceof OwnerFlowError && /original wallet setup/.test(error.message));
+  assert.deepEqual([signed, calls, journal.get(key)], [[], [], legacy]);
+});
+
+test('a funded marker that names no inputs is not a match: the run reports no funding that it cannot show', async () => {
+  const journal = journalOf({[`${key}:funded`]: 'confirmed'}), signed = [];
+  const {ask, calls, state} = service({submit: confirmed});
+  state.installed = true;
+  await assert.rejects(installAndFund({ask, sign: signer(signed), journal, key, policyId, agent, amount, onStep() {}}),
+    error => error instanceof OwnerFlowError && /original wallet setup/.test(error.message));
+  assert.deepEqual([signed, calls, journal.get(`${key}:funded`)], [[], [], 'confirmed']);
 });
 
 test('a failed transaction is replaced only when the network holds that exact failure', async () => {
@@ -433,10 +447,11 @@ function keypairRail({owners} = {}) {
     },
     configuration: (net, wallet, owner, forAgent, server) => ({wallet, owner, agent: forAgent, server}),
     // This rail sets up wallets of the network's own asset only.
-    checkAsset: (signedPayload, net, asset) => {
+    // A funding step that the fake service prepares is `unsigned-fund-<n>`, in the network's own asset too.
+    checkAsset: (payload, net, asset) => {
       world.checked = (world.checked ?? 0) + 1;
-      if (!keypair.read(signedPayload, net) || (asset !== undefined && asset !== null))
-        throw Object.assign(new Error('The signed wallet setup is for another asset.'), {code: 'asset_mismatch'});
+      if (!(keypair.read(payload, net) || payload.startsWith('unsigned-fund-')) || (asset !== undefined && asset !== null))
+        throw Object.assign(new Error('The wallet transaction moves another asset.'), {code: 'asset_mismatch'});
     },
   };
   const canonical = value => JSON.stringify(value, (_, v) => v && typeof v === 'object' && !Array.isArray(v) ? Object.fromEntries(Object.entries(v).sort()) : v);
@@ -731,8 +746,11 @@ function assetRail() {
       return read ? {...read, asset: world.assets.get(read.wallet) ?? own, amount: signedPayload.split('|')[5]} : null;
     },
     configuration: (net, wallet, owner, forAgent, server, asset) => ({...base.configuration(net, wallet, owner, forAgent, server), asset: asset?.issuer ? asset : own}),
+    // A funding step names its asset after the step: `unsigned-fund-<n>|<symbol>|<issuer>`, or none for `own`.
     checkAsset: (signedPayload, net, asset) => {
-      const read = base.read(signedPayload, net), held = read ? world.assets.get(read.wallet) ?? own : null, expected = asset?.issuer ? asset : own;
+      const read = base.read(signedPayload, net), [head, symbol, issuer] = signedPayload.split('|');
+      const funding = head.startsWith('unsigned-fund-') ? (symbol ? {symbol, issuer} : own) : null;
+      const held = read ? world.assets.get(read.wallet) ?? own : funding, expected = asset?.issuer ? asset : own;
       if (!held || held.symbol !== expected.symbol || held.issuer !== expected.issuer)
         throw Object.assign(new Error('The signed wallet setup is for another asset than the reviewed policy.'), {code: 'asset_mismatch'});
     },
@@ -1022,4 +1040,51 @@ test('a saved approval of a change is refused before it is sent when the install
   // The same change in the same asset sends the saved approval and signs nothing new.
   assert.equal((await updateParams(input(TKN), chain)).done, true);
   assert.deepEqual(signed, ['approve_policy']);
+});
+
+test('the funding step of an installed keypair wallet is checked by the rail before the owner signs it', async () => {
+  for (const [payloadAsset, refusedStep] of [['|NET|', true], ['', true], ['|TKN|OTHER', true], ['|TKN|ISSUER', false]]) {
+    const {chain} = assetRail(), signed = [], calls = [];
+    const ask = async (path, body) => {
+      calls.push([path, body]);
+      if (path === 'native/deploy/prepare') return {policyId, installed: true, approved: true, walletKind: 'native', wallet: 'WALLET-9', installation: {wallet: 'WALLET-9'}};
+      if (path === 'native/owner/prepare') return {policyId, step: {...step('fund', 4), payload: `unsigned-fund-4${payloadAsset}`}};
+      if (path === 'native/owner/submit') return confirmed({payload: 'x-fund-4'});
+      throw new Error(path);
+    };
+    const input = {ask, sign: ownerSigns(signed), journal: journalOf(), key: 'existing', policyId, agent, amount, reviewed: {...reviewed(), asset: TKN}, onStep() {}};
+    if (refusedStep) {
+      await assert.rejects(installAndFund(input, chain), error => error instanceof OwnerFlowError && error.code === 'asset_mismatch', payloadAsset);
+      assert.deepEqual([signed, calls.filter(([path]) => path === 'native/owner/submit')], [[], []], payloadAsset);
+    } else {
+      await installAndFund(input, chain);
+      assert.deepEqual(signed, ['fund']);
+    }
+  }
+});
+
+test('the asset is copied at the call: a host that changes it while the workflow waits for the lock changes nothing', async () => {
+  // Web Locks that grant the lock one task later, as a browser can.
+  const before = Object.getOwnPropertyDescriptor(globalThis, 'navigator');
+  Object.defineProperty(globalThis, 'navigator', {configurable: true, value: {locks: {request: (name, options, callback) => new Promise(resolve => setTimeout(() => resolve(callback({name})), 0))}}});
+  try {
+    const {world, chain} = assetRail(), signed = [];
+    const service = keypairService();
+    const ask = async (path, body) => path === 'native/approval' ? {required: !service.state.approved, message: approvalMessage({wallet: service.state.wallet, asset: TKN})} : service.ask(path, body);
+    const asset = {...TKN};
+    const running = installAndFund({ask, sign: ownerSigns(signed), journal: journalOf(), key: 'flow', policyId, agent, amount, reviewed: {...reviewed(), asset}, onStep() {}}, chain);
+    asset.issuer = 'OTHER';
+    await running;
+    const registered = service.calls.find(([path]) => path === 'native/register')[1];
+    assert.deepEqual([world.preparedAssets, registered.configuration.asset], [[TKN], TKN]);
+    // The same for a change: the approval holds in the asset of the call.
+    world.owners.set('WALLET-1', OWNER);
+    const installedAsset = {...TKN};
+    const changing = updateParams({ask: approvals(approvalMessage({revision: 3, asset: TKN}), [done]).ask, sign: ownerSigns(signed), journal: journalOf(), key: 'change',
+      policyId, params: change, installed: {...installed('WALLET-1'), asset: installedAsset}, onStep() {}}, chain);
+    installedAsset.issuer = 'OTHER';
+    assert.equal((await changing).done, true);
+  } finally {
+    if (before) Object.defineProperty(globalThis, 'navigator', before); else delete globalThis.navigator;
+  }
 });

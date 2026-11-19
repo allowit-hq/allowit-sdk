@@ -110,10 +110,10 @@ const FIELDS = ['policyId', 'agent', 'amount', 'asset', 'update'];
 const changed = identity => new OwnerFlowError('update' in identity
   ? 'The saved signed step belongs to another change. It stays saved; resume that change first.'
   : 'Use the agent key, amount and asset of the original wallet setup. The saved signed step stays saved.', null, false);
-/** True when a saved value names these inputs. A value saved without inputs predates them and names none. */
+/** True when a saved value names exactly these inputs. */
 function sameInputs(value, identity) {
   const named = FIELDS.filter(field => value[field] !== undefined);
-  return named.length === 0 || named.length === Object.keys(identity).length && named.every(field => value[field] === identity[field]);
+  return named.length === Object.keys(identity).length && named.every(field => value[field] === identity[field]);
 }
 
 /**
@@ -124,18 +124,19 @@ function sameInputs(value, identity) {
 const carried = asset => asset === undefined || asset === null ? null : structuredClone(asset);
 
 /**
- * Asks the rail whether signed setup bytes set up `asset`, the carried asset of the reviewed policy: the rail reads
- * and compares the asset. Its refusal keeps the setup saved and reaches the host with the rail's typed code. A rail
- * without the check cannot confirm a saved setup, which then stays saved.
+ * Asks the rail whether a keypair wallet's bytes move `asset`, the carried asset of the reviewed policy: signed setup
+ * bytes, or the funding step that the service prepared. The rail reads and compares the asset. Its refusal reaches the
+ * host with the rail's typed code; a saved setup stays saved and nothing is signed. A rail without the check cannot
+ * confirm either.
  */
-async function checkSetupAsset(setup, signedPayload, network, asset) {
-  if (typeof setup.checkAsset !== 'function')
-    throw new OwnerFlowError('This network cannot check the asset of a saved wallet setup. It stays saved; nothing was signed.', ASSET_MISMATCH, false);
+async function checkAsset(setup, payload, network, asset) {
+  if (typeof setup?.checkAsset !== 'function')
+    throw new OwnerFlowError('This network cannot check the asset of the wallet\'s transaction. Nothing was signed; a saved setup stays saved.', ASSET_MISMATCH, false);
   try {
-    await setup.checkAsset(signedPayload, network, asset);
+    await setup.checkAsset(payload, network, asset);
   } catch (cause) {
     const code = object(cause) && typeof cause.code === 'string' ? cause.code : ASSET_MISMATCH;
-    throw new OwnerFlowError(cause instanceof Error && cause.message ? cause.message : 'The saved wallet setup is for another asset than this policy. It stays saved.', code, false, cause);
+    throw new OwnerFlowError(cause instanceof Error && cause.message ? cause.message : 'The wallet\'s transaction moves another asset than this policy. Nothing was signed.', code, false, cause);
   }
 }
 
@@ -173,7 +174,7 @@ async function retainedSetup(chain, raw, network, wallet, identity, asset) {
   if (!object(value) || !setup || setup.wallet !== wallet || value.agent !== identity.agent || setup.agent !== identity.agent
     || value.amount !== identity.amount || !sameAmount(setup, identity.amount))
     throw changed(identity);
-  await checkSetupAsset(chain.keypairSetup, value.signedPayload, network, asset);
+  await checkAsset(chain.keypairSetup, value.signedPayload, network, asset);
   return true;
 }
 
@@ -215,7 +216,7 @@ async function setUpKeypairWallet(setup, chain, {network, owner, agent, server, 
     if (!sameAmount(signed, amount))
       throw new OwnerFlowError('A signed wallet setup with another agent key or amount is saved. It stays saved; use the agent key and amount of that setup.', null, false);
     // The rail checks that the signed bytes set up the asset of the reviewed policy; a setup of another asset is kept.
-    await checkSetupAsset(setup, saved.signedPayload, network, asset);
+    await checkAsset(setup, saved.signedPayload, network, asset);
     const record = await chain.transaction(network, saved.hash).catch(() => null);
     if (object(record)) {
       // Only the record of this exact transaction settles it: successful, or failed in a ledger.
@@ -294,7 +295,6 @@ function saved(journal, key, identity) {
 function funded(journal, fundedKey, identity) {
   const raw = journal.get(fundedKey);
   if (raw === null) return false;
-  if (raw === 'confirmed') return true;
   let value;
   try {
     value = JSON.parse(raw);
@@ -333,12 +333,14 @@ async function exclusive(key, work) {
  *   and the owner signs a new step;
  * - `owner_transaction_pending` or `network_unavailable`: the step stays saved and the error has `retry` set.
  * Any other failure keeps the saved step, so no second signature exists while the first can still apply. A saved step
- * and the funded marker name the policy, agent key and amount. A resume with other inputs is refused. One workflow runs
+ * and the funded marker name the policy, agent key, amount and asset. A resume with other inputs is refused. One workflow runs
  * per journal key: a second call in this page or, where the browser has Web Locks, in another tab is refused before it
  * reads the journal. `chain` is the rail's `ownerChain`.
  */
 export function installAndFund(chain, input) {
-  return exclusive(input.key, () => run(chain, input));
+  // The asset is copied at the call, before the lock: a host that changes its object later changes nothing.
+  const asset = carried(input.reviewed?.asset);
+  return exclusive(input.key, () => run(chain, input, asset));
 }
 
 /** The parts of one workflow that send, settle and sign its owner steps. */
@@ -434,10 +436,9 @@ async function ownerApproval(chain, {network, sign, onStep}, message, wallet, {t
 }
 const noApproval = () => new OwnerFlowError('This network signs no policy approval. Nothing was signed.', null, false);
 
-async function run(chain, {network, ask, sign, journal, key, policyId, agent, amount, reviewed, onStep, historyPauseMs = 1_500}) {
+async function run(chain, {network, ask, sign, journal, key, policyId, agent, amount, reviewed, onStep, historyPauseMs = 1_500}, asset) {
   const fundedKey = `${key}:funded`;
   // The asset belongs to the inputs of the run: a saved step or funded marker of another asset is refused.
-  const asset = carried(reviewed?.asset);
   const identity = {policyId, agent, amount, ...(asset === null ? {} : {asset: canonical(asset)})};
   const {receipts, settleSaved, signAndSubmit} = stepper(chain, {network, historyPauseMs, ask, sign, journal, key, policyId, onStep, identity,
     // A confirmed funding is recorded before its signed bytes leave the journal. A contract wallet's creation funds it
@@ -450,6 +451,8 @@ async function run(chain, {network, ask, sign, journal, key, policyId, agent, am
   funded(journal, fundedKey, identity);
   await settleSaved();
   let wallet;
+  // True when the deployment names a keypair wallet: its funding step pays the reviewed asset, which the rail checks.
+  let keypairWallet = false;
   // True once this run set up the wallet account of a keypair policy: the deployment then names the wallet.
   let keypairSetUp = false;
   const walletSetupKey = `${key}:wallet-setup`;
@@ -509,6 +512,7 @@ async function run(chain, {network, ask, sign, journal, key, policyId, agent, am
     if (!object(reply) || reply.policyId !== policyId) throw new OwnerFlowError('The deployment reply names a different policy.', null, false);
     wallet = installedWallet(reply);
     if (wallet && reply.walletKind === 'native') {
+      keypairWallet = true;
       // A setup of this workflow created and funded the wallet account. A run that stopped after the registration and
       // before its reply kept the signed setup: when it names this wallet, agent and amount, the setup funded it, and
       // that funding is recorded before the setup leaves the journal. What remains is the owner's approval of the
@@ -530,6 +534,8 @@ async function run(chain, {network, ask, sign, journal, key, policyId, agent, am
     const funding = await ask('native/owner/prepare', {policyId, action: 'fund', amount});
     const step = stepOf(funding?.step);
     if (!object(funding) || funding.policyId !== policyId || !step || step.action !== 'fund') throw new OwnerFlowError('The funding reply differs from this policy.', null, false);
+    // A keypair wallet is funded in the asset of the reviewed policy: the rail checks the step before the owner signs.
+    if (keypairWallet) await checkAsset(chain.keypairSetup, step.payload, network, asset);
     await signAndSubmit(step);
   }
   return {wallet, receipts};
@@ -553,10 +559,12 @@ function canonical(value) {
  * rail's `ownerChain`.
  */
 export function updateParams(chain, input) {
-  return exclusive(input.key, () => runUpdate(chain, input));
+  // The asset is copied at the call, before the lock: a host that changes its object later changes nothing.
+  const asset = carried(input.installed?.asset);
+  return exclusive(input.key, () => runUpdate(chain, input, asset));
 }
 
-async function runUpdate(chain, {network, ask, sign, journal, key, policyId, params, expectedRevision, installed, onStep, historyPauseMs = 1_500}) {
+async function runUpdate(chain, {network, ask, sign, journal, key, policyId, params, expectedRevision, installed, onStep, historyPauseMs = 1_500}, asset) {
   if (!object(params) || Object.keys(params).length === 0 || Object.keys(params).length > 32)
     throw new OwnerFlowError('Change one to 32 params.', PARAM_INVALID, false);
   if (expectedRevision !== undefined && !(Number.isSafeInteger(expectedRevision) && expectedRevision >= 0))
@@ -564,7 +572,6 @@ async function runUpdate(chain, {network, ask, sign, journal, key, policyId, par
   const updatedKey = `${key}:updated`;
   // The asset of the installed policy belongs to the change: a saved approval of another asset is refused before it
   // is sent.
-  const asset = carried(installed?.asset);
   const identity = {policyId, update: canonical({params, ...(expectedRevision === undefined ? {} : {expectedRevision}), ...(asset === null ? {} : {asset})})};
   const {receipts, settleSaved, signAndSubmit} = stepper(chain, {network, historyPauseMs, ask, sign, journal, key, policyId, onStep, identity,
     // A confirmed update is recorded before its signed bytes leave the journal.
