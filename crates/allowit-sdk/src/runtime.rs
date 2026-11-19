@@ -674,6 +674,15 @@ impl Runtime {
                         }
                     }
                 };
+                if status == Status::Prepared && closed.get() {
+                    // The fence refused and the journal holds no send: nothing is awaited, and
+                    // the call ends with the refusal.
+                    return Err(last.unwrap_or_else(|| {
+                        crate::error::Error::config(
+                            "The caller's fence closed: the code transaction is not sent",
+                        )
+                    }));
+                }
                 if status == Status::Prepared {
                     // The network accepted no send. After the last one, live code needs nothing,
                     // unless another send of this transaction made it live.
@@ -1549,12 +1558,15 @@ mod code_transactions {
             interval: std::time::Duration::ZERO,
         };
         let mut store = MemoryOperations::default();
-        assert!(
-            runtime
-                .renew_code(&mut store, &[3; 32], 10_000, poll, 1, &fence)
-                .is_err()
-        );
-        assert_eq!(chain.lock().unwrap().sends, 0);
+        let refused = runtime
+            .renew_code(&mut store, &[3; 32], 10_000, poll, 1, &fence)
+            .unwrap_err();
+        assert!(refused.message.contains("fence"), "{}", refused.message);
+        let chain = chain.lock().unwrap();
+        assert_eq!(chain.sends, 0);
+        // Nothing was sent, so nothing is awaited: the call ends with the refusal, after one
+        // check of the code and no lookup, and holds its sending account no longer.
+        assert_eq!((chain.checks, chain.lookups), (1, 0));
     }
     /// Code that an earlier send of this transaction, which the journal holds, made live: the call
     /// follows that send to its receipt instead of answering that nothing was needed.
