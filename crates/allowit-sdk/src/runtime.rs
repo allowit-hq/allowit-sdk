@@ -3,9 +3,10 @@ pub mod owner;
 use crate::{config::ServerAuthority, error::Result};
 use allowit_core::vendor::runtime as native;
 pub use native::{
-    Accounting, Action, Debit, Evaluator, Expense, Lifetime, OwnerAction, OwnerInfo, PacketInfo,
-    ParamsUpdate, PolicyInstallation, Poll, Problem, ReceiptInfo, Resources, SendingAccounts,
-    Signature, Signer, Snapshot, Status, Terms, Tier, Transport, Usage, Validity,
+    Accounting, Action, Debit, Evaluator, Expense, ExpenseBound, FeeCeiling, Lifetime,
+    OperationOutcome, OwnerAction, OwnerInfo, PacketInfo, ParamsUpdate, PolicyInstallation, Poll,
+    Problem, ReceiptInfo, Resources, SendingAccounts, Settlement, Signature, Signer, Snapshot,
+    Status, Terms, Tier, Transport, Usage, Validity,
 };
 pub(crate) use native::{Kind, Packet};
 use serde::{Deserialize, Serialize};
@@ -489,6 +490,42 @@ impl Runtime {
     /// not proven.
     pub fn owner_lapsed(&self, hash: &[u8; 32], expires_at: u64, since: u64) -> Result<bool> {
         self.provider.owner_lapsed(hash, expires_at, since)
+    }
+    /// What the receipt `r` of the operation `p`, carried by the signed envelope `signed`,
+    /// changes, as the rail reads it ([`Settlement`]): the outcome, the usage, the operation's own
+    /// fee, the counted gas, the next nonce and the gas carry. `accounting` is the server's account of the wallet before
+    /// the receipt and `carry` its gas carry. The rail refuses a receipt that is not of `signed`'s
+    /// transaction, or, for a payment authorization that another party settles, of that party's
+    /// transaction, and a `signed` that does not carry `p`'s operation. A server applies the
+    /// operation's usage and nonce with [`crate::accounting::apply_settlement`], charges the fee
+    /// of a wallet that counts no gas itself as that function says, and stores the carry as
+    /// given, once for each operation and [`Settlement::transaction`].
+    pub fn settle_receipt(
+        &self,
+        p: &Prepared,
+        signed: &Signed,
+        r: &Receipt,
+        accounting: Option<&Accounting>,
+        carry: u128,
+    ) -> Result<Settlement> {
+        self.provider.settle_receipt(
+            &native::Prepared(p.0.clone()),
+            &native::Signed(signed.0.clone()),
+            &native::Receipt(r.0.clone()),
+            accounting,
+            carry,
+        )
+    }
+    /// The expense bound of `action` on the installation from the fee ceiling `ceiling`, as the
+    /// rail values it: the principal, a vault operation's worst-case conversion and the fee
+    /// ceiling.
+    pub fn expense(
+        &self,
+        i: &Installation,
+        action: &Action,
+        ceiling: &FeeCeiling,
+    ) -> Result<ExpenseBound> {
+        self.provider.expense(&i.0, action, ceiling)
     }
     /// What the operation adds to its wallet's figures when it executes, as the wallet counts
     /// it. `None` for a rail without such a count.
