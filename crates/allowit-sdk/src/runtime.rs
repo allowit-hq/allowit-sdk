@@ -492,8 +492,8 @@ impl Runtime {
         self.provider.owner_lapsed(hash, expires_at, since)
     }
     /// What the receipt `r` of the operation `p`, carried by the signed envelope `signed`,
-    /// changes, as the rail reads it ([`Settlement`]): the outcome, the usage, the counted gas,
-    /// the next nonce and the gas carry. `accounting` is the server's account of the wallet before
+    /// changes, as the rail reads it ([`Settlement`]): the outcome, the usage, the operation's own
+    /// fee, the counted gas, the next nonce and the gas carry. `accounting` is the server's account of the wallet before
     /// the receipt and `carry` its gas carry. The rail refuses a receipt that is not of `signed`'s
     /// transaction and a `signed` that does not carry `p`'s operation. A server applies the
     /// counters with [`crate::accounting::apply_settlement`] and stores the carry as given, once
