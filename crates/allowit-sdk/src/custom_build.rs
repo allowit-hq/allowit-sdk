@@ -47,6 +47,15 @@ pub fn build(network: &str, source: &str, work: &Path) -> Result<WalletCode> {
     hook.build(network, source, work)
 }
 
+/// Refuse a source that the Custom wallet of `network` cannot hold, without building it: the
+/// rail's own limits beyond Core's derivation, such as its storage of the state keys that the
+/// contract keeps. The rail's build refuses the same sources. A client calls it before it reports
+/// a source as fit for a Custom wallet.
+pub fn check(network: &str, source: &str) -> Result<()> {
+    let (network, hook) = hook(network)?;
+    hook.check(network, source)
+}
+
 /// The identity of wallet code as the network records it.
 pub fn code_hash(network: &str, code: &[u8]) -> Result<[u8; 32]> {
     let (network, hook) = hook(network)?;

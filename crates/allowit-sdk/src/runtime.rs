@@ -166,6 +166,11 @@ impl Receipt {
     pub fn info(&self) -> Result<ReceiptInfo> {
         self.0.provider().receipt_info(&self.0)
     }
+    /// When the receipt's operation settled, in Unix seconds, as its rail states it from the
+    /// network (Core's `PacketProvider::receipt_settled_at`); `None` when the rail states none.
+    pub fn settled_at(&self) -> Result<Option<u64>> {
+        self.0.provider().receipt_settled_at(&self.0)
+    }
 }
 /// Whether a journal status leaves a send pending: the journal holds the transaction past
 /// `Prepared`, and the network may still include it.

@@ -76,6 +76,9 @@ rail supplies only `ownerChain`, which implements Core's `OwnerChain` contract f
 steps of a keypair wallet's setup (build, read and send its transaction) and the check of the owner's approval
 signature. The SDK keeps each signed step and setup in the host's journal and replaces one only when the rail proves
 that it can never apply.
+`installAndFund` takes the wallet kind that the owner reviewed (`walletKind`). That kind, never the service's reply,
+decides whether the owner sets up a wallet account and whether a creation needs the owner's build, and a deployment
+reply that names another kind is refused before anything is signed.
 
 A host never prints a unit of its own. An asset without a known unit is an error in Rust and `null` in npm.
 `npm/src/wallet-kinds.js` is generated from Core by the test `npm_wallet_kinds_equal_the_core_description`;
@@ -143,7 +146,9 @@ network supplies the build and the code hash.
    that it computed; another hash is `custom_code_hash_mismatch`.
 
 `custom_build::owner_view(cx, policy_id)` reads the build ticket, the signed source hash and the build with the
-owner's session. `check_code_hash` compares two code hashes. `custom_build::supported(network)` is true when the
+owner's session. `custom_build::check(network, source)` refuses, without building, a source that the rail's Custom
+wallet cannot hold, as its build would: the rail's own limits beyond Core's derivation, such as its storage of the
+state keys that the contract keeps. `check_code_hash` compares two code hashes. `custom_build::supported(network)` is true when the
 rail implements the hook; a rail without it declares `Feature::CustomBuild` skipped. The refusal codes are in
 `custom_build::code`.
 
