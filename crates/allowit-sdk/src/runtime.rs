@@ -272,10 +272,6 @@ impl OwnerStepStore for MemoryOwnerSteps {
         Ok(())
     }
 }
-/// Whether `e` is the default refusal of a rail that does not implement the call.
-fn not_implemented(e: &crate::error::Error) -> bool {
-    e.code == 3 && !e.config && e.api_code.is_none() && e.status.is_none()
-}
 pub struct ObservedAuthorization {
     pub signed: Signed,
     pub receipt: Receipt,
@@ -879,8 +875,8 @@ impl Runtime {
     /// and `retain` keeps it before it leaves; it is sent once, again only while the network did
     /// not accept it yet, and looked up until its receipt. An uncertain send, and a step without a
     /// receipt after the last attempt, are errors that name its transaction: the caller looks it
-    /// up again before any replacement. A rail that does not check an owner step sends and polls
-    /// it itself.
+    /// up again before any replacement. A rail without Core's owner-step methods is refused by
+    /// their default.
     pub fn submit_owner(
         &self,
         p: &OwnerSigned,
@@ -890,17 +886,6 @@ impl Runtime {
     ) -> Result<Receipt> {
         let step = native::OwnerSigned(p.0.clone());
         match self.provider.validate_owner_signed(&step, now) {
-            Err(e) if not_implemented(&e) => {
-                return self
-                    .provider
-                    .submit_owner(
-                        &step,
-                        Box::new(|p| retain(&OwnerSigned(p.0.clone()))),
-                        poll,
-                        now,
-                    )
-                    .map(|p| Receipt(p.0));
-            }
             Err(e) if e.api_code.as_deref() == Some(OWNER_TRANSACTION_EXPIRED) => {
                 return self.observe_owner(p)?.ok_or_else(|| {
                     crate::error::Error::uncertain(
@@ -1132,9 +1117,6 @@ mod code_transactions {
         owner_held: bool,
         /// The typed refusal of the rail's check of the owner step.
         owner_refusal: Option<&'static str>,
-        /// The rail does not check an owner step: it sends and polls the step itself.
-        owner_unchecked: bool,
-        own_loops: usize,
     }
     struct Packets;
     static PACKETS: Packets = Packets;
@@ -1461,7 +1443,6 @@ mod code_transactions {
         ) -> Result<native::OwnerSigned> {
             unimplemented!()
         }
-        /// The rail's own loop, for a rail that does not check an owner step.
         fn submit_owner<'a>(
             &self,
             p: &native::OwnerSigned,
@@ -1469,9 +1450,7 @@ mod code_transactions {
             poll: native::Poll,
             now: u64,
         ) -> Result<native::Receipt> {
-            self.0.lock().unwrap().own_loops += 1;
-            retain(p)?;
-            Ok(owner_receipt())
+            unimplemented!()
         }
         fn observe_owner(&self, p: &native::OwnerSigned) -> Result<Option<native::Receipt>> {
             let mut chain = self.0.lock().unwrap();
@@ -1483,11 +1462,6 @@ mod code_transactions {
         }
         fn validate_owner_signed(&self, p: &native::OwnerSigned, now: u64) -> Result<()> {
             let chain = self.0.lock().unwrap();
-            if chain.owner_unchecked {
-                return Err(crate::error::Error::unsupported(
-                    "This rail does not check an owner step before it is sent",
-                ));
-            }
             if now >= chain.owner_expires_at {
                 return Err(crate::error::Error::coded(
                     OWNER_TRANSACTION_EXPIRED,
@@ -2331,21 +2305,6 @@ mod code_transactions {
             Some(native::CONTRACT_EXPIRED)
         );
         assert_eq!((retained, chain.lock().unwrap().owner_sends), (0, 0));
-    }
-    /// A rail that does not check an owner step sends and polls it itself.
-    #[test]
-    fn a_rail_without_the_owner_step_checks_runs_its_own_loop() {
-        let (runtime, chain, step) = owner_run(
-            Chain {
-                owner_unchecked: true,
-                ..Chain::default()
-            },
-            100,
-        );
-        let (receipt, retained) = submit(&runtime, &step, 10);
-        receipt.unwrap();
-        let chain = chain.lock().unwrap();
-        assert_eq!((retained, chain.own_loops, chain.owner_sends), (1, 1, 0));
     }
     /// The journal form: a step is retained before it leaves, looked up before it is sent again,
     /// sent again only while the network does not hold it and the rail still accepts it, and
