@@ -11,8 +11,8 @@ repository = "https://github.com/allowit-hq/allowit-sdk"
 # and the rail crates depend on Allowit core. Every crate in the build must name the same core
 # revision, so Cargo builds one copy of core and the plugin trait objects match.
 [workspace.dependencies]
-allowit-core = { git = "https://github.com/allowit-hq/allowit-core.git", rev = "15a7534be1aa47acb7b33b41315dc13d4f1f6aed", default-features = false }
-allowit-stellar = { git = "https://github.com/allowit-hq/allowit-contracts-stellar.git", rev = "37a847cb1924ff4f2b1b83bbed61f01acc1b96ff" }
+allowit-core = { git = "https://github.com/allowit-hq/allowit-core.git", rev = "140335c13770d548a0400f1c1f807915fc5cc1fd", default-features = false }
+allowit-stellar = { git = "https://github.com/allowit-hq/allowit-contracts-stellar.git", rev = "b9bd4ef1aff9a97972b94e2dde968c1e257ccf14" }
 
 # Every Allowit workspace uses this profile block, so a shared target directory
 # builds each shared crate once. Release builds keep overflow checks, which the
