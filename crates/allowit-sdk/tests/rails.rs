@@ -873,7 +873,9 @@ fn with_owner_context(network: &str, run: impl FnOnce(&owner::Context<'_>, &std:
 fn the_native_wallet_asset_is_refused_where_the_setup_refuses_before_the_sign_in() {
     testkit::each(Feature::OwnerSetup, |rail, _| {
         with_owner_context(rail.test_support().network, |cx, root| {
-            assert!(owner::native_wallet_asset(cx).is_err());
+            // The rail's own refusal, not Core's default refusal of a rail without the lookup.
+            let refused = owner::native_wallet_asset(cx).unwrap_err();
+            assert_ne!(refused.code, 3, "{}: {}", rail.id(), refused.message);
             assert!(!root.exists());
         });
     });
