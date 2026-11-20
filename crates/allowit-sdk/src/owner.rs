@@ -51,7 +51,7 @@ impl Context<'_> {
 }
 pub use allowit_core::vendor::owner::{
     Activate, Comparison, Counters, Deploy, EditParams, HostPlacement, NativePlacement,
-    PairedExport, Revise, Setup, StateReadback, UpdateParams, Verification,
+    NativeWalletAsset, PairedExport, Revise, Setup, StateReadback, UpdateParams, Verification,
 };
 pub use allowit_core::vendor::runtime::ParamsUpdate;
 pub fn deploy(cx: &Context<'_>, request: Deploy<'_>) -> Result<serde_json::Value> {
@@ -108,100 +108,15 @@ pub fn setup(cx: &Context<'_>, request: Setup<'_>) -> Result<serde_json::Value> 
         .owner()
         .setup(&cx.provider_context(&store), request)
 }
-/// The asset of a new Native wallet, as the server's template of its network states it.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct NativeWalletAsset {
-    /// The asset's code, such as `USDC`, or the network's own asset, such as `XLM`.
-    pub symbol: String,
-    /// The issuer of an issued asset; `None` for the network's own asset.
-    pub issuer: Option<String>,
-}
-/// The asset of a new Native wallet on the context's network, from the server's template. The
-/// owner signs in to read it and signs nothing else, so a host shows it before [`setup`] asks
-/// for the owner's signature. The setup reads the template again and checks the asset that it
-/// signs.
+/// The asset of a new Native wallet on the context's network, read by the network's rail as its
+/// [`setup`] reads it and refused where the setup would refuse it. The owner signs in to read it
+/// and signs nothing else, so a host shows it before [`setup`] asks for the owner's signature.
 pub fn native_wallet_asset(cx: &Context<'_>) -> Result<NativeWalletAsset> {
-    let network = routing::normalize(cx.network)?;
-    let reply = call(
-        cx,
-        &format!("/api/native/templates?network={network}"),
-        &serde_json::json!({}),
-    )?;
-    template_asset(&reply, network, cx.authority.public_key())
-}
-/// The asset of the one template of `network` in the server's `native/templates` reply, whose
-/// signer must be `server`, the configured server authority. The rail of the network resolves
-/// the template's symbol and issuer, and they must name the template's asset, as the setup
-/// requires.
-fn template_asset(
-    reply: &serde_json::Value,
-    network: &str,
-    server: &str,
-) -> Result<NativeWalletAsset> {
-    use serde_json::Value;
-    let invalid = || Error::uncertain("The server returned an invalid wallet template reply");
-    let other_signer = || {
-        Error::config(
-            "The server's signer on this network differs from the configured server authority",
-        )
-    };
-    if reply
-        .get("server")
-        .and_then(Value::as_str)
-        .ok_or_else(invalid)?
-        != server
-    {
-        return Err(other_signer());
-    }
-    let templates = reply
-        .get("templates")
-        .and_then(Value::as_array)
-        .ok_or_else(invalid)?;
-    let matching: Vec<&Value> = templates
-        .iter()
-        .filter(|template| {
-            template
-                .get("network")
-                .and_then(Value::as_str)
-                .and_then(|named| routing::normalize(named).ok())
-                == Some(network)
-        })
-        .collect();
-    let template = match matching.as_slice() {
-        [] => {
-            return Err(Error::config(
-                "The server offers no Native wallet on this network",
-            ));
-        }
-        [template] => *template,
-        _ => return Err(invalid()),
-    };
-    // A template that states its own signer states the same key.
-    match template.get("server") {
-        None | Some(Value::Null) => {}
-        Some(Value::String(signer)) if signer == server => {}
-        Some(Value::String(_)) => return Err(other_signer()),
-        Some(_) => return Err(invalid()),
-    }
-    let symbol = template
-        .get("assetSymbol")
-        .and_then(Value::as_str)
-        .filter(|symbol| !symbol.is_empty())
-        .ok_or_else(invalid)?;
-    let issuer = match template.get("assetIssuer") {
-        None | Some(Value::Null) => None,
-        Some(Value::String(issuer)) if !issuer.is_empty() => Some(issuer.clone()),
-        _ => return Err(invalid()),
-    };
-    let resolved = crate::input::asset::resolve(network, symbol, issuer.as_deref(), false)
-        .map_err(|_| invalid())?;
-    if template.get("asset").and_then(Value::as_str) != Some(resolved.address.as_str()) {
-        return Err(invalid());
-    }
-    Ok(NativeWalletAsset {
-        symbol: symbol.into(),
-        issuer,
-    })
+    cx.check()?;
+    let store = || owner_store(cx.root, cx.network);
+    for_network(cx.network)?
+        .owner()
+        .native_wallet_asset(&cx.provider_context(&store))
 }
 pub fn status(root: &Path, network: &str, rpc_url: &str, id: &str) -> Result<serde_json::Value> {
     let store = owner_store(root, network)?;
@@ -419,95 +334,5 @@ mod route_tests {
             assert!(check_route(path).is_err(), "{path}");
         }
         assert!(check_route(&format!("/api/{}", "a".repeat(600))).is_err());
-    }
-}
-#[cfg(test)]
-mod wallet_asset_tests {
-    use super::{NativeWalletAsset, template_asset};
-    use serde_json::{Value, json};
-
-    const SERVER: &str = "the-configured-server";
-
-    /// The template of `network` for `token`, by the rail's own resolution of its asset.
-    fn template(network: &str, code: &str, issuer: Option<&str>) -> Value {
-        let address = crate::input::asset::resolve(network, code, issuer, false)
-            .unwrap()
-            .address;
-        json!({ "network": network, "asset": address, "assetSymbol": code, "assetIssuer": issuer })
-    }
-    fn reply(templates: Value) -> Value {
-        json!({ "templates": templates, "server": SERVER })
-    }
-
-    #[test]
-    fn the_asset_is_the_one_that_the_networks_template_names() {
-        for rail in crate::routing::all() {
-            for token in crate::execution::tokens(rail.id).unwrap() {
-                let mut named = template(rail.id, token.code, token.issuer);
-                let expected = NativeWalletAsset {
-                    symbol: token.code.into(),
-                    issuer: token.issuer.map(str::to_owned),
-                };
-                assert_eq!(
-                    template_asset(&reply(json!([named.clone()])), rail.id, SERVER).unwrap(),
-                    expected,
-                    "{} {}",
-                    rail.id,
-                    token.code
-                );
-                // A template that states its own signer states the configured one.
-                named["server"] = json!(SERVER);
-                assert_eq!(
-                    template_asset(&reply(json!([named])), rail.id, SERVER).unwrap(),
-                    expected
-                );
-            }
-        }
-    }
-
-    #[test]
-    fn an_answer_that_names_no_single_asset_of_the_server_is_refused() {
-        for rail in crate::routing::all() {
-            let network = rail.id;
-            let tokens = crate::execution::tokens(network).unwrap();
-            let token = &tokens[0];
-            let named = template(network, token.code, token.issuer);
-            let edited = |field: &str, value: Value| {
-                let mut edited = named.clone();
-                edited[field] = value;
-                reply(json!([edited]))
-            };
-            let mut refused = vec![
-                // Two templates of the network, none, or another network's.
-                reply(json!([named.clone(), named.clone()])),
-                reply(json!([])),
-                edited("network", json!("unknown:network")),
-                // Another signer than the configured server authority, or none, at the top or
-                // on the template.
-                json!({ "templates": [named.clone()], "server": "another-server" }),
-                json!({ "templates": [named.clone()] }),
-                edited("server", json!("another-server")),
-                // No symbol, an issuer that is no text, an asset that the symbol and issuer do
-                // not name, or no asset.
-                edited("assetSymbol", Value::Null),
-                edited("assetIssuer", json!(7)),
-                edited("asset", json!("another-asset")),
-                edited("asset", Value::Null),
-                json!({ "server": SERVER }),
-            ];
-            // Another token's symbol and issuer name another asset than the template's.
-            if let Some(other) = tokens.iter().find(|other| other.code != token.code) {
-                let mut swapped = named.clone();
-                swapped["assetSymbol"] = json!(other.code);
-                swapped["assetIssuer"] = json!(other.issuer);
-                refused.push(reply(json!([swapped])));
-            }
-            for answer in refused {
-                assert!(
-                    template_asset(&answer, network, SERVER).is_err(),
-                    "{answer} {network}"
-                );
-            }
-        }
     }
 }
