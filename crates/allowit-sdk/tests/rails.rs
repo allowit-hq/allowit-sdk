@@ -867,6 +867,20 @@ fn with_owner_context(network: &str, run: impl FnOnce(&owner::Context<'_>, &std:
     run(&cx, &root);
 }
 
+/// The asset of a new Native wallet is the rail's lookup, which refuses what the rail's setup
+/// refuses before the owner signs in: here an owner whose key is the server authority's.
+#[test]
+fn the_native_wallet_asset_is_refused_where_the_setup_refuses_before_the_sign_in() {
+    testkit::each(Feature::OwnerSetup, |rail, _| {
+        with_owner_context(rail.test_support().network, |cx, root| {
+            // The rail's own refusal, not Core's default refusal of a rail without the lookup.
+            let refused = owner::native_wallet_asset(cx).unwrap_err();
+            assert_ne!(refused.code, 3, "{}: {}", rail.id(), refused.message);
+            assert!(!root.exists());
+        });
+    });
+}
+
 #[test]
 fn an_invalid_document_stops_a_params_update_before_the_store_opens() {
     testkit::each(Feature::UpdateParams, |rail, _| {

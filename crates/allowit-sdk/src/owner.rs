@@ -51,7 +51,7 @@ impl Context<'_> {
 }
 pub use allowit_core::vendor::owner::{
     Activate, Comparison, Counters, Deploy, EditParams, HostPlacement, NativePlacement,
-    PairedExport, Revise, Setup, StateReadback, UpdateParams, Verification,
+    NativeWalletAsset, PairedExport, Revise, Setup, StateReadback, UpdateParams, Verification,
 };
 pub use allowit_core::vendor::runtime::ParamsUpdate;
 pub fn deploy(cx: &Context<'_>, request: Deploy<'_>) -> Result<serde_json::Value> {
@@ -107,6 +107,16 @@ pub fn setup(cx: &Context<'_>, request: Setup<'_>) -> Result<serde_json::Value> 
     for_network(cx.network)?
         .owner()
         .setup(&cx.provider_context(&store), request)
+}
+/// The asset of a new Native wallet on the context's network, read by the network's rail as its
+/// [`setup`] reads it and refused where the setup would refuse it. The owner signs in to read it
+/// and signs nothing else, so a host shows it before [`setup`] asks for the owner's signature.
+pub fn native_wallet_asset(cx: &Context<'_>) -> Result<NativeWalletAsset> {
+    cx.check()?;
+    let store = || owner_store(cx.root, cx.network);
+    for_network(cx.network)?
+        .owner()
+        .native_wallet_asset(&cx.provider_context(&store))
 }
 pub fn status(root: &Path, network: &str, rpc_url: &str, id: &str) -> Result<serde_json::Value> {
     let store = owner_store(root, network)?;
