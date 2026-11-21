@@ -1080,6 +1080,7 @@ mod code_transactions {
         owner_held: bool,
         /// The lookups of the owner step's receipt fail with this error.
         owner_lookup_fails: Option<crate::error::Error>,
+        owner_failed_lookups: usize,
         /// The network rejects each send of the owner step.
         owner_rejected: bool,
         /// The owner step's receipt is of a failed transaction.
@@ -1430,8 +1431,9 @@ mod code_transactions {
         }
         fn observe_owner(&self, p: &native::OwnerSigned) -> Result<Option<native::Receipt>> {
             let mut chain = self.0.lock().unwrap();
-            if let Some(error) = &chain.owner_lookup_fails {
-                return Err(error.clone());
+            if let Some(error) = chain.owner_lookup_fails.clone() {
+                chain.owner_failed_lookups += 1;
+                return Err(error);
             }
             chain.owner_lookups += 1;
             let held = chain
@@ -2378,7 +2380,9 @@ mod code_transactions {
                     &failure.details
                 )
             );
-            assert_eq!(chain.lock().unwrap().owner_sends, sends);
+            // The first lookup that fails ends the call: no other lookup or send follows.
+            let seen = chain.lock().unwrap();
+            assert_eq!((seen.owner_sends, seen.owner_failed_lookups), (sends, 1));
         }
         assert_eq!(crate::error::Error::uncertain("").code, UNCERTAIN);
     }
