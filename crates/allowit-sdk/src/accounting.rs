@@ -212,13 +212,14 @@ mod tests {
             (8, 3, 10_300, 1_300, 100_300)
         );
         // A keypair wallet's fee stays the caller's step: an executed debit of 500 with a fee of
-        // 30 counts 500 here.
+        // 30 changes every figure as the same debit without a fee does.
         let fee = crate::runtime::Settlement {
             fee_units: 30,
             ..settlement(Executed, None, Some(5))
         };
         let charged = apply_settlement(&start, 3 * DAY, 500, &fee).unwrap();
         assert_eq!((charged.spent_total, charged.spent_daily), (500, 500));
+        assert_eq!(charged, keypair);
         // An executed unpriced operation marks the lifetime and the day.
         let unpriced = apply_settlement(
             &start,

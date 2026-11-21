@@ -944,6 +944,12 @@ mod code_transactions {
         preparation_time: std::time::Duration,
         /// The time that each send carried.
         sent_at: Vec<u64>,
+        /// What each settlement call carried: the prepared, signed and receipt packets, the
+        /// nonce of the accounting and the carry.
+        settled: Vec<(String, String, String, Option<u64>, u128)>,
+        /// What each expense call carried: the installation's wallet, the transfer's recipient
+        /// and units, and the ceiling.
+        expensed: Vec<(String, String, i128, FeeCeiling)>,
     }
     struct Packets;
     static PACKETS: Packets = Packets;
@@ -1282,6 +1288,13 @@ mod code_transactions {
             accounting: Option<&native::Accounting>,
             carry: u128,
         ) -> Result<Settlement> {
+            self.0.lock().unwrap().settled.push((
+                p.0.document().get().into(),
+                signed.0.document().get().into(),
+                r.0.document().get().into(),
+                accounting.map(|a| a.nonce),
+                carry,
+            ));
             Ok(Settlement {
                 transaction: vec![8; 32],
                 outcome: OperationOutcome::Executed,
@@ -1292,17 +1305,27 @@ mod code_transactions {
                 gas_carry: carry + 1,
             })
         }
-        /// The bound of any action: its ceiling's gas and fee, with a conversion of 5.
+        /// The bound of a transfer, as Core states it: no conversion, its amount plus the
+        /// ceiling's gas, and the ceiling's fee, height and day.
         fn expense(
             &self,
             i: &native::Installation,
             action: &Action,
             ceiling: &FeeCeiling,
         ) -> Result<ExpenseBound> {
+            let Action::Transfer { recipient, units } = action else {
+                unimplemented!()
+            };
+            self.0.lock().unwrap().expensed.push((
+                i.description.wallet.clone(),
+                recipient.clone(),
+                *units,
+                *ceiling,
+            ));
             Ok(ExpenseBound {
                 gas_units: ceiling.gas_units,
-                conversion_units: 5,
-                spent_units: 5 + ceiling.gas_units,
+                conversion_units: 0,
+                spent_units: units + ceiling.gas_units,
                 max_fee_units: ceiling.max_fee_units,
                 observed_height: ceiling.observed_height,
                 day: ceiling.day,
@@ -1950,11 +1973,13 @@ mod code_transactions {
         assert_eq!(status(&store), Some(Status::Submitted));
         assert!(store.pending());
     }
-    /// `settle_receipt` and `expense` pass the caller's inputs to the rail and its answers back.
+    /// `settle_receipt` and `expense` pass each of the caller's inputs to the rail, in its own
+    /// place, and the rail's whole answer back.
     #[test]
     fn the_settlement_and_expense_wrappers_pass_through_to_the_rail() {
+        let chain = Arc::new(Mutex::new(Chain::default()));
         let runtime = Runtime {
-            provider: Box::new(Rail(Arc::new(Mutex::new(Chain::default())))),
+            provider: Box::new(Rail(chain.clone())),
         };
         let packet = |document: serde_json::Value| {
             native::Packet::new(NETWORK, &document, &PACKETS).unwrap()
@@ -1973,8 +1998,26 @@ mod code_transactions {
             )
             .unwrap();
         assert_eq!(
-            (settled.next_nonce, settled.gas_carry, settled.fee_units),
-            (Some(5), 8, 250)
+            settled,
+            Settlement {
+                transaction: vec![8; 32],
+                outcome: OperationOutcome::Executed,
+                usage: None,
+                fee_units: 250,
+                counted_gas: None,
+                next_nonce: Some(5),
+                gas_carry: 8,
+            }
+        );
+        assert_eq!(
+            chain.lock().unwrap().settled,
+            [(
+                r#"{"prepared":1}"#.to_owned(),
+                r#"{"signed":1}"#.to_owned(),
+                r#"{"status":"confirmed"}"#.to_owned(),
+                Some(4),
+                7
+            )]
         );
         let ceiling = FeeCeiling {
             max_fee_units: 1_000,
@@ -1983,12 +2026,27 @@ mod code_transactions {
             day: 1,
         };
         let transfer = Action::Transfer {
-            recipient: String::new(),
+            recipient: "seller".into(),
             units: 1,
         };
-        let bound = runtime
-            .expense(&installation(), &transfer, &ceiling)
-            .unwrap();
-        assert_eq!((bound.spent_units, bound.max_fee_units), (35, 1_000));
+        let mut wallet = installation();
+        wallet.0.description.wallet = "wallet".into();
+        let bound = runtime.expense(&wallet, &transfer, &ceiling).unwrap();
+        // A transfer has no conversion: it spends its amount plus the priced gas.
+        assert_eq!(
+            bound,
+            ExpenseBound {
+                gas_units: 30,
+                conversion_units: 0,
+                spent_units: 31,
+                max_fee_units: 1_000,
+                observed_height: 9,
+                day: 1,
+            }
+        );
+        assert_eq!(
+            chain.lock().unwrap().expensed,
+            [("wallet".to_owned(), "seller".to_owned(), 1, ceiling)]
+        );
     }
 }
