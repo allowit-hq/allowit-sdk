@@ -247,12 +247,13 @@ pub trait OperationStore {
     fn load(&self, id: [u8; 32]) -> Result<Option<(Signed, Status)>>;
     fn record(&mut self, id: [u8; 32], signed: &Signed, status: Status) -> Result<()>;
 }
-/// The caller's clock at a check or a send of a call that began at `started` with the caller's
-/// `now`. `now` names a whole second that the caller read before the call, so the clock is
-/// taken as the end of that second plus the whole seconds that the call has taken: the caller's
-/// own clock, as it was when the call began, is never later, and no send leaves at or past a
-/// step's bound by it. The time between the caller's reading of `now` and the call is the
-/// caller's.
+/// The clock value of a check or a send in a call that began at `started` with the caller's
+/// `now`: the second after `now` plus the whole seconds since `started`. `now` names a whole
+/// second that the caller read before the call, so the value is not behind the caller's clock
+/// when it is computed, for a call that began within that second. It is the value that the rail's
+/// check receives, not the moment at which a request leaves: the time between the caller's
+/// reading of `now` and the call, and between a check and the departure of its send, is not
+/// counted. Core's cutoff is the caller's send rule and no proof of a lapse.
 fn later(now: u64, started: std::time::Instant) -> u64 {
     now.saturating_add(1)
         .saturating_add(started.elapsed().as_secs())
@@ -879,9 +880,10 @@ impl Runtime {
         poll: Poll,
         now: u64,
     ) -> Result<Receipt> {
-        let step = native::OwnerSigned(p.0.clone());
+        // The call's time counts from its first statement.
         let started = std::time::Instant::now();
         let clock = || later(now, started);
+        let step = native::OwnerSigned(p.0.clone());
         let id = hex(&p.info()?.identity);
         // A lookup that failed: the result is unknown, and the failure keeps its kind, its code
         // and its details.
@@ -943,13 +945,18 @@ impl Runtime {
     }
     /// Whether the caller may send the owner-signed step at `now`, by the rail's rules. A typed
     /// refusal: `OWNER_TRANSACTION_EXPIRED` at its send cutoff, for good, or `CONTRACT_EXPIRED`
-    /// for this attempt, while the wallet that the step funds is lapsed. An uncertain error when
-    /// a read failed.
+    /// for this attempt, from a rail that reads the wallet that the step funds and finds it
+    /// lapsed. An uncertain error when a read failed. `Ok` does not say that a funded wallet is
+    /// live: the Stellar rail checks the cutoff alone, because its signed step names no
+    /// installation. A caller that sends a funding of a contract wallet reads the wallet's
+    /// liveness itself before the send ([`Self::resources`]), as the server does.
     pub fn validate_owner_signed(&self, p: &OwnerSigned, now: u64) -> Result<()> {
         self.provider
             .validate_owner_signed(&native::OwnerSigned(p.0.clone()), now)
     }
-    /// Send the owner-signed step once, after the rail's checks; never a final status.
+    /// Send the owner-signed step once, after the rail's checks
+    /// ([`Self::validate_owner_signed`], with the same limit for a funded wallet); never a final
+    /// status.
     pub fn broadcast_owner(&self, p: &OwnerSigned, now: u64) -> Result<Status> {
         self.provider
             .broadcast_owner(&native::OwnerSigned(p.0.clone()), now)
@@ -2386,6 +2393,23 @@ mod code_transactions {
         }
         assert_eq!(crate::error::Error::uncertain("").code, UNCERTAIN);
     }
+    /// A step that the caller could not retain is not sent: the call ends with the caller's
+    /// error.
+    #[test]
+    fn a_step_that_is_not_retained_is_not_sent() {
+        let (runtime, chain, step) = owner_run(Chain::default(), 100);
+        let error = runtime
+            .submit_owner(
+                &step,
+                |_| Err(crate::error::Error::config("The store is full")),
+                OWNER_POLL,
+                10,
+            )
+            .unwrap_err();
+        assert_eq!(error.message, "The store is full");
+        let seen = chain.lock().unwrap();
+        assert_eq!((seen.owner_sends, seen.owner_lookups), (0, 0));
+    }
     /// A send that the network rejects is the rail's error: the step was retained, and nothing
     /// is sent or looked up after it.
     #[test]
@@ -2480,7 +2504,8 @@ mod code_transactions {
             (&seen.owner_sent_at[..], seen.owner_lookups),
             (&[11][..], 1)
         );
-        assert_eq!(seen.owner_checked_at.last(), Some(&12));
+        // The second check came a second or more after the first.
+        assert!(seen.owner_checked_at.last().is_some_and(|at| *at >= 12));
     }
     /// The owner-step wrappers pass each argument to the rail and its answer back.
     #[test]
