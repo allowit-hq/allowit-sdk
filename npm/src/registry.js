@@ -272,9 +272,9 @@ export function reviewAgentPrompt(link, origin, policyId, wallet, agent) {
   return railOf(link.proposal.network).review.agentPrompt(link, origin, policyId, wallet, agent);
 }
 
-/** Owner-readable lines for the params of a proposal. */
+/** Owner-readable lines for the params of a proposal on `network`, in the units of that network's assets. */
 export function reviewParamLines(network, params) {
-  return railOf(network).review.paramLines(params);
+  return railOf(network).review.paramLines(params, network);
 }
 
 /**
