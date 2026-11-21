@@ -245,6 +245,14 @@ for (const rail of sdk.rails()) {
     assert.throws(() => sdk.parseReviewLink(encode({proposal, workPrompt: 'w', extra: 1})), /invalid/);
     assert.match(sdk.reviewAgentPrompt(link, 'https://example.test', 'policy-1', 'wallet-1', fixtures.address), /^Do the work\./);
     assert.deepEqual(sdk.reviewParamLines(network, {}), []);
+    // Every network of the rail opens a review link, and its amounts count in that network's unit.
+    for (const each of rail.networks) {
+      const opened = sdk.parseReviewLink(encode({proposal: {...proposal, network: each.id}, workPrompt: 'w'}));
+      assert.equal(opened.proposal.network, each.id);
+      const native = rail.nativeAsset(each.id);
+      const [line] = sdk.reviewParamLines(each.id, {payment_limit: {Int: String(10 ** native.decimals)}});
+      assert.equal(line.value, `1 ${native.symbol}`);
+    }
 
     // Dispatch only: the SDK's workflow gets the host's transport and the rail's hooks, and a transport failure signs
     // nothing. The SDK tests the workflows with fake hooks; each rail tests its hooks in its repository.

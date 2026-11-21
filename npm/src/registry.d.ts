@@ -246,8 +246,9 @@ export interface RailPlugin {
     /** The URL fragment prefix of a Review and sign link. */
     fragment: string;
     parseLink(fragment: string): ReviewLink;
-    agentPrompt(link: Pick<ReviewLink, 'workPrompt'>, origin: string, policyId: string, wallet: string, agent: string): string;
-    paramLines(params: ReviewProposal['params']): ReviewParamLine[];
+    agentPrompt(link: Pick<ReviewLink, 'workPrompt' | 'proposal'>, origin: string, policyId: string, wallet: string, agent: string): string;
+    /** Owner-readable lines for the params of a proposal on `network`, in the units of that network's assets. */
+    paramLines(params: ReviewProposal['params'], network: string): ReviewParamLine[];
   };
   /**
    * What the SDK's owner workflows read from the network and check with its keys. The SDK holds the workflows, their
