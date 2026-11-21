@@ -247,6 +247,57 @@ pub trait OperationStore {
     fn load(&self, id: [u8; 32]) -> Result<Option<(Signed, Status)>>;
     fn record(&mut self, id: [u8; 32], signed: &Signed, status: Status) -> Result<()>;
 }
+/// What a journal holds of one owner-signed step.
+#[derive(Clone, Debug)]
+pub struct OwnerStepRecord {
+    pub step: OwnerSigned,
+    /// The wallet of the installation that the step acts on, or `None` for a step that leaves
+    /// before its wallet is installed, as a creation.
+    pub wallet: Option<String>,
+    /// `Prepared`: not sent, and nothing is pending. `SubmissionUnknown`: possibly sent.
+    /// `Submitted`: the network accepted it. `Confirmed` or `Failed`: its receipt.
+    pub status: Status,
+    /// The step reached its send cutoff ([`OwnerSignedInfo::expires_at`]) after it was possibly
+    /// sent: it is never sent again, whatever a later clock says, and only its receipt or its
+    /// lapse ends it.
+    pub closed: bool,
+}
+/// A journal of owner-signed steps by their identity ([`OwnerSigned::info`]): the owner steps'
+/// [`OperationStore`], with its one writer. A record binds a step's identity to its signed
+/// bytes and to its installation.
+pub trait OwnerStepStore {
+    fn load(&self, identity: &[u8]) -> Result<Option<OwnerStepRecord>>;
+    fn record(&mut self, identity: &[u8], record: &OwnerStepRecord) -> Result<()>;
+}
+/// A journal of owner steps held in memory, for a caller that keeps no durable one.
+#[derive(Default)]
+pub struct MemoryOwnerSteps(std::collections::BTreeMap<Vec<u8>, OwnerStepRecord>);
+impl OwnerStepStore for MemoryOwnerSteps {
+    fn load(&self, identity: &[u8]) -> Result<Option<OwnerStepRecord>> {
+        Ok(self.0.get(identity).cloned())
+    }
+    fn record(&mut self, identity: &[u8], record: &OwnerStepRecord) -> Result<()> {
+        if let Some(held) = self.0.get(identity) {
+            same_owner_step(held, &record.step, record.wallet.as_deref())?;
+        }
+        self.0.insert(identity.to_vec(), record.clone());
+        Ok(())
+    }
+}
+/// Refuse other signed bytes or another installation under the identity of the record `held`.
+fn same_owner_step(held: &OwnerStepRecord, step: &OwnerSigned, wallet: Option<&str>) -> Result<()> {
+    if held.step.bytes() != step.bytes() || held.step.network() != step.network() {
+        return Err(crate::error::Error::config(
+            "Owner step identity already binds different signed bytes",
+        ));
+    }
+    if held.wallet.as_deref() != wallet {
+        return Err(crate::error::Error::config(
+            "Owner step identity already binds another installation",
+        ));
+    }
+    Ok(())
+}
 /// The clock value of a check or a send in a call that began at `started` with the caller's
 /// `now`: the second after `now` plus the whole seconds since `started`. `now` names a whole
 /// second that the caller read before the call, so the value is not behind the caller's clock
@@ -860,7 +911,9 @@ impl Runtime {
             .map(|p| OwnerSigned(p.0))
     }
     /// Send the owner-signed step `p` and wait for its receipt, in `poll.attempts` attempts and
-    /// at least one. The rail checks the step ([`Self::validate_owner_signed`]) and `retain`
+    /// at least one. `on` is the installation that the step acts on, or `None` for a step that
+    /// leaves before its wallet is installed, as a creation; every check and every send carries
+    /// it. The rail checks the step ([`Self::validate_owner_signed`]) and `retain`
     /// keeps it before it leaves. It is sent once (`broadcast_owner`), again only while the
     /// network did not accept it yet, and then looked up until its receipt. A step at or past
     /// its time bound is never sent, before the call or during it: only its receipt answers, and
@@ -878,6 +931,7 @@ impl Runtime {
     pub fn submit_owner(
         &self,
         p: &OwnerSigned,
+        on: Option<&Installation>,
         retain: impl FnOnce(&OwnerSigned) -> Result<()>,
         poll: Poll,
         now: u64,
@@ -886,6 +940,7 @@ impl Runtime {
         let started = std::time::Instant::now();
         let clock = || later(now, started);
         let step = native::OwnerSigned(p.0.clone());
+        let on = on.map(|i| &i.0);
         let id = hex(&p.info()?.identity);
         // A lookup that failed: the result is unknown, and the failure keeps its kind, its code
         // and its details.
@@ -904,7 +959,7 @@ impl Runtime {
             )),
             Err(e) => Err(unknown(e)),
         };
-        match self.provider.validate_owner_signed(&step, clock()) {
+        match self.provider.validate_owner_signed(&step, on, clock()) {
             Err(e) if owner_step_expired(&e) => return past_bound(),
             Err(e) => return Err(e),
             Ok(()) => {}
@@ -916,7 +971,7 @@ impl Runtime {
                 std::thread::sleep(poll.interval);
             }
             if !accepted {
-                match self.provider.broadcast_owner(&step, clock()) {
+                match self.provider.broadcast_owner(&step, on, clock()) {
                     Ok(Status::Submitted) => accepted = true,
                     // Not accepted yet, and nothing is pending: the next attempt sends again.
                     Ok(Status::Prepared) => continue,
@@ -945,23 +1000,162 @@ impl Runtime {
             .observe_owner(&native::OwnerSigned(p.0.clone()))
             .map(|p| p.map(|p| Receipt(p.0)))
     }
-    /// Whether the caller may send the owner-signed step at `now`, by the rail's rules. A typed
+    /// Send the owner-signed step `p` at most once through the journal `store`, keyed by the
+    /// step's identity ([`OwnerSigned::info`]), by Core's rules for a caller
+    /// (`RuntimeProvider::broadcast_owner`), and answer its recorded status. `on` is the
+    /// installation that the step acts on, or `None` for a step that leaves before its wallet is
+    /// installed, as a creation: the journal binds the step to it, and every check and every
+    /// send carries it, so the rail reads the wallet's liveness before each send.
+    ///
+    /// A step that the journal holds as possibly sent is looked up first. Its receipt records
+    /// and returns its final status (the receipt itself is [`Self::observe_owner`]'s). A step
+    /// that the network accepted waits for its receipt and is not sent again, unless the rail
+    /// shows that nothing of it is pending (`Prepared` of `owner_status`). After an uncertain
+    /// send, the same bytes are sent again while the lookup stays inconclusive and the rail's
+    /// check passes. A lookup that fails is that error: nothing is sent, and the record stays.
+    ///
+    /// The cutoff ([`OwnerSignedInfo::expires_at`]) is final. A possibly sent step that
+    /// reaches it is closed in the journal before anything is looked up, and is never sent
+    /// again, also when a later call brings an earlier clock: only its receipt or its lapse
+    /// ([`Self::owner_step_lapsed`]) ends it. A step that was never sent returns the rail's
+    /// refusal, and the caller drops it.
+    ///
+    /// A step is recorded as possibly sent before it leaves. The answer of a send speaks for
+    /// that send only: a send that the rail refused or the network rejected is that error, and
+    /// it leaves a step that was never sent before as not sent, and an earlier uncertain send
+    /// as possibly sent. A refusal for this attempt (`CONTRACT_EXPIRED`) and a check that got no
+    /// answer are that error too and change nothing: a later call checks again. `now` is a whole
+    /// second that the caller read before the call: every check and send takes the second after
+    /// it plus the whole seconds that the call has taken. The answer is never final without a
+    /// receipt.
+    pub fn submit_owner_step(
+        &self,
+        store: &mut dyn OwnerStepStore,
+        p: &OwnerSigned,
+        on: Option<&Installation>,
+        now: u64,
+    ) -> Result<Status> {
+        // The call's time counts from its first statement.
+        let started = std::time::Instant::now();
+        let clock = || later(now, started);
+        let info = p.info()?;
+        let id = info.identity;
+        let step = native::OwnerSigned(p.0.clone());
+        let wallet = on.map(|i| i.0.description.wallet.as_str());
+        let on = on.map(|i| &i.0);
+        let mut record = match store.load(&id)? {
+            Some(held) => {
+                same_owner_step(&held, p, wallet)?;
+                held
+            }
+            None => OwnerStepRecord {
+                step: p.clone(),
+                wallet: wallet.map(str::to_owned),
+                status: Status::Prepared,
+                closed: false,
+            },
+        };
+        if matches!(record.status, Status::Confirmed | Status::Failed) {
+            return Ok(record.status);
+        }
+        if record.status != Status::Prepared {
+            // The cutoff is final for a possibly sent step: it closes before any lookup.
+            if !record.closed && clock() >= info.expires_at {
+                record.closed = true;
+                store.record(&id, &record)?;
+            }
+            if let Some(receipt) = self.observe_owner(p)? {
+                record.status = receipt.info()?.status;
+                store.record(&id, &record)?;
+                return Ok(record.status);
+            }
+            if record.closed {
+                return Ok(record.status);
+            }
+            match self.provider.owner_status(&step)? {
+                Status::Submitted => {
+                    if record.status != Status::Submitted {
+                        record.status = Status::Submitted;
+                        store.record(&id, &record)?;
+                    }
+                    return Ok(record.status);
+                }
+                // The rail's evidence that the network did not accept it and nothing is pending.
+                Status::Prepared => {
+                    record.status = Status::Prepared;
+                    store.record(&id, &record)?;
+                }
+                // An accepted step waits for its receipt.
+                _ if record.status == Status::Submitted => return Ok(record.status),
+                // Inconclusive after an uncertain send: the same bytes may be sent again.
+                _ => {}
+            }
+        }
+        let possibly_sent = record.status != Status::Prepared;
+        // The cutoff closes a possibly sent step; any other refusal of this attempt changes
+        // nothing.
+        let close = |e, record: &mut OwnerStepRecord, store: &mut dyn OwnerStepStore| {
+            if possibly_sent && owner_step_expired(&e) {
+                record.closed = true;
+                store.record(&id, record)?;
+                return Ok(record.status.clone());
+            }
+            Err(e)
+        };
+        if let Err(e) = self.provider.validate_owner_signed(&step, on, clock()) {
+            return close(e, &mut record, store);
+        }
+        if !possibly_sent {
+            record.status = Status::SubmissionUnknown;
+            store.record(&id, &record)?;
+        }
+        match self.provider.broadcast_owner(&step, on, clock()) {
+            Ok(Status::Submitted) => record.status = Status::Submitted,
+            Ok(Status::Prepared) if !possibly_sent => record.status = Status::Prepared,
+            // Uncertain, or not accepted after an earlier uncertain send: possibly sent.
+            Ok(_) => {}
+            // The rail refused this send or the network rejected it: nothing of it is pending.
+            Err(e) => {
+                if !possibly_sent {
+                    record.status = Status::Prepared;
+                    store.record(&id, &record)?;
+                }
+                return close(e, &mut record, store);
+            }
+        }
+        store.record(&id, &record)?;
+        Ok(record.status)
+    }
+    /// Whether the caller may send the owner-signed step at `now`, by the rail's rules. `on` is
+    /// the installation that the step acts on, or `None` for a step that leaves before its
+    /// wallet is installed, as a creation: the caller's record of the step binds it to its
+    /// installation, and the rail reads the liveness of that installation's wallet. A typed
     /// refusal: `OWNER_TRANSACTION_EXPIRED` at its send cutoff, for good, or `CONTRACT_EXPIRED`
-    /// for this attempt, from a rail that reads the wallet that the step funds and finds it
-    /// lapsed. An uncertain error when a read failed. `Ok` does not say that a funded wallet is
-    /// live: a rail whose signed step does not name its installation checks the cutoff alone.
-    /// Before it sends a funding of a contract wallet, the caller reads the wallet's liveness
-    /// itself ([`Self::resources`]), as the server does.
-    pub fn validate_owner_signed(&self, p: &OwnerSigned, now: u64) -> Result<()> {
-        self.provider
-            .validate_owner_signed(&native::OwnerSigned(p.0.clone()), now)
+    /// for this attempt, while the wallet of `on` is lapsed; the step that renews the wallet's
+    /// own lifetime is never refused for a lapse. An uncertain error when a read failed: it is
+    /// no lapse and no pass. Without an installation the rail checks the cutoff alone.
+    pub fn validate_owner_signed(
+        &self,
+        p: &OwnerSigned,
+        on: Option<&Installation>,
+        now: u64,
+    ) -> Result<()> {
+        self.provider.validate_owner_signed(
+            &native::OwnerSigned(p.0.clone()),
+            on.map(|i| &i.0),
+            now,
+        )
     }
     /// Send the owner-signed step once, after the rail's checks
-    /// ([`Self::validate_owner_signed`], with the same limit for a funded wallet); never a final
-    /// status.
-    pub fn broadcast_owner(&self, p: &OwnerSigned, now: u64) -> Result<Status> {
+    /// ([`Self::validate_owner_signed`], for the same `on`); never a final status.
+    pub fn broadcast_owner(
+        &self,
+        p: &OwnerSigned,
+        on: Option<&Installation>,
+        now: u64,
+    ) -> Result<Status> {
         self.provider
-            .broadcast_owner(&native::OwnerSigned(p.0.clone()), now)
+            .broadcast_owner(&native::OwnerSigned(p.0.clone()), on.map(|i| &i.0), now)
     }
     /// What the network holds of the owner-signed step now; never a final status.
     pub fn owner_status(&self, p: &OwnerSigned) -> Result<Status> {
@@ -1087,6 +1281,14 @@ mod code_transactions {
         owner_lookups: usize,
         /// The network holds the owner step pending.
         owner_held: bool,
+        /// The rail shows that the network did not accept the owner step and holds nothing.
+        owner_dropped: bool,
+        /// How long a lookup of the owner step's receipt takes.
+        owner_lookup_time: std::time::Duration,
+        /// The lookups of what the network holds of the owner step fail.
+        owner_status_fails: bool,
+        /// The rail's check of the owner step gets no answer.
+        owner_check_unanswered: bool,
         /// The lookups of the owner step's receipt fail with this error.
         owner_lookup_fails: Option<crate::error::Error>,
         owner_failed_lookups: usize,
@@ -1101,6 +1303,8 @@ mod code_transactions {
         /// The clock of each check and of each send of the owner step.
         owner_checked_at: Vec<u64>,
         owner_sent_at: Vec<u64>,
+        /// The wallet of the installation that each check of the owner step carried.
+        owner_checked_on: Vec<Option<String>>,
         /// What each lapse proof, closed-wallet read and close preparation carried.
         owner_lapse_since: Vec<u64>,
         owner_closed_wallets: Vec<String>,
@@ -1441,6 +1645,8 @@ mod code_transactions {
             unimplemented!()
         }
         fn observe_owner(&self, p: &native::OwnerSigned) -> Result<Option<native::Receipt>> {
+            let time = self.0.lock().unwrap().owner_lookup_time;
+            std::thread::sleep(time);
             let mut chain = self.0.lock().unwrap();
             if let Some(error) = chain.owner_lookup_fails.clone() {
                 chain.owner_failed_lookups += 1;
@@ -1452,15 +1658,26 @@ mod code_transactions {
                 .is_some_and(|n| chain.owner_lookups > n);
             Ok(held.then(|| owner_receipt(!chain.owner_receipt_failed)))
         }
-        fn validate_owner_signed(&self, p: &native::OwnerSigned, now: u64) -> Result<()> {
+        fn validate_owner_signed(
+            &self,
+            p: &native::OwnerSigned,
+            on: Option<&native::Installation>,
+            now: u64,
+        ) -> Result<()> {
             let mut chain = self.0.lock().unwrap();
             chain.owner_packets.push(p.0.document().get().into());
             chain.owner_checked_at.push(now);
+            chain
+                .owner_checked_on
+                .push(on.map(|i| i.description.wallet.clone()));
             if now >= chain.owner_expires_at {
                 return Err(crate::error::Error::coded(
                     OWNER_TRANSACTION_EXPIRED,
                     "The owner step passed its time bound",
                 ));
+            }
+            if chain.owner_check_unanswered {
+                return Err(crate::error::Error::uncertain("The check got no answer"));
             }
             match chain.owner_refusal {
                 Some(code) => Err(crate::error::Error::coded(
@@ -1470,8 +1687,13 @@ mod code_transactions {
                 None => Ok(()),
             }
         }
-        fn broadcast_owner(&self, p: &native::OwnerSigned, now: u64) -> Result<Status> {
-            self.validate_owner_signed(p, now)?;
+        fn broadcast_owner(
+            &self,
+            p: &native::OwnerSigned,
+            on: Option<&native::Installation>,
+            now: u64,
+        ) -> Result<Status> {
+            self.validate_owner_signed(p, on, now)?;
             let mut chain = self.0.lock().unwrap();
             chain.owner_packets.push(p.0.document().get().into());
             chain.owner_sends += 1;
@@ -1488,8 +1710,13 @@ mod code_transactions {
         fn owner_status(&self, p: &native::OwnerSigned) -> Result<Status> {
             let mut chain = self.0.lock().unwrap();
             chain.owner_packets.push(p.0.document().get().into());
+            if chain.owner_status_fails {
+                return Err(crate::error::Error::uncertain("The lookup got no answer"));
+            }
             Ok(if chain.owner_held {
                 Status::Submitted
+            } else if chain.owner_dropped {
+                Status::Prepared
             } else {
                 Status::SubmissionUnknown
             })
@@ -2259,6 +2486,7 @@ mod code_transactions {
         let retained = std::cell::Cell::new(0);
         let result = runtime.submit_owner(
             step,
+            None,
             |_| {
                 assert_eq!(chain.lock().unwrap().owner_sends, 0);
                 retained.set(retained.get() + 1);
@@ -2343,7 +2571,11 @@ mod code_transactions {
             attempts: 0,
             interval: std::time::Duration::ZERO,
         };
-        assert!(runtime.submit_owner(&step, |_| Ok(()), none, 10).is_err());
+        assert!(
+            runtime
+                .submit_owner(&step, None, |_| Ok(()), none, 10)
+                .is_err()
+        );
         let seen = chain.lock().unwrap();
         assert_eq!((seen.owner_sends, seen.owner_lookups), (1, 1));
     }
@@ -2424,6 +2656,7 @@ mod code_transactions {
         let error = runtime
             .submit_owner(
                 &step,
+                None,
                 |_| Err(crate::error::Error::config("The store is full")),
                 OWNER_POLL,
                 10,
@@ -2513,6 +2746,7 @@ mod code_transactions {
         let error = runtime
             .submit_owner(
                 &step,
+                None,
                 |_| Ok(()),
                 Poll {
                     attempts: 3,
@@ -2530,13 +2764,425 @@ mod code_transactions {
         // The second check came a second or more after the first.
         assert!(seen.owner_checked_at.last().is_some_and(|at| *at >= 12));
     }
+    /// The installation `wallet`.
+    fn installed(wallet: &str) -> Installation {
+        let mut installation = installation();
+        installation.0.description.wallet = wallet.into();
+        installation
+    }
+    /// Every check and every send of the polling form carries the step's installation, and a
+    /// refusal for this attempt is the rail's error: nothing is retained or sent.
+    #[test]
+    fn the_polling_form_carries_the_installation_at_every_check_and_send() {
+        let (runtime, chain, step) = owner_run(
+            Chain {
+                owner_answers: vec![Status::Prepared; 2],
+                owner_receipt_after: Some(0),
+                ..Chain::default()
+            },
+            100,
+        );
+        let wallet = installed("wallet");
+        runtime
+            .submit_owner(&step, Some(&wallet), |_| Ok(()), OWNER_POLL, 10)
+            .unwrap();
+        let seen = chain.lock().unwrap();
+        // The first check, and three sends with the check of each.
+        assert_eq!(seen.owner_sends, 3);
+        assert_eq!(seen.owner_checked_on, vec![Some("wallet".to_owned()); 4]);
+        drop(seen);
+        for unanswered in [false, true] {
+            let (runtime, chain, step) = owner_run(
+                Chain {
+                    owner_refusal: (!unanswered).then_some(native::CONTRACT_EXPIRED),
+                    owner_check_unanswered: unanswered,
+                    ..Chain::default()
+                },
+                100,
+            );
+            let retained = std::cell::Cell::new(false);
+            let error = runtime
+                .submit_owner(
+                    &step,
+                    Some(&wallet),
+                    |_| {
+                        retained.set(true);
+                        Ok(())
+                    },
+                    OWNER_POLL,
+                    10,
+                )
+                .unwrap_err();
+            if unanswered {
+                assert_eq!((error.code, error.api_code), (UNCERTAIN, None));
+            } else {
+                assert_eq!(error.api_code.as_deref(), Some(native::CONTRACT_EXPIRED));
+            }
+            let seen = chain.lock().unwrap();
+            assert_eq!(
+                (retained.get(), seen.owner_sends, seen.owner_lookups),
+                (false, 0, 0)
+            );
+        }
+    }
+    fn journaled(journal: &MemoryOwnerSteps) -> (Status, bool) {
+        let record = journal.load(&[9; 32]).unwrap().unwrap();
+        (record.status, record.closed)
+    }
+    /// The journal form: a step is recorded before it leaves and looked up before it is sent
+    /// again. After an uncertain send it is sent again while the lookup stays inconclusive. A
+    /// step that the network accepted waits for its receipt and is sent again only when the
+    /// rail shows that nothing of it is pending. Its receipt ends it.
+    #[test]
+    fn the_journal_form_looks_up_a_sent_step_before_it_sends_it_again() {
+        let (runtime, chain, step) = owner_run(
+            Chain {
+                owner_answers: vec![Status::SubmissionUnknown],
+                ..Chain::default()
+            },
+            100,
+        );
+        let mut journal = MemoryOwnerSteps::default();
+        let pass = |journal: &mut MemoryOwnerSteps, now| {
+            let status = runtime
+                .submit_owner_step(journal, &step, None, now)
+                .unwrap();
+            let seen = chain.lock().unwrap();
+            (status, seen.owner_sends, seen.owner_lookups)
+        };
+        assert_eq!(pass(&mut journal, 10), (Status::SubmissionUnknown, 1, 0));
+        assert_eq!(journaled(&journal), (Status::SubmissionUnknown, false));
+        // The lookup stays inconclusive, and the rail still accepts it: sent again.
+        assert_eq!(pass(&mut journal, 11), (Status::Submitted, 2, 1));
+        // The network accepted it: an inconclusive lookup sends nothing.
+        assert_eq!(pass(&mut journal, 12), (Status::Submitted, 2, 2));
+        // The network holds it pending: not sent again.
+        chain.lock().unwrap().owner_held = true;
+        assert_eq!(pass(&mut journal, 13), (Status::Submitted, 2, 3));
+        // The rail shows that nothing of it is pending: sent again.
+        chain.lock().unwrap().owner_held = false;
+        chain.lock().unwrap().owner_dropped = true;
+        assert_eq!(pass(&mut journal, 14), (Status::Submitted, 3, 4));
+        assert_eq!(chain.lock().unwrap().owner_sent_at, [11, 12, 15]);
+        // Its receipt ends it, and the journal keeps the final status with no other lookup.
+        chain.lock().unwrap().owner_receipt_after = Some(0);
+        assert_eq!(pass(&mut journal, 15), (Status::Confirmed, 3, 5));
+        assert_eq!(pass(&mut journal, 16), (Status::Confirmed, 3, 5));
+        // Other bytes under the same identity are refused.
+        let other = OwnerSigned(
+            native::Packet::new(
+                NETWORK,
+                &serde_json::json!({"expires": 100, "other": 1}),
+                &PACKETS,
+            )
+            .unwrap(),
+        );
+        assert!(
+            runtime
+                .submit_owner_step(&mut journal, &other, None, 17)
+                .is_err()
+        );
+    }
+    /// The journal binds a step to its installation: every check and every send carries it, and
+    /// a call for the same step with another installation, or with none, is refused before
+    /// anything is read or sent.
+    #[test]
+    fn the_journal_form_binds_a_step_to_its_installation() {
+        let (runtime, chain, step) = owner_run(
+            Chain {
+                owner_answers: vec![Status::SubmissionUnknown],
+                ..Chain::default()
+            },
+            100,
+        );
+        let (wallet, other) = (installed("wallet"), installed("other"));
+        let mut journal = MemoryOwnerSteps::default();
+        for now in [10, 11] {
+            runtime
+                .submit_owner_step(&mut journal, &step, Some(&wallet), now)
+                .unwrap();
+        }
+        let record = journal.load(&[9; 32]).unwrap().unwrap();
+        assert_eq!(record.wallet.as_deref(), Some("wallet"));
+        let seen = chain.lock().unwrap();
+        assert_eq!(seen.owner_sends, 2);
+        // The check before each send, and the check of each send.
+        assert_eq!(seen.owner_checked_on, vec![Some("wallet".to_owned()); 4]);
+        let calls = (seen.owner_packets.len(), seen.owner_lookups);
+        drop(seen);
+        for on in [Some(&other), None] {
+            let error = runtime
+                .submit_owner_step(&mut journal, &step, on, 12)
+                .unwrap_err();
+            assert_eq!(
+                error.message,
+                "Owner step identity already binds another installation"
+            );
+        }
+        let seen = chain.lock().unwrap();
+        assert_eq!((seen.owner_packets.len(), seen.owner_lookups), calls);
+        drop(seen);
+        // The store itself refuses a record of the step under another installation.
+        let mut moved = record.clone();
+        moved.wallet = None;
+        assert!(journal.record(&[9; 32], &moved).is_err());
+        journal.record(&[9; 32], &record).unwrap();
+    }
+    /// A refusal for this attempt and a check without an answer change nothing in the journal:
+    /// a step that was never sent leaves no record, a possibly sent step stays possibly sent
+    /// and open, nothing is sent, and a later call sends once the check passes.
+    #[test]
+    fn a_refusal_for_this_attempt_changes_nothing_in_the_journal() {
+        for unanswered in [false, true] {
+            let refuse = |chain: &Arc<Mutex<Chain>>, refused: bool| {
+                let mut chain = chain.lock().unwrap();
+                chain.owner_refusal = (refused && !unanswered).then_some(native::CONTRACT_EXPIRED);
+                chain.owner_check_unanswered = refused && unanswered;
+            };
+            let refused = |error: crate::error::Error| {
+                if unanswered {
+                    assert_eq!((error.code, error.api_code), (UNCERTAIN, None));
+                } else {
+                    assert_eq!(error.api_code.as_deref(), Some(native::CONTRACT_EXPIRED));
+                }
+            };
+            let (runtime, chain, step) = owner_run(
+                Chain {
+                    owner_answers: vec![Status::SubmissionUnknown],
+                    ..Chain::default()
+                },
+                100,
+            );
+            let wallet = installed("wallet");
+            let mut journal = MemoryOwnerSteps::default();
+            let mut pass = |now| runtime.submit_owner_step(&mut journal, &step, Some(&wallet), now);
+            // Never sent: the refusal, and no record.
+            refuse(&chain, true);
+            refused(pass(10).unwrap_err());
+            refuse(&chain, false);
+            assert_eq!(pass(11).unwrap(), Status::SubmissionUnknown);
+            // Possibly sent: the refusal, after its lookup, and the record stays.
+            refuse(&chain, true);
+            refused(pass(12).unwrap_err());
+            let seen = chain.lock().unwrap();
+            assert_eq!((seen.owner_sends, seen.owner_lookups), (1, 1));
+            drop(seen);
+            refuse(&chain, false);
+            assert_eq!(pass(13).unwrap(), Status::Submitted);
+            assert_eq!(chain.lock().unwrap().owner_sends, 2);
+            assert_eq!(journaled(&journal), (Status::Submitted, false));
+        }
+        // A never-sent step that is refused leaves no record.
+        let (runtime, chain, step) = owner_run(
+            Chain {
+                owner_refusal: Some(native::CONTRACT_EXPIRED),
+                ..Chain::default()
+            },
+            100,
+        );
+        let mut journal = MemoryOwnerSteps::default();
+        assert!(
+            runtime
+                .submit_owner_step(&mut journal, &step, None, 10)
+                .is_err()
+        );
+        assert!(journal.load(&[9; 32]).unwrap().is_none());
+        assert_eq!(chain.lock().unwrap().owner_sends, 0);
+    }
+    /// The cutoff is final. A possibly sent step that reaches it is closed before any lookup,
+    /// also when that lookup fails, and is never sent again, also at an earlier clock later and
+    /// when the rail then shows nothing pending; its receipt is still looked up. A step that
+    /// was never sent returns the rail's refusal and leaves no record.
+    #[test]
+    fn a_step_that_reached_its_cutoff_is_never_sent_again() {
+        for accepted in [false, true] {
+            let (status, answers) = if accepted {
+                (Status::Submitted, vec![])
+            } else {
+                (Status::SubmissionUnknown, vec![Status::SubmissionUnknown])
+            };
+            let (runtime, chain, step) = owner_run(
+                Chain {
+                    owner_answers: answers,
+                    ..Chain::default()
+                },
+                100,
+            );
+            let mut journal = MemoryOwnerSteps::default();
+            let mut pass = |now| runtime.submit_owner_step(&mut journal, &step, None, now);
+            assert_eq!(pass(10).unwrap(), status.clone());
+            // The second before the bound is the cutoff by the caller's clock.
+            chain.lock().unwrap().owner_lookup_fails =
+                Some(crate::error::Error::uncertain("no answer"));
+            assert!(pass(99).is_err());
+            chain.lock().unwrap().owner_lookup_fails = None;
+            chain.lock().unwrap().owner_dropped = true;
+            let lookups = chain.lock().unwrap().owner_lookups;
+            assert_eq!(pass(12).unwrap(), status.clone());
+            let seen = chain.lock().unwrap();
+            assert_eq!((seen.owner_sends, seen.owner_lookups), (1, lookups + 1));
+            drop(seen);
+            assert_eq!(journaled(&journal), (status, true));
+            // Its receipt ends a closed step.
+            chain.lock().unwrap().owner_receipt_after = Some(0);
+            assert_eq!(
+                runtime
+                    .submit_owner_step(&mut journal, &step, None, 13)
+                    .unwrap(),
+                Status::Confirmed
+            );
+        }
+        let (runtime, chain, step) = owner_run(Chain::default(), 100);
+        let mut journal = MemoryOwnerSteps::default();
+        let error = runtime
+            .submit_owner_step(&mut journal, &step, None, 99)
+            .unwrap_err();
+        assert_eq!(error.api_code.as_deref(), Some(OWNER_TRANSACTION_EXPIRED));
+        assert!(journal.load(&[9; 32]).unwrap().is_none());
+        assert_eq!(chain.lock().unwrap().owner_sends, 0);
+    }
+    /// The answer of a send speaks for that send only. A first send that the network did not
+    /// accept leaves nothing pending, and the next call sends without a lookup. A step that was
+    /// possibly sent before stays so when a later send is not accepted or is rejected, and is
+    /// looked up again. A lookup that fails sends nothing and changes nothing.
+    #[test]
+    fn the_answer_of_a_send_speaks_for_that_send_only() {
+        let (runtime, chain, step) = owner_run(
+            Chain {
+                owner_answers: vec![
+                    Status::Prepared,
+                    Status::SubmissionUnknown,
+                    Status::Prepared,
+                ],
+                ..Chain::default()
+            },
+            100,
+        );
+        let mut journal = MemoryOwnerSteps::default();
+        let mut pass = |now| runtime.submit_owner_step(&mut journal, &step, None, now);
+        assert_eq!(pass(10).unwrap(), Status::Prepared);
+        assert_eq!(pass(11).unwrap(), Status::SubmissionUnknown);
+        assert_eq!(chain.lock().unwrap().owner_lookups, 0);
+        assert_eq!(pass(12).unwrap(), Status::SubmissionUnknown);
+        let seen = chain.lock().unwrap();
+        assert_eq!((seen.owner_sends, seen.owner_lookups), (3, 1));
+        drop(seen);
+        // A rejected send after an uncertain one: the rail's error, and still possibly sent.
+        chain.lock().unwrap().owner_rejected = true;
+        assert_eq!(
+            pass(13).unwrap_err().message,
+            "The network rejected the send"
+        );
+        assert_eq!(chain.lock().unwrap().owner_sends, 4);
+        // A lookup of the receipt or of the network's hold that fails sends nothing.
+        chain.lock().unwrap().owner_status_fails = true;
+        assert!(pass(14).is_err());
+        chain.lock().unwrap().owner_status_fails = false;
+        chain.lock().unwrap().owner_lookup_fails =
+            Some(crate::error::Error::uncertain("no answer"));
+        assert!(pass(15).is_err());
+        assert_eq!(chain.lock().unwrap().owner_sends, 4);
+        assert_eq!(journaled(&journal), (Status::SubmissionUnknown, false));
+        // The receipt of a failed transaction ends the step as failed.
+        let mut seen = chain.lock().unwrap();
+        seen.owner_lookup_fails = None;
+        seen.owner_receipt_failed = true;
+        seen.owner_receipt_after = Some(0);
+        drop(seen);
+        assert_eq!(
+            runtime
+                .submit_owner_step(&mut journal, &step, None, 16)
+                .unwrap(),
+            Status::Failed
+        );
+        assert_eq!(journaled(&journal), (Status::Failed, false));
+    }
+    /// A first send that the network rejects leaves the step as not sent: at its cutoff it
+    /// returns the rail's refusal and is not closed as a possibly sent step.
+    #[test]
+    fn a_rejected_first_send_leaves_the_step_not_sent() {
+        let (runtime, chain, step) = owner_run(
+            Chain {
+                owner_rejected: true,
+                ..Chain::default()
+            },
+            100,
+        );
+        let mut journal = MemoryOwnerSteps::default();
+        let error = runtime
+            .submit_owner_step(&mut journal, &step, None, 10)
+            .unwrap_err();
+        assert_eq!(error.message, "The network rejected the send");
+        assert_eq!(journaled(&journal), (Status::Prepared, false));
+        let error = runtime
+            .submit_owner_step(&mut journal, &step, None, 99)
+            .unwrap_err();
+        assert_eq!(error.api_code.as_deref(), Some(OWNER_TRANSACTION_EXPIRED));
+        assert_eq!(journaled(&journal), (Status::Prepared, false));
+        let seen = chain.lock().unwrap();
+        assert_eq!((seen.owner_sends, seen.owner_lookups), (1, 0));
+    }
+    /// The journal form counts the time that its lookups take: a step whose cutoff passes
+    /// during them is closed and not sent.
+    #[test]
+    fn the_journal_form_checks_a_send_at_the_clock_after_its_lookups() {
+        let (runtime, chain, step) = owner_run(
+            Chain {
+                owner_answers: vec![Status::SubmissionUnknown],
+                ..Chain::default()
+            },
+            12,
+        );
+        let mut journal = MemoryOwnerSteps::default();
+        assert_eq!(
+            runtime
+                .submit_owner_step(&mut journal, &step, None, 9)
+                .unwrap(),
+            Status::SubmissionUnknown
+        );
+        chain.lock().unwrap().owner_lookup_time = std::time::Duration::from_millis(1_050);
+        assert_eq!(
+            runtime
+                .submit_owner_step(&mut journal, &step, None, 10)
+                .unwrap(),
+            Status::SubmissionUnknown
+        );
+        assert_eq!(journaled(&journal), (Status::SubmissionUnknown, true));
+        let seen = chain.lock().unwrap();
+        assert_eq!(seen.owner_sent_at, [10]);
+        assert_eq!(seen.owner_checked_at.last(), Some(&12));
+    }
+    /// A journal write that fails ends the call with that failure: a step is not sent before
+    /// its record as possibly sent is kept.
+    #[test]
+    fn a_step_whose_record_is_not_kept_is_not_sent() {
+        struct Full;
+        impl OwnerStepStore for Full {
+            fn load(&self, _: &[u8]) -> Result<Option<OwnerStepRecord>> {
+                Ok(None)
+            }
+            fn record(&mut self, _: &[u8], _: &OwnerStepRecord) -> Result<()> {
+                Err(crate::error::Error::config("The store is full"))
+            }
+        }
+        let (runtime, chain, step) = owner_run(Chain::default(), 100);
+        let error = runtime
+            .submit_owner_step(&mut Full, &step, None, 10)
+            .unwrap_err();
+        assert_eq!(error.message, "The store is full");
+        assert_eq!(chain.lock().unwrap().owner_sends, 0);
+    }
     /// The owner-step wrappers pass each argument to the rail and its answer back.
     #[test]
     fn the_owner_step_wrappers_pass_through_to_the_rail() {
         let (runtime, chain, step) = owner_run(Chain::default(), 100);
-        runtime.validate_owner_signed(&step, 7).unwrap();
+        let mut wallet = installation();
+        wallet.0.description.wallet = "wallet".into();
+        runtime
+            .validate_owner_signed(&step, Some(&wallet), 7)
+            .unwrap();
         assert_eq!(
-            runtime.broadcast_owner(&step, 8).unwrap(),
+            runtime.broadcast_owner(&step, None, 8).unwrap(),
             Status::Submitted
         );
         assert_eq!(
@@ -2546,8 +3192,6 @@ mod code_transactions {
         chain.lock().unwrap().owner_held = true;
         assert_eq!(runtime.owner_status(&step).unwrap(), Status::Submitted);
         assert!(runtime.owner_step_lapsed(&step, 42).unwrap());
-        let mut wallet = installation();
-        wallet.0.description.wallet = "wallet".into();
         assert!(runtime.wallet_closed(&wallet).unwrap());
         let close = runtime.prepare_close(&wallet, 55, 66).unwrap();
         assert_eq!(close.0.document().get(), r#"{"close":1}"#);
@@ -2561,6 +3205,8 @@ mod code_transactions {
         // step's own packet.
         assert_eq!(seen.owner_packets, vec![r#"{"expires":100}"#; 6]);
         assert_eq!(seen.owner_checked_at, [7, 8]);
+        // Each wrapper passed its own installation.
+        assert_eq!(seen.owner_checked_on, [Some("wallet".to_owned()), None]);
         assert_eq!(seen.owner_sent_at, [8]);
         assert_eq!(seen.owner_lapse_since, [42]);
         assert_eq!(seen.owner_closed_wallets, ["wallet"]);
