@@ -42,6 +42,9 @@ PAYMENT_REQUIRED = ("scheme", "amount", "pay_to")
 PARAMETER_KEYS = ("name", "in", "type", "required")
 LATEST_CHECK_KEYS = ("method", "http_status", "at")
 SKIP_KEYS = ("source_path", "reason")
+# Ways to get a resource without paying its challenge. Every kind but "free" states its condition.
+ACCESS_KINDS = ("free", "free_quota", "signature", "proof_of_work")
+ACCESS_KEYS = ("kind", "network", "detail")
 
 
 class ParseError(Exception):
@@ -210,6 +213,25 @@ def _latest_check(v) -> bool:
             and isinstance(v["http_status"], int) and not _bool(v["http_status"]) and _str(v["at"]))
 
 
+def _access(v) -> bool:
+    """A list of free access paths: {kind, network?, detail?}, each kind once.
+
+    Any malformed value is invalid, never an exception: an item that is no object, or a kind that is
+    no string, fails before a kind is compared or hashed.
+    """
+    if not isinstance(v, list) or not all(isinstance(a, dict) for a in v):
+        return False
+    kinds = [a.get("kind") for a in v]
+    if not all(isinstance(k, str) for k in kinds):
+        return False
+    return len(set(kinds)) == len(kinds) and all(
+        set(a) <= set(ACCESS_KEYS) and a["kind"] in ACCESS_KINDS
+        and _opt_str(a.get("network")) and _opt_str(a.get("detail"))
+        and (a["kind"] == "free" or (_str(a.get("detail")) and a["detail"].strip()))
+        for a in v
+    )
+
+
 def _payment(v) -> bool:
     return v is None or (isinstance(v, dict) and all(_str(v.get(k)) and v[k] for k in PAYMENT_REQUIRED)
                          and all(x is None or isinstance(x, (str, bool, int, float)) for x in v.values()))
@@ -247,6 +269,10 @@ SCHEMA = {
     "provider_reference": _opt_str,
     "source_path": _str,
 }
+# Fields that a record may omit. An omitted or empty one is not written.
+OPTIONAL = {
+    "access": _access,
+}
 
 
 def offer_rail(rec: dict, source: Source, ctx: Context):
@@ -263,6 +289,8 @@ def ordered(rec: dict, rail) -> dict:
     example_input keeps the key order that the source supplies; it is the provider's example.
     """
     out = {name: rec[name] for name in SCHEMA}
+    if rec.get("access"):
+        out["access"] = [{k: a[k] for k in ACCESS_KEYS if a.get(k) is not None} for a in rec["access"]]
     out["latest_check"] = {k: rec["latest_check"][k] for k in LATEST_CHECK_KEYS}
     if rec["parameters"] is not None:
         out["parameters"] = [{k: p[k] for k in PARAMETER_KEYS} for p in rec["parameters"]]
@@ -275,10 +303,12 @@ def validate(rec: dict, key: str, source: Source, ctx: Context) -> list[str]:
     """Return schema problems in one record."""
     if not isinstance(rec, dict):
         return [f"record is {type(rec).__name__}, not an object"]
-    missing, extra = sorted(set(SCHEMA) - set(rec)), sorted(set(rec) - set(SCHEMA))
+    missing = sorted(set(SCHEMA) - set(rec))
+    extra = sorted(set(rec) - set(SCHEMA) - set(OPTIONAL))
     if missing or extra:
         return [f"fields missing {missing}, unexpected {extra}"]
     problems = [f"invalid {name}: {rec[name]!r}" for name, ok in SCHEMA.items() if not ok(rec[name])]
+    problems += [f"invalid {name}: {rec[name]!r}" for name, ok in OPTIONAL.items() if name in rec and not ok(rec[name])]
     if rec["source_path"] != key:
         problems.append(f"source_path {rec['source_path']!r} differs from the entry key")
     offer = [rec["network"] is None, rec["asset"] is None, rec["payment"] is None]

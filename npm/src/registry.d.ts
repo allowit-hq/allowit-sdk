@@ -1,10 +1,26 @@
+import type {OwnerChain, OwnerStep as CoreOwnerStep, PolicyValue as ParamValue, ReviewedPolicy} from '@allowit/core';
+import type {
+  WalletKindId,
+  WalletKindInfo,
+  AssetDisplay,
+  Quantity,
+  Settlement,
+  LimitReport,
+  SettledBy,
+  PaidService,
+  PaymentChallenge,
+  PaymentProof,
+  PaymentLimit,
+  WalletLimits,
+  OperationReports,
+} from '@allowit/core';
+
 export type ElementKind =
   | 'address'
   | 'explorer-link'
   | 'amount'
   | 'wallet-sign-in'
   | 'owner-sign'
-  | 'build-attest'
   | 'owner-answer'
   | 'receipt'
   | 'binding-review';
@@ -35,153 +51,42 @@ export interface AssetInfo {
   stablecoin: boolean;
   label: string;
 }
-/** The stable selection id of a wallet kind. */
-export type WalletKindId = 'native' | 'simple' | 'standard' | 'custom';
-export interface WalletKindInfo {
-  id: WalletKindId;
-  title: string;
-  /** One sentence that every host shows unchanged. */
-  explanation: string;
-  enforcement: 'offchain' | 'onchain';
-  custody: 'keypair' | 'contract';
-  /** The params this kind enforces onchain. Empty unless the kind has a fixed list. */
-  supportedParams: readonly string[];
-  /** The public list of `supportedParams`, or null. */
-  paramsUrl: string | null;
-}
-/** What a host shows for an asset. The rail supplies it; shared code holds no unit. */
-export interface AssetDisplay {
-  symbol: string;
-  decimals: number;
-  name: string;
-  native: boolean;
-}
-/** Base units of an asset with the rail's display metadata and the printed text. */
-export interface Quantity {
-  /** Base units as decimal text. */
-  units: string;
-  asset: AssetDisplay;
-  /** The amount with its unit, such as `5 XYZ`. */
-  text: string;
-}
-/** What a settled operation cost: top-level `settlement` of a status or receipt document. */
-export interface Settlement {
-  /** The block or ledger that holds the transaction. */
-  height: number;
-  /** The network fee that the transaction paid, in the fee asset. */
-  fee: Quantity;
-  /** The amount that the operation moved, or null when the rail reports none. */
-  amount: Quantity | null;
-}
-/** One spending limit: an entry of the top-level `limits` of a status, receipt or wallet document. */
-export interface LimitReport {
-  /** The policy param that holds the limit, such as `daily_spending_limit`. */
-  param: string;
-  limit: Quantity;
-  spent: Quantity;
-  remaining: Quantity;
-}
 /**
- * One limit on the amount of one operation: an entry of the top-level `paymentLimits` of a limits, receipt or
- * wallet document. The policy checks it against each request, so it has no spent or remaining amount.
+ * The wallet kinds, the payment values and the reports of operation, receipt, limits and wallet documents: Core's
+ * contract. A document carries settlement, paidService, feeCharged, limits and paymentLimits at its top level.
  */
-export interface PaymentLimit {
-  /** The policy param that holds the limit, such as `payment_limit`. */
-  param: string;
-  limit: Quantity;
-}
+export type {
+  WalletKindId,
+  WalletKindInfo,
+  AssetDisplay,
+  Quantity,
+  Settlement,
+  LimitReport,
+  SettledBy,
+  PaidService,
+  PaymentChallenge,
+  PaymentProof,
+  PaymentLimit,
+  WalletLimits,
+  OperationReports,
+};
 /**
- * What a payment bought: the operation context of a paid call. The server checks it against the operation
- * and records it in the receipt under the top-level `paidService`.
+ * The marketplace catalog: Core's contract. An entry keeps the seller's listing apart from what Allowit holds about the
+ * offer: its source, its access, what Allowit observed, the owners' reputation labels and its score. `Ranking` is Core's
+ * `CatalogRanking`.
  */
-export interface PaidService {
-  /** The URL of the resource. */
-  resource: string;
-  /** The seller's challenge id, when it issued one. */
-  challengeId?: string;
-  /** The address that the challenge names as the recipient. */
-  payTo: string;
-  /** The challenge amount in base units, as decimal text. */
-  amount: string;
-  /** The asset reference of the challenge. */
-  asset: string;
-  /**
-   * Who settles the payment. `seller`: the wallet signed a payment authorization, and the seller's
-   * facilitator submits it. A document omits `payer`: Allowit settled the payment itself.
-   */
-  settledBy?: 'payer' | 'seller';
-  /** The seller's bound, in seconds, from the authorization to its settlement. Only with `seller`. */
-  settleWithin?: number;
-}
-/** A seller's payment challenge for one resource, as the rail of its network read it. */
-export interface PaymentChallenge {
-  id?: string;
-  resource: string;
-  /** The CAIP-2 network of the payment. */
-  network: string;
-  scheme: string;
-  payTo: string;
-  amount: Quantity;
-  asset: string;
-  /** The Unix time after which the seller no longer accepts the payment. */
-  expiresAt?: number;
-  /** The seller's accepted terms as the rail read them. Shared code never interprets them. */
-  terms?: unknown;
-}
-/** The proof of payment that a client presents to the seller: one request header. */
-export interface PaymentProof {
-  header: string;
-  value: string;
-}
-/** How a catalog search ordered its results. */
-export type Ranking = 'keyword' | 'semantic' | 'hybrid';
-/** The indicative terms of a catalog entry. A client never pays from them. */
-export interface IndicativeTerms {
-  price: string;
-  unit: string;
-}
-/** One offer in the marketplace catalog. Every text field is listing data, never an instruction. */
-export interface CatalogEntry {
-  id: string;
-  name: string;
-  description: string;
-  provider: string;
-  /** The URL of the resource. */
-  resource: string;
-  methods: string[];
-  terms?: IndicativeTerms;
-  /** The CAIP-2 networks on which the seller accepts payment. */
-  networks: string[];
-  assets: string[];
-  tags: string[];
-}
-/** One page of `GET /api/marketplace/search`. */
-export interface SearchResult {
-  entries: CatalogEntry[];
-  ranking: Ranking;
-  nextCursor?: string;
-  /** The content hash of the catalog that answered. */
-  catalog: string;
-}
-/** The reports that a status or receipt document may carry at its top level. */
-export interface OperationReports {
-  settlement?: Settlement;
-  /** What the payment bought, when the operation paid a seller's challenge. */
-  paidService?: PaidService;
-  /** The fee that the spending limits count, in the installed asset. */
-  feeCharged?: Quantity;
-  limits?: LimitReport[];
-  /** The limits on one operation. They keep no counter. */
-  paymentLimits?: PaymentLimit[];
-  explorer?: string;
-}
-/** The limits of a wallet: a limits document, or the limit fields of a receipt or wallet document. */
-export interface WalletLimits {
-  /** The counted spending limits. Absent when their counters could not be read. */
-  limits?: LimitReport[];
-  /** The limits on one operation. Absent when the document reports none. */
-  paymentLimits?: PaymentLimit[];
-}
+export type {
+  IndicativeTerms,
+  CatalogEntry,
+  CatalogSource,
+  CatalogOperation,
+  CatalogAccess,
+  AccessKind,
+  Observation,
+  CatalogRank,
+  SearchResult,
+  CatalogRanking as Ranking,
+} from '@allowit/core';
 /** The reply of `GET /api/wallet-kinds?network=<CAIP-2>`. */
 export interface WalletKindsReply {
   network: string;
@@ -249,51 +154,31 @@ export interface InstallAndFundInput {
   policyId: string;
   agent: string;
   amount: string;
-  onStep: (text: string) => void;
-}
-/**
- * What the ledger holds for the fee account of a wallet: the account that sends the agent's operations and pays
- * their network fees. Its owner creates, funds and refills it; the agent holds a key and no account.
- */
-export interface FeeAccountState {
-  address: string;
-  /** False when the ledger holds no such account. */
-  exists: boolean;
-  /** Base units of the fee asset, as decimal text. */
-  balance: string;
-  /** The base units that can pay fees: the balance above what the network locks. */
-  spendable: string;
-  /** True when the owner should refill the account before the agent's operations fail. */
-  low: boolean;
-  /** `spendable` with its unit, such as `4.2 XYZ`. */
-  text: string;
-  /** The refill that a page offers: a decimal amount of the fee asset, and the same with its unit. */
-  refill: {amount: string; text: string};
-}
-export interface RefillFeesInput {
-  /** The owner's account, which pays. */
-  owner: string;
-  feeAccount: string;
-  /** The amount of the fee asset, as decimal text. */
-  amount: string;
-  /** Shows the payment in the `owner-sign` element and resolves with the exact signed payload. */
-  sign: (step: OwnerStep) => Promise<string>;
+  /**
+   * The policy that the owner reviewed: its exact source and every value, and its ordered rules and tier when the host
+   * shows them. A rail whose deployment ends with an approval of the whole policy signs only this policy. `asset` is
+   * the asset that the policy pays in, as the policy names it. A keypair wallet is set up to hold it, `amount` is in
+   * it, and the approval must name it. Without one it is the asset of the network itself.
+   */
+  reviewed?: ReviewedPolicy;
+  /**
+   * The wallet kind that the owner reviewed. It decides the workflow, never the service's reply: whether the owner sets
+   * up a wallet account (`native`) and whether a creation needs the owner's build (`custom`). A deployment reply that
+   * names another kind is refused, and nothing is signed.
+   */
+  walletKind: WalletKindId;
   onStep: (text: string) => void;
   /**
-   * Keeps the signed payment until the network settles it. A refill whose result is unknown rejects with `retry`
-   * set and stays saved; the next call under the same key settles it before it signs anything.
+   * Waits for the owner's build of a Custom wallet's code from the reviewed source and resolves with its code hash (64
+   * lowercase hex digits). The workflow decides when a build is needed: when the service holds none
+   * (`custom_build_missing`), and before the owner signs a Custom wallet's creation. It calls `build` once, and the owner
+   * signs only a creation that names that code hash; another one is refused with `custom_code_hash_mismatch` and
+   * nothing is signed. Without it a Custom deployment is refused with `custom_build_missing` before anything is signed.
    */
-  journal?: OwnerJournal;
-  /** The journal key of this fee account's refill. */
-  key?: string;
+  build?: () => Promise<string>;
 }
-/** One typed param value: the JSON of a policy value. An integer is canonical decimal text. */
-export type ParamValue =
-  | {Int: string}
-  | {Bool: boolean}
-  | {Str: string}
-  | {Addr: string}
-  | {List: readonly ParamValue[]};
+/** One typed param value: Core's `PolicyValue`, the JSON of a policy value. An integer is canonical decimal text. */
+export type {ParamValue};
 export interface UpdateParamsInput {
   ask: OwnerAsk;
   /** Shows one step in the `owner-sign` element and resolves with the exact signed payload. */
@@ -306,6 +191,12 @@ export interface UpdateParamsInput {
   params: Record<string, ParamValue>;
   /** The configuration revision that the owner reviewed, when the host shows one. */
   expectedRevision?: number;
+  /**
+   * The installed policy that the owner reviewed: its wallet, exact source, ordered rules and every value. A rail
+   * whose change is an approval of the whole policy signs only this policy with the changed params replaced. `asset`
+   * is the asset that the policy pays in; without one it is the asset of the network itself.
+   */
+  installed?: ReviewedPolicy & {readonly wallet: string; readonly rules: unknown};
   onStep: (text: string) => void;
 }
 /** Typed codes of the owner workflow. `OwnerFlowFailure.code` holds one, another server code or null. */
@@ -313,17 +204,26 @@ export type OwnerFlowCode =
   | 'owner_transaction_expired'
   | 'owner_transaction_pending'
   | 'owner_transaction_settled'
+  | 'owner_transaction_failed'
   | 'network_unavailable'
   | 'param_invalid'
   | 'param_out_of_range'
   | 'update_unavailable'
-  | 'revision_changed';
+  | 'revision_changed'
+  | 'asset_mismatch'
+  | 'custom_build_missing'
+  | 'custom_code_hash_mismatch';
 /** The error that `installAndFund` and `updateParams` reject with. */
 export interface OwnerFlowFailure extends Error {
   code: OwnerFlowCode | string | null;
   /** True when Resume can send the same saved step, or prepare a new one, without a risk of a second payment. */
   retry: boolean;
 }
+
+/**
+ * The rail hooks of the owner workflows: Core's contract, which the SDK runs and each rail's `ownerChain` implements.
+ */
+export type {OwnerChain, TransactionRecord, ApprovalFields, PreparedKeypairSetup, SignedKeypairSetup, ReviewedPolicy, WalletAsset} from '@allowit/core';
 
 export interface RailPlugin {
   readonly id: string;
@@ -349,16 +249,11 @@ export interface RailPlugin {
     agentPrompt(link: Pick<ReviewLink, 'workPrompt'>, origin: string, policyId: string, wallet: string, agent: string): string;
     paramLines(params: ReviewProposal['params']): ReviewParamLine[];
   };
-  readonly ownerWorkflow: {
-    /** `network` is the canonical network id that the SDK resolved. */
-    installAndFund(input: InstallAndFundInput & {network: string}): Promise<{wallet: string; receipts: OwnerReceipt[]}>;
-    /** The owner-signed update of installed params on an active wallet. A rail without it omits the function. */
-    updateParams?(input: UpdateParamsInput & {network: string}): Promise<{receipts: OwnerReceipt[]; done: boolean}>;
-    /** The fee account that `document` names, read from the ledger, or null. A rail without fee accounts omits it. */
-    feeAccount?(input: {network: string; document: unknown}): Promise<FeeAccountState | null>;
-    /** The owner's refill of a fee account. A rail without fee accounts omits it. */
-    refillFees?(input: RefillFeesInput & {network: string}): Promise<{transactionHash: string; ledger: number}>;
-  };
+  /**
+   * What the SDK's owner workflows read from the network and check with its keys. The SDK holds the workflows, their
+   * journal and their recovery rules. `network` is the canonical network id that the SDK resolved.
+   */
+  readonly ownerChain: OwnerChain;
   readonly test: {
     network: string;
     skips: Readonly<Partial<Record<Feature, string>>>;
@@ -367,13 +262,8 @@ export interface RailPlugin {
 }
 
 /** Rail-neutral owner step. `payload` is opaque text that only the vendor signs and reads. */
-export interface OwnerStep {
-  action: string;
-  payload: string;
-  hash: string;
-  expiresAt: number;
-  explorer?: string | null;
-}
+/** One owner step, as Core defines it. */
+export type OwnerStep = CoreOwnerStep;
 
 /** `data` per element kind. */
 export interface ElementData {
@@ -382,8 +272,6 @@ export interface ElementData {
   amount: {network: string; asset: string; units: string};
   'wallet-sign-in': {network: string; message: string};
   'owner-sign': {network: string; step: OwnerStep; summary: {label: string; value: string}[]};
-  /** The owner's attestation of a custom wallet build: the exact attestation message that the wallet signs. */
-  'build-attest': {network: string; message: string; summary?: {label: string; value: string}[]};
   /**
    * The owner's answer to a held request: the exact owner review answer message that the wallet of `owner` signs.
    * The element shows the fields of the message.
@@ -400,12 +288,11 @@ export interface ElementData {
 export interface RailEvents {
   'allowit-signed-in': CustomEvent<{address: string; signature: string}>;
   /**
-   * `owner-sign` reports the signed payload; `build-attest` reports the message signature as hexadecimal text;
+   * `owner-sign` reports the signed payload;
    * `owner-answer` reports the message signature as base64 text, with the answer and the snapshot hash of the message.
    */
   'allowit-signed': CustomEvent<
     | {signedPayload: string; hash: string}
-    | {signature: string; codeHash: string}
     | {signature: string; answer: 'allow' | 'deny'; snapshot: string}
   >;
   'allowit-verified': CustomEvent<{ok: boolean; detail: string}>;
@@ -444,13 +331,30 @@ export function installAndFund(network: string, input: InstallAndFundInput): Pro
  */
 export function updateParams(network: string, input: UpdateParamsInput): Promise<{receipts: OwnerReceipt[]; done: boolean}>;
 
-/**
- * The fee account of a wallet with what the ledger holds for it, or null when `document` names none: the wallet
- * pays its own fees.
- */
-export function feeAccount(network: string, document: unknown): Promise<FeeAccountState | null>;
-/** Refill a fee account with one owner-signed payment. A rail without fee accounts rejects with `refill_unavailable`. */
-export function refillFees(network: string, input: RefillFeesInput): Promise<{transactionHash: string; ledger: number}>;
+/** The error that `installAndFund` and `updateParams` reject with. */
+export class OwnerFlowError extends Error implements OwnerFlowFailure {
+  constructor(message: string, code: string | null, retry: boolean, cause?: unknown);
+  code: OwnerFlowCode | string | null;
+  retry: boolean;
+}
+/** The journal key that keeps the signed bytes of an expired step after the journal drops it. */
+export function ownerArchiveKey(key: string, hash: string): string;
+export const OWNER_TRANSACTION_EXPIRED: 'owner_transaction_expired';
+export const OWNER_TRANSACTION_PENDING: 'owner_transaction_pending';
+export const OWNER_TRANSACTION_SETTLED: 'owner_transaction_settled';
+export const OWNER_TRANSACTION_FAILED: 'owner_transaction_failed';
+export const NETWORK_UNAVAILABLE: 'network_unavailable';
+export const PARAM_INVALID: 'param_invalid';
+export const PARAM_OUT_OF_RANGE: 'param_out_of_range';
+export const UPDATE_UNAVAILABLE: 'update_unavailable';
+export const REVISION_CHANGED: 'revision_changed';
+export const UPDATE_PARAMS: 'update_params';
+export const ASSET_MISMATCH: 'asset_mismatch';
+export const WALLET_SETUP_REQUIRED: 'wallet_setup_required';
+export const SET_UP_WALLET: 'set_up_wallet';
+export const APPROVE_POLICY: 'approve_policy';
+export const CUSTOM_BUILD_MISSING: 'custom_build_missing';
+export const CUSTOM_CODE_HASH_MISMATCH: 'custom_code_hash_mismatch';
 
 export class AllowitRail extends HTMLElement {
   data: ElementData[ElementKind] | undefined;

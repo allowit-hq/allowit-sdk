@@ -86,6 +86,32 @@ pub fn check_server(source: &str) -> Result<ServerShape> {
     Ok(ServerShape { shape, functions })
 }
 
+pub use policy_source::{Cause, Derived, Figure, Keeper, ServerOnly, StateEntry};
+
+/// The on-chain part of one policy source: what the contract of a wallet that compiles its
+/// policy runs. The owner writes and signs one source, and the server evaluates all of it. The
+/// statements that the chain can check by itself stay. The statements that depend on a server
+/// function, read owner text with `as_str()`, or use policy state that the server keeps, leave:
+/// the server's signature enforces them. Core derives the part (`allowit_core::policy_source::derive`): it is a pure function
+/// of the source bytes, so every client and every server derive the same part, and it never
+/// denies a request that the whole source allows.
+///
+/// The result holds the derived source, the lines of the owner's source that left, each
+/// deterministic check that only the server enforces, with its line, its cause and whether the
+/// owner can move it so that the chain enforces it too, the checks that stay, the cumulated
+/// figures that the kept statements read, and each state key of the policy with its keeper.
+/// The contract keeps a key when a statement that uses it stays and no statement that writes it
+/// leaves; the server keeps every other key. A source that the derivation leaves unchanged is
+/// its own on-chain part: a source without a server function can still lose a check, such as
+/// one on owner text read with `as_str()`. A state call whose key is no string literal, a write
+/// of a standard figure and any use of the stored day `day` are refused; a policy reads a daily
+/// figure such as `day_spent` instead.
+///
+/// `source` is server policy source: check it with [`check_server`] first.
+pub fn onchain_part(source: &str) -> Result<Derived> {
+    policy_source::derive(source).map_err(Error::usage)
+}
+
 /// The host crate of one policy: a `no_std` crate whose only dependency is `allowit`.
 const POLICY_HOST: &str = "#![no_std]\n#[path = \"policy.rs\"]\nmod policy;\npub const EXECUTE: fn(&allowit::AllowitContext) -> allowit::Result = policy::execute;\n";
 /// Flags of every compilation. Function pointer comparisons depend on code layout, so the lint is

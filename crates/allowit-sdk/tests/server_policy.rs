@@ -82,3 +82,74 @@ fn every_listed_server_function_is_one_of_core() {
         );
     }
 }
+
+/// One source for a Custom wallet: the server evaluates all of it, and the contract compiles
+/// its on-chain part. The part of the server policy fixture is the fixture without its server
+/// calls, and it is portable source.
+#[test]
+fn the_on_chain_part_of_a_server_policy_is_portable_and_reports_what_left() {
+    use allowit_sdk::authoring::{check, check_server, onchain_part};
+    let source = include_str!("fixtures/server-policy.rs");
+    assert!(!check_server(source).unwrap().functions.is_empty());
+    let derived = onchain_part(source).unwrap();
+    assert_ne!(derived.source, source);
+    assert!(!derived.left.is_empty());
+    check(&derived.source).unwrap();
+    assert!(check_server(&derived.source).unwrap().functions.is_empty());
+    // The part is its own on-chain part, and a portable source derives to itself.
+    assert_eq!(
+        onchain_part(&derived.source).unwrap().source,
+        derived.source
+    );
+    let portable = "use allowit::prelude::*;\npub fn execute(ctx: &AllowitContext) -> allowit::Result {\n    allowit::payment_limit(ctx, &ctx.params[allowit::PAYMENT_LIMIT])?;\n    Ok(())\n}\n";
+    let same = onchain_part(portable).unwrap();
+    assert_eq!(same.source, portable);
+    assert!(same.left.is_empty() && same.server_only.is_empty());
+    assert_eq!(same.kept, ["payment_limit"]);
+    assert!(same.figures.is_empty());
+    // A contract wallet keeps the figures of its kept rules.
+    let daily = portable
+        .replace("PAYMENT_LIMIT", "DAILY_SPENDING_LIMIT")
+        .replace("payment_limit", "daily_spending_limit");
+    let keys: Vec<&str> = onchain_part(&daily)
+        .unwrap()
+        .figures
+        .iter()
+        .map(|figure| figure.key)
+        .collect();
+    assert_eq!(keys, ["day_spent", "day_unpriced"]);
+    // A policy may keep its own state. The contract keeps a key whose writes all stay, and
+    // the server keeps a key whose write depends on a server function.
+    use allowit_sdk::authoring::Keeper;
+    let counts = portable.replace(
+        "    Ok(())",
+        "    let paid: u64 = allowit::get_state(ctx, \"day_paid\")?.unwrap_or(0);\n    allowit::set_state(ctx, \"day_paid\", paid + 1)?;\n    let score = allowit::decision(ctx, &allowit::AllowitDecision { id: \"a\", query: \"Is this research?\", deny_below: 1, allow_above: 2 })?;\n    allowit::set_state(ctx, \"last_score\", score)?;\n    Ok(())",
+    );
+    check_server(&counts).unwrap();
+    let derived = onchain_part(&counts).unwrap();
+    let state: Vec<(&str, Keeper, bool)> = derived
+        .state
+        .iter()
+        .map(|entry| (entry.key.as_str(), entry.keeper, entry.daily))
+        .collect();
+    assert_eq!(
+        state,
+        [
+            ("day_paid", Keeper::Chain, true),
+            ("last_score", Keeper::Server, false)
+        ]
+    );
+    assert!(derived.source.contains("\"day_paid\"") && !derived.source.contains("last_score"));
+    check(&derived.source).unwrap();
+    // The contract must know each key before it runs.
+    let dynamic = portable.replace(
+        "    Ok(())",
+        "    let key = \"last\";\n    allowit::set_state(ctx, key, ctx.request.amount)?;\n    Ok(())",
+    );
+    assert!(
+        onchain_part(&dynamic)
+            .unwrap_err()
+            .message
+            .contains("string literal")
+    );
+}

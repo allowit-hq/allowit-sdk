@@ -221,6 +221,171 @@ fn the_offline_chain_serves_the_runtime() {
     });
 }
 
+/// A server runtime takes the server's own sending accounts on every rail.
+#[test]
+fn a_server_runtime_takes_its_sending_accounts() {
+    struct Sending;
+    impl runtime::SendingAccounts for Sending {
+        fn account(&self) -> allowit_sdk::error::Result<String> {
+            Err(allowit_sdk::error::Error::unsupported(
+                "no sending account in this test",
+            ))
+        }
+        fn sign(&self, _: &str, _: &[u8; 32]) -> allowit_sdk::error::Result<Vec<u8>> {
+            Err(allowit_sdk::error::Error::unsupported(
+                "no sending account in this test",
+            ))
+        }
+    }
+    testkit::each(Feature::Transfer, |rail, fx| {
+        let Some(chain) = fx.chain.clone() else {
+            eprintln!("skip {}: no offline chain fixture", rail.id());
+            return;
+        };
+        let network = rail.test_support().network;
+        Runtime::with_sender(network, chain.clone(), std::sync::Arc::new(Sending)).unwrap();
+        assert!(
+            Runtime::with_sender("unknown:network", chain, std::sync::Arc::new(Sending)).is_err()
+        );
+    });
+}
+
+/// A transport that counts the calls and answers none, as an unreachable network.
+#[derive(Default)]
+struct Unreachable(std::sync::atomic::AtomicUsize);
+impl runtime::Transport for Unreachable {
+    fn call(&self, _: &str, _: serde_json::Value) -> allowit_sdk::error::Result<serde_json::Value> {
+        self.0.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        Err(allowit_sdk::error::Error::config(
+            "The network is unreachable in this test",
+        ))
+    }
+}
+
+/// Core's refusals of a rail without code transactions.
+const NO_CODE_TRANSACTIONS: [&str; 3] = [
+    "This rail does not prepare wallet code transactions",
+    "This rail does not renew wallet code",
+    "This rail does not say whether a code transaction is still needed",
+];
+
+/// The server's code upload at deployment and its renewal of shared code reach the rail's own
+/// code transactions through the registered sending runtime, with the rail's own wallet code: the
+/// preparation reaches what the server gives it, its network or its sending accounts, in whatever
+/// order the rail reads them, and none answers Core's refusal of a rail without code
+/// transactions. A renewal that the rail finds not due answers nothing. The rail's own tests
+/// follow a code transaction through a model of its network.
+#[test]
+fn a_rail_that_deploys_prepares_code_uploads_and_renewals_itself() {
+    /// Sending accounts that count the requests and give none.
+    #[derive(Default)]
+    struct Sending(std::sync::atomic::AtomicUsize);
+    impl runtime::SendingAccounts for Sending {
+        fn account(&self) -> allowit_sdk::error::Result<String> {
+            self.0.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            Err(allowit_sdk::error::Error::unsupported(
+                "no sending account in this test",
+            ))
+        }
+        fn sign(&self, _: &str, _: &[u8; 32]) -> allowit_sdk::error::Result<Vec<u8>> {
+            self.0.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            Err(allowit_sdk::error::Error::unsupported(
+                "no sending account in this test",
+            ))
+        }
+    }
+    let refused_by_core =
+        |error: &allowit_sdk::error::Error| NO_CODE_TRANSACTIONS.contains(&error.message.as_str());
+    let reached = |network: &Unreachable, sending: &Sending| {
+        network.0.load(std::sync::atomic::Ordering::SeqCst)
+            + sending.0.load(std::sync::atomic::Ordering::SeqCst)
+            > 0
+    };
+    testkit::each(Feature::Deploy, |rail, fx| {
+        let network = rail.test_support().network;
+        if fx.wallet_code.is_empty() {
+            eprintln!("skip {}: no wallet code fixture", rail.id());
+            return;
+        }
+        let code = custom_build::code_hash(network, &fx.wallet_code).unwrap();
+        let poll = runtime::Poll {
+            attempts: 1,
+            interval: std::time::Duration::ZERO,
+        };
+        let (transport, sender) = (
+            std::sync::Arc::new(Unreachable::default()),
+            std::sync::Arc::new(Sending::default()),
+        );
+        let sending = Runtime::with_sender(network, transport.clone(), sender.clone()).unwrap();
+        let mut journal = runtime::MemoryOperations::default();
+        match sending.renew_code(&mut journal, &code, 1_000_000, poll, 1, &|| true) {
+            Ok(renewed) => assert!(renewed.is_none(), "{}", rail.id()),
+            Err(refused) => {
+                assert!(!refused_by_core(&refused), "{}: {refused:?}", rail.id());
+                assert!(reached(&transport, &sender), "{}", rail.id());
+            }
+        }
+
+        let (transport, sender) = (
+            std::sync::Arc::new(Unreachable::default()),
+            std::sync::Arc::new(Sending::default()),
+        );
+        let sending = Runtime::with_sender(network, transport.clone(), sender.clone()).unwrap();
+        // A new installation from the profile's description: its wallet comes from the
+        // deployment, as the server derives it.
+        let (mut description, _) = rail.decode_profile(network, &fx.public_profile).unwrap();
+        description.wallet = String::new();
+        // The profile's own asset, by its symbol.
+        let asset = allowit_sdk::input::asset::Asset::Native {
+            code: description.asset_symbol.clone(),
+        };
+        let installation = runtime::Installation::policy_wallet(runtime::PolicyInstallation {
+            description,
+            policy_instance: [1; 32],
+            tier: runtime::Tier::Simple,
+            asset,
+            max_fee_units: 1_000_000,
+        })
+        .unwrap();
+        let refused = sending
+            .make_code_live(
+                &mut journal,
+                &installation,
+                &fx.wallet_code,
+                1_000_000,
+                poll,
+                1,
+            )
+            .unwrap_err();
+        assert!(!refused_by_core(&refused), "{}: {refused:?}", rail.id());
+        assert!(reached(&transport, &sender), "{}", rail.id());
+        assert!(!journal.pending());
+    });
+}
+
+/// A server holds the seed of each of its keys, such as a sending account's, and the rail signs
+/// with it: one seed is one key of the rail.
+#[test]
+fn a_signer_from_a_seed_is_the_rails_key_of_that_seed() {
+    testkit::each(Feature::Transfer, |rail, fx| {
+        let network = rail.test_support().network;
+        // Seeds of the rail's own key size, from the fixture's agent seed.
+        let size = rail.keys().entropy_bytes();
+        let seed: Vec<u8> = fx.agent_seed.iter().cycle().take(size).copied().collect();
+        let other: Vec<u8> = seed.iter().map(|b| b ^ 1).collect();
+        let signer = wallet::LocalSigner::from_seed(network, &seed).unwrap();
+        let again = wallet::LocalSigner::from_seed(network, &seed).unwrap();
+        assert_eq!(signer.public(), again.public(), "{}", rail.id());
+        assert_eq!(signer.network(), network);
+        signer.public().validate().unwrap();
+        assert!(!signer.sign_hash(&[5; 32]).unwrap().is_empty());
+        let other = wallet::LocalSigner::from_seed(network, &other).unwrap();
+        assert_ne!(other.address(), signer.address());
+        assert!(wallet::LocalSigner::from_seed(network, &seed[1..]).is_err());
+        assert!(wallet::LocalSigner::from_seed("unknown:network", &seed).is_err());
+    });
+}
+
 #[test]
 fn generation_on_another_network_stops_before_the_clock() {
     testkit::each(Feature::OwnerSetup, |rail, _| {
@@ -702,6 +867,20 @@ fn with_owner_context(network: &str, run: impl FnOnce(&owner::Context<'_>, &std:
     run(&cx, &root);
 }
 
+/// The asset of a new Native wallet is the rail's lookup, which refuses what the rail's setup
+/// refuses before the owner signs in: here an owner whose key is the server authority's.
+#[test]
+fn the_native_wallet_asset_is_refused_where_the_setup_refuses_before_the_sign_in() {
+    testkit::each(Feature::OwnerSetup, |rail, _| {
+        with_owner_context(rail.test_support().network, |cx, root| {
+            // The rail's own refusal, not Core's default refusal of a rail without the lookup.
+            let refused = owner::native_wallet_asset(cx).unwrap_err();
+            assert_ne!(refused.code, 3, "{}: {}", rail.id(), refused.message);
+            assert!(!root.exists());
+        });
+    });
+}
+
 #[test]
 fn an_invalid_document_stops_a_params_update_before_the_store_opens() {
     testkit::each(Feature::UpdateParams, |rail, _| {
@@ -886,32 +1065,6 @@ fn typed_changes_parse_owner_text_and_refuse_an_invalid_or_unknown_value() {
     });
 }
 
-/// A local key of a rail as the signer of a build statement.
-struct StatementKey {
-    network: &'static str,
-    key: Box<dyn allowit_sdk::portable::vendor::PrivateSigner>,
-}
-impl StatementKey {
-    fn of(rail: &dyn plugins::RailPlugin, seed: u8) -> Self {
-        let entropy = vec![seed; rail.keys().entropy_bytes()];
-        Self {
-            network: rail.test_support().network,
-            key: rail.keys().derive(&entropy).unwrap(),
-        }
-    }
-}
-impl custom_build::Signer for StatementKey {
-    fn network(&self) -> &str {
-        self.network
-    }
-    fn address(&self) -> &str {
-        self.key.address()
-    }
-    fn sign_hash(&self, digest: &[u8]) -> allowit_sdk::error::Result<Vec<u8>> {
-        self.key.sign_hash(digest)
-    }
-}
-
 #[test]
 fn a_rail_skips_the_custom_build_exactly_when_it_has_no_hook() {
     for rail in plugins::rails() {
@@ -932,72 +1085,81 @@ fn a_rail_skips_the_custom_build_exactly_when_it_has_no_hook() {
     assert!(!custom_build::supported("unknown:network"));
 }
 
+/// A host checks a source against the Custom wallet of a network without building it: the SDK
+/// gives exactly what the rail's own hook gives for the same source, a refusal included. Each rail
+/// states its own limits; its tests hold them.
 #[test]
-fn a_rail_binds_a_build_to_its_presignature_owner_and_code() {
-    use custom_build::{Admitted, code};
-    testkit::each(Feature::CustomBuild, |rail, fx| {
+fn a_host_checks_a_source_against_the_rails_custom_wallet_without_building() {
+    let writes = |keys: usize| -> String {
+        (1..=keys)
+            .map(|i| format!("    allowit::set_state(ctx, \"k{i}\", ctx.request.amount)?;\n"))
+            .collect()
+    };
+    let source = |writes: &str| {
+        format!(
+            "use allowit::prelude::*;\npub fn execute(ctx: &AllowitContext) -> allowit::Result {{\n{writes}    Ok(())\n}}\n"
+        )
+    };
+    let outcome =
+        |result: allowit_sdk::error::Result<()>| result.map_err(|error| error.to_string());
+    testkit::each(Feature::CustomBuild, |rail, _| {
         let network = rail.test_support().network;
-        let (server, owner, stranger) = (
-            StatementKey::of(rail, 1),
-            StatementKey::of(rail, 2),
-            StatementKey::of(rail, 3),
-        );
-        use custom_build::Signer as _;
-        let source = "pub fn execute() {}\n";
-        let presignature = custom_build::presign(&server, "policy-1", source).unwrap();
-        let admitted = Admitted {
-            network,
-            policy_id: "policy-1",
-            source,
-            server: server.address(),
-        };
-        custom_build::verify_presignature(&presignature, &admitted).unwrap();
-        let refused = |result: allowit_sdk::error::Result<()>| result.unwrap_err().api_code;
-        // Another policy, altered source and an untrusted server key.
-        for other in [
-            Admitted {
-                policy_id: "policy-2",
-                ..admitted
-            },
-            Admitted {
-                source: "pub fn execute() { /* altered */ }\n",
-                ..admitted
-            },
-            Admitted {
-                server: stranger.address(),
-                ..admitted
-            },
-        ] {
+        let hook = rail
+            .custom_wallet_build()
+            .expect("the rail builds a Custom wallet");
+        for keys in [1, 9] {
+            let source = source(&writes(keys));
             assert_eq!(
-                refused(custom_build::verify_presignature(&presignature, &other)).as_deref(),
-                Some(code::PRESIGNATURE_MISMATCH),
-                "{}",
+                outcome(custom_build::check(network, &source)),
+                outcome(hook.check(network, &source)),
+                "{} with {keys} keys",
                 rail.id()
             );
         }
-        // The rail hashes the fixture wallet code; the owner attests that hash.
+    });
+    assert!(custom_build::check("unknown:network", &source("")).is_err());
+}
+
+#[test]
+fn a_host_builds_only_the_signed_source_and_compares_the_code() {
+    use custom_build::code;
+    testkit::each(Feature::CustomBuild, |rail, fx| {
+        let network = rail.test_support().network;
+        // The rail hashes the fixture wallet code. A host compares its own build with the code
+        // that the server built and uploaded.
         assert!(!fx.wallet_code.is_empty(), "{}", rail.id());
         let hash = custom_build::code_hash(network, &fx.wallet_code).unwrap();
-        let attestation = custom_build::attest(&owner, &presignature, &hash).unwrap();
-        custom_build::verify_attestation(&attestation, &admitted, owner.address()).unwrap();
-        custom_build::check_code_hash(&attestation, &hash).unwrap();
-        // Another signer, and code with another hash.
-        let by_stranger = custom_build::attest(&stranger, &presignature, &hash).unwrap();
-        assert_eq!(
-            refused(custom_build::verify_attestation(
-                &by_stranger,
-                &admitted,
-                owner.address()
-            ))
-            .as_deref(),
-            Some(code::ATTESTATION_INVALID)
-        );
+        custom_build::check_code_hash(&hash, &hash).unwrap();
         let mut other = hash;
         other[0] ^= 1;
         assert_eq!(
-            refused(custom_build::check_code_hash(&attestation, &other)).as_deref(),
+            custom_build::check_code_hash(&hash, &other)
+                .unwrap_err()
+                .api_code
+                .as_deref(),
             Some(code::CODE_HASH_MISMATCH)
         );
         assert!(custom_build::code_hash(network, b"no wallet code").is_err());
+        // A server source that is not the source that the owner signed is refused before
+        // anything builds.
+        let admission: custom_build::Admission = serde_json::from_value(serde_json::json!({
+            "policyId": "policy-1",
+            "network": network,
+            "source": "pub fn execute() {}\n",
+            "build": null,
+        }))
+        .unwrap();
+        admission
+            .check_source(&allowit_sdk::digest(b"pub fn execute() {}\n"))
+            .unwrap();
+        assert!(
+            admission
+                .check_source(&allowit_sdk::digest(
+                    b"pub fn execute() { /* reviewed */ }\n"
+                ))
+                .unwrap_err()
+                .message
+                .contains("differs from the source that the owner signed")
+        );
     });
 }

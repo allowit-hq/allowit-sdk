@@ -51,7 +51,7 @@ impl Context<'_> {
 }
 pub use allowit_core::vendor::owner::{
     Activate, Comparison, Counters, Deploy, EditParams, HostPlacement, NativePlacement,
-    PairedExport, Revise, Setup, StateReadback, UpdateParams, Verification,
+    NativeWalletAsset, PairedExport, Revise, Setup, StateReadback, UpdateParams, Verification,
 };
 pub use allowit_core::vendor::runtime::ParamsUpdate;
 pub fn deploy(cx: &Context<'_>, request: Deploy<'_>) -> Result<serde_json::Value> {
@@ -108,6 +108,16 @@ pub fn setup(cx: &Context<'_>, request: Setup<'_>) -> Result<serde_json::Value> 
         .owner()
         .setup(&cx.provider_context(&store), request)
 }
+/// The asset of a new Native wallet on the context's network, read by the network's rail as its
+/// [`setup`] reads it and refused where the setup would refuse it. The owner signs in to read it
+/// and signs nothing else, so a host shows it before [`setup`] asks for the owner's signature.
+pub fn native_wallet_asset(cx: &Context<'_>) -> Result<NativeWalletAsset> {
+    cx.check()?;
+    let store = || owner_store(cx.root, cx.network);
+    for_network(cx.network)?
+        .owner()
+        .native_wallet_asset(&cx.provider_context(&store))
+}
 pub fn status(root: &Path, network: &str, rpc_url: &str, id: &str) -> Result<serde_json::Value> {
     let store = owner_store(root, network)?;
     for_network(network)?
@@ -141,14 +151,55 @@ pub fn update_params(cx: &Context<'_>, request: UpdateParams<'_>) -> Result<serd
         .owner()
         .update_params(&cx.provider_context(&store), request)
 }
-/// The owner's view of the build of a Custom policy on the backend: the server presignature,
-/// the build ticket and the build that the backend holds.
-pub fn custom_build(cx: &Context<'_>, policy_id: &str) -> Result<serde_json::Value> {
+/// One owner route that needs no rail step, such as the owner's reputation vote. The SDK signs
+/// the owner in ([`crate::owner_session::Session`]): the rail of the network only signs the
+/// sign-in message, as its wallets sign a text message. Then the SDK posts `body` to `path` under
+/// that session. `path` is an API route of the backend ([`check_route`]). The reply is the
+/// server's JSON.
+pub(crate) fn call(
+    cx: &Context<'_>,
+    path: &str,
+    body: &serde_json::Value,
+) -> Result<serde_json::Value> {
     cx.check()?;
-    let store = || owner_store(cx.root, cx.network);
-    for_network(cx.network)?
-        .owner()
-        .custom_build(&cx.provider_context(&store), policy_id)
+    check_route(path)?;
+    let signature = for_network(cx.network)?
+        .message_signature()
+        .ok_or_else(|| {
+            Error::unsupported("This rail signs no text message, so the owner cannot sign in here")
+        })?;
+    let session = crate::owner_session::Session::sign_in(
+        cx.authority.origin(),
+        cx.origin,
+        cx.network,
+        cx.signer,
+        signature,
+        (cx.clock)()?,
+    )?;
+    // The sign-in took time: the session's expiry is checked against the clock now.
+    session.post(path, body, (cx.clock)()?)
+}
+/// The path of an owner route: an API route of the configured backend, never another origin or
+/// another route after URL normalization. The route holds letters, digits, `_`, `-` and single
+/// `/` only, so no dot segment, encoded character or backslash can climb out of `/api/`. The
+/// query holds letters, digits and `%`, `=`, `&`, `_`, `-`, `.`, `:`.
+pub(crate) fn check_route(path: &str) -> Result<()> {
+    let (route, query) = path.split_once('?').unwrap_or((path, ""));
+    let route_ok = route.starts_with("/api/")
+        && route.len() > "/api/".len()
+        && !route.contains("//")
+        && route
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'/' | b'_' | b'-'));
+    let query_ok = query.bytes().all(|b| {
+        b.is_ascii_alphanumeric() || matches!(b, b'%' | b'=' | b'&' | b'_' | b'-' | b'.' | b':')
+    });
+    if path.len() > 512 || !route_ok || !query_ok {
+        return Err(Error::usage(
+            "An owner call names an API route of the backend",
+        ));
+    }
+    Ok(())
 }
 /// Compare the owner's installation document with the ledger and read the wallet state back.
 /// `Verification::matches` is true only when every comparison matches.
@@ -246,4 +297,42 @@ pub fn typed_changes(
         })
         .collect::<Result<_>>()?;
     Ok((typed, changes))
+}
+
+#[cfg(test)]
+mod route_tests {
+    use super::check_route;
+
+    #[test]
+    fn an_owner_call_reaches_an_api_route_of_the_backend_only() {
+        for path in [
+            "/api/native/reputation?network=example:testnet",
+            "/api/native/reputation?network=example%3Atestnet",
+            "/api/native/reputation/votes",
+        ] {
+            check_route(path).unwrap();
+        }
+        for path in [
+            "",
+            "/native/reputation",
+            "https://elsewhere.example/api/x",
+            "//elsewhere.example/api/x",
+            "/api/../auth/verify",
+            "/api/./x",
+            "/api//x",
+            "/api/x y",
+            "/api/x#y",
+            "/api/\u{7f}",
+            "/api/%2e%2e/auth/verify",
+            "/api/.%2E/auth/verify",
+            "/api/..\\auth/verify",
+            "/api/x\\y",
+            "/api/",
+            "/api/x?next=/auth/verify",
+            "/api/x?a=b c",
+        ] {
+            assert!(check_route(path).is_err(), "{path}");
+        }
+        assert!(check_route(&format!("/api/{}", "a".repeat(600))).is_err());
+    }
 }

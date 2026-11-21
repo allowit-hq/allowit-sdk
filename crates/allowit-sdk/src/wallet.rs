@@ -4,6 +4,9 @@ use crate::{
     plugins, routing,
 };
 use allowit_core::client::store::Store;
+/// A signer of a rail's messages and hashes, and the rail's text-message signature
+/// (`plugins::RailPlugin::message_signature`), with which a server signs its own statements.
+pub use allowit_core::vendor::wallet::{MessageSignature, Signer};
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 use zeroize::Zeroizing;
@@ -21,6 +24,17 @@ pub struct LocalSigner {
     key: Box<dyn plugins::PrivateSigner>,
 }
 impl LocalSigner {
+    /// The signer of the rail of `network` with the key of `seed`, which the caller holds, such
+    /// as the seed of a server's sending account. The rail derives the key and signs with it; the
+    /// seed has the rail's key size (`KeyProvider::entropy_bytes`).
+    pub fn from_seed(network: &str, seed: &[u8]) -> Result<Self> {
+        let network = routing::normalize(network)?;
+        let key = plugins::for_network(network)?.keys().derive(seed)?;
+        Ok(Self {
+            network: network.into(),
+            key,
+        })
+    }
     pub fn network(&self) -> &str {
         &self.network
     }
@@ -54,13 +68,7 @@ impl allowit_core::vendor::wallet::Signer for LocalSigner {
 
 #[cfg(test)]
 fn public(network: &str, entropy: &[u8]) -> Result<PublicWallet> {
-    let network = routing::normalize(network)?;
-    let key = plugins::for_network(network)?.keys().derive(entropy)?;
-    Ok(LocalSigner {
-        network: network.into(),
-        key,
-    }
-    .public())
+    Ok(LocalSigner::from_seed(network, entropy)?.public())
 }
 fn storage(path: &Path) -> Result<(Store, String)> {
     let name = path
