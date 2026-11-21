@@ -45,6 +45,19 @@ const sameTypes: [
   Same<WalletLimits, Core.WalletLimits>,
   Same<OperationReports, Core.OperationReports>,
 ] = [true, true, true, true, true, true, true, true, true, true, true, true, true, true, true, true, true];
+// The owner workflows take Core's reviewed policy. The installed policy is the same type with its wallet, and its rules
+// are required: a field that Core adds or changes reaches both inputs.
+type Reviewed = NonNullable<InstallAndFundInput['reviewed']>;
+type Installed = NonNullable<UpdateParamsInput['installed']>;
+const reviewedTypes: [
+  Same<Reviewed, Core.ReviewedPolicy>,
+  Same<keyof Installed, keyof Core.ReviewedPolicy | 'wallet'>,
+  Same<Omit<Installed, 'wallet' | 'rules'>, Omit<Core.ReviewedPolicy, 'rules'>>,
+  Same<Pick<Installed, 'rules'>, Required<Pick<Core.ReviewedPolicy, 'rules'>>>,
+  Same<Pick<Installed, 'wallet'>, {readonly wallet: string}>,
+] = [true, true, true, true, true];
+// @ts-expect-error An installed policy names its rules.
+const noRules: Installed = {wallet: 'w', source: 's', params: {}};
 // A document's reports, all Core's types.
 const five: Quantity = {units: '50000000', asset: {symbol: 'XYZ', decimals: 7, name: 'XYZ', native: true}, text: '5 XYZ'};
 const limit: PaymentLimit = {param: 'payment_limit', limit: five};
@@ -68,4 +81,4 @@ const page: SearchResult = {
 const value: ParamValue = {List: [{Int: '5'}, {Addr: 'a'}]};
 // @ts-expect-error A policy value holds exactly one storage tag.
 const twoTags: ParamValue = {Int: '5', Bool: true};
-void [chain, hooks, input, unclear, installAndFund, OwnerFlowError, sameTypes, page, value, twoTags, reports];
+void [chain, hooks, input, unclear, installAndFund, OwnerFlowError, sameTypes, reviewedTypes, noRules, page, value, twoTags, reports];
