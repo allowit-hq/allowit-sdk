@@ -922,9 +922,11 @@ impl Runtime {
     /// leaves before its wallet is installed, as a creation; every check and every send carries
     /// it. The rail checks the step ([`Self::validate_owner_signed`]) and `retain`
     /// keeps it before it leaves. It is sent once (`broadcast_owner`), again only while the
-    /// network did not accept it yet, and then looked up until its receipt. A step at or past
-    /// its time bound is never sent, before the call or during it: only its receipt answers, and
-    /// without one its result stays unknown. `now` is a whole second that the caller read before
+    /// network did not accept it yet, and then looked up until its receipt. The check of the
+    /// time bound before a send is a courtesy by the caller's clock: the network enforces the
+    /// bound, and a lapse is proven only by [`Self::owner_step_lapsed`]. A step that the check
+    /// refuses is not sent by this call: only its receipt answers, and without one its result
+    /// stays unknown. `now` is a whole second that the caller read before
     /// the call: every check and send takes the second after it plus the whole seconds that the
     /// call has taken.
     ///
@@ -958,7 +960,8 @@ impl Runtime {
             ),
             ..e
         };
-        // At or past its bound a step is never sent: only its receipt answers.
+        // A step that the check of the bound refuses is not sent by this call: only its
+        // receipt answers.
         let past_bound = || match self.observe_owner(p) {
             Ok(Some(receipt)) => Ok(receipt),
             Ok(None) => Err(crate::error::Error::uncertain(
@@ -1024,9 +1027,10 @@ impl Runtime {
     /// The cutoff ([`OwnerSignedInfo::expires_at`]) is final. A possibly sent step is closed in
     /// the journal when the call's clock has reached it: the clock is read after each lookup,
     /// also one that failed, and after a send. At its cutoff no answer of a lookup clears it,
-    /// and a closed step is looked up for its receipt only. A closed step is never sent again, also when a later call brings an earlier
-    /// clock: only its receipt or its lapse ([`Self::owner_step_lapsed`]) ends it. A step that
-    /// was never sent returns the rail's refusal, and at its cutoff the caller drops it.
+    /// and a closed step is looked up for its receipt only. This journal sends a closed step
+    /// never again, also when a later call brings an earlier clock: only its receipt or its
+    /// lapse ([`Self::owner_step_lapsed`]) ends it. A step that was never sent returns the
+    /// rail's refusal, and at its cutoff the caller drops it.
     ///
     /// A step is recorded as possibly sent before it leaves. The answer of a send speaks for
     /// that send only: a send that the rail refused or the network rejected is that error, and
