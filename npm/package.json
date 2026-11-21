@@ -17,7 +17,7 @@
   },
   "dependencies": {
     "@allowit/core": "github:allowit-hq/allowit-core#463c244aec5111c36d0cb09db6de312c6bd737f4",
-    "@allowit/stellar": "github:allowit-hq/allowit-contracts-stellar#c77675e42dd824b1cc84ebe7a27c248ea736952f&path:/npm/stellar"
+    "@allowit/stellar": "github:allowit-hq/allowit-contracts-stellar#4ec48304d72b33668ece3d83af117b0486cd2754&path:/npm/stellar"
   },
   "scripts": {
     "test": "node --test tests/*.test.mjs"
