@@ -264,7 +264,8 @@ pub struct OwnerStepRecord {
 }
 /// A journal of owner-signed steps by their identity ([`OwnerSigned::info`]): the owner steps'
 /// [`OperationStore`], with its one writer. A record binds a step's identity to its signed
-/// bytes and to its installation.
+/// bytes and to its installation. A store keeps what is final: it never reopens a closed record
+/// and never replaces the status of a receipt.
 pub trait OwnerStepStore {
     fn load(&self, identity: &[u8]) -> Result<Option<OwnerStepRecord>>;
     fn record(&mut self, identity: &[u8], record: &OwnerStepRecord) -> Result<()>;
@@ -279,6 +280,12 @@ impl OwnerStepStore for MemoryOwnerSteps {
     fn record(&mut self, identity: &[u8], record: &OwnerStepRecord) -> Result<()> {
         if let Some(held) = self.0.get(identity) {
             same_owner_step(held, &record.step, record.wallet.as_deref())?;
+            let ended = matches!(held.status, Status::Confirmed | Status::Failed);
+            if (held.closed && !record.closed) || (ended && record.status != held.status) {
+                return Err(crate::error::Error::config(
+                    "Owner step record is final: it is not reopened",
+                ));
+            }
         }
         self.0.insert(identity.to_vec(), record.clone());
         Ok(())
@@ -1014,20 +1021,28 @@ impl Runtime {
     /// send, the same bytes are sent again while the lookup stays inconclusive and the rail's
     /// check passes. A lookup that fails is that error: nothing is sent, and the record stays.
     ///
-    /// The cutoff ([`OwnerSignedInfo::expires_at`]) is final. A possibly sent step that
-    /// reaches it is closed in the journal before anything is looked up, and is never sent
-    /// again, also when a later call brings an earlier clock: only its receipt or its lapse
-    /// ([`Self::owner_step_lapsed`]) ends it. A step that was never sent returns the rail's
-    /// refusal, and the caller drops it.
+    /// The cutoff ([`OwnerSignedInfo::expires_at`]) is final. A possibly sent step is closed in
+    /// the journal when the call's clock has reached it: the clock is read after each lookup,
+    /// also one that failed, and after a send. At its cutoff no answer of a lookup clears it,
+    /// and a closed step is looked up for its receipt only. A closed step is never sent again, also when a later call brings an earlier
+    /// clock: only its receipt or its lapse ([`Self::owner_step_lapsed`]) ends it. A step that
+    /// was never sent returns the rail's refusal, and at its cutoff the caller drops it.
     ///
     /// A step is recorded as possibly sent before it leaves. The answer of a send speaks for
     /// that send only: a send that the rail refused or the network rejected is that error, and
     /// it leaves a step that was never sent before as not sent, and an earlier uncertain send
     /// as possibly sent. A refusal for this attempt (`CONTRACT_EXPIRED`) and a check that got no
-    /// answer are that error too and change nothing: a later call checks again. `now` is a whole
-    /// second that the caller read before the call: every check and send takes the second after
-    /// it plus the whole seconds that the call has taken. The answer is never final without a
-    /// receipt.
+    /// answer are that error too: a possibly sent step stays as it was, a step that was never
+    /// sent stays not sent, and a later call checks again. `now` is a whole second that the
+    /// caller read before the call: every check and send takes the second after it plus the
+    /// whole seconds that the call has taken. The answer is never final without a receipt.
+    ///
+    /// A journal write that fails ends the call with that failure, and the journal then holds
+    /// what it held before that write. So a step that the rail did not send can stay recorded as
+    /// possibly sent, and a step that the network accepted as possibly sent only: a later call
+    /// looks it up, and Core lets the same bytes leave again while that lookup stays
+    /// inconclusive. A journal that loses the write that closes a step can reopen it only for a
+    /// caller whose clock goes back.
     pub fn submit_owner_step(
         &self,
         store: &mut dyn OwnerStepStore,
@@ -1058,13 +1073,20 @@ impl Runtime {
         if matches!(record.status, Status::Confirmed | Status::Failed) {
             return Ok(record.status);
         }
-        if record.status != Status::Prepared {
-            // The cutoff is final for a possibly sent step: it closes before any lookup.
-            if !record.closed && clock() >= info.expires_at {
+        // The cutoff is final for a possibly sent step: the step closes when the call's clock
+        // has reached it. A lookup and a send take time, so the clock is read after each
+        // lookup, also one that failed, and after a send.
+        let close_at_cutoff = |record: &mut OwnerStepRecord, store: &mut dyn OwnerStepStore| {
+            if record.status != Status::Prepared && !record.closed && clock() >= info.expires_at {
                 record.closed = true;
-                store.record(&id, &record)?;
+                store.record(&id, record)?;
             }
-            if let Some(receipt) = self.observe_owner(p)? {
+            Ok::<(), crate::error::Error>(())
+        };
+        if record.status != Status::Prepared {
+            let receipt = self.observe_owner(p);
+            close_at_cutoff(&mut record, store)?;
+            if let Some(receipt) = receipt? {
                 record.status = receipt.info()?.status;
                 store.record(&id, &record)?;
                 return Ok(record.status);
@@ -1072,7 +1094,14 @@ impl Runtime {
             if record.closed {
                 return Ok(record.status);
             }
-            match self.provider.owner_status(&step)? {
+            let held = self.provider.owner_status(&step);
+            close_at_cutoff(&mut record, store)?;
+            let held = held?;
+            // At its cutoff a possibly sent step stays so, whatever this lookup answered.
+            if record.closed {
+                return Ok(record.status);
+            }
+            match held {
                 Status::Submitted => {
                     if record.status != Status::Submitted {
                         record.status = Status::Submitted;
@@ -1092,18 +1121,24 @@ impl Runtime {
             }
         }
         let possibly_sent = record.status != Status::Prepared;
-        // The cutoff closes a possibly sent step; any other refusal of this attempt changes
-        // nothing.
-        let close = |e, record: &mut OwnerStepRecord, store: &mut dyn OwnerStepStore| {
+        // An attempt that the rail refused or the network rejected. The refusal of the cutoff
+        // closes a possibly sent step, and so does the call's clock; any other refusal leaves
+        // the step as it was.
+        let refused = |e: crate::error::Error,
+                       record: &mut OwnerStepRecord,
+                       store: &mut dyn OwnerStepStore| {
             if possibly_sent && owner_step_expired(&e) {
-                record.closed = true;
-                store.record(&id, record)?;
+                if !record.closed {
+                    record.closed = true;
+                    store.record(&id, record)?;
+                }
                 return Ok(record.status.clone());
             }
+            close_at_cutoff(record, store)?;
             Err(e)
         };
         if let Err(e) = self.provider.validate_owner_signed(&step, on, clock()) {
-            return close(e, &mut record, store);
+            return refused(e, &mut record, store);
         }
         if !possibly_sent {
             record.status = Status::SubmissionUnknown;
@@ -1114,14 +1149,19 @@ impl Runtime {
             Ok(Status::Prepared) if !possibly_sent => record.status = Status::Prepared,
             // Uncertain, or not accepted after an earlier uncertain send: possibly sent.
             Ok(_) => {}
-            // The rail refused this send or the network rejected it: nothing of it is pending.
+            // The rail refused this send or the network rejected it: nothing of it is pending,
+            // and a step that was never sent before is recorded as not sent.
             Err(e) => {
                 if !possibly_sent {
                     record.status = Status::Prepared;
                     store.record(&id, &record)?;
                 }
-                return close(e, &mut record, store);
+                return refused(e, &mut record, store);
             }
+        }
+        // The send took time too.
+        if record.status != Status::Prepared && clock() >= info.expires_at {
+            record.closed = true;
         }
         store.record(&id, &record)?;
         Ok(record.status)
@@ -1285,6 +1325,13 @@ mod code_transactions {
         owner_dropped: bool,
         /// How long a lookup of the owner step's receipt takes.
         owner_lookup_time: std::time::Duration,
+        /// How long a lookup of what the network holds of the owner step takes.
+        owner_status_time: std::time::Duration,
+        owner_status_lookups: usize,
+        /// How long a send of the owner step takes.
+        owner_send_time: std::time::Duration,
+        /// The checks of the owner step that pass before `owner_refusal` applies.
+        owner_checks_before_refusal: usize,
         /// The lookups of what the network holds of the owner step fail.
         owner_status_fails: bool,
         /// The rail's check of the owner step gets no answer.
@@ -1680,11 +1727,13 @@ mod code_transactions {
                 return Err(crate::error::Error::uncertain("The check got no answer"));
             }
             match chain.owner_refusal {
-                Some(code) => Err(crate::error::Error::coded(
-                    code,
-                    "The rail refuses the step",
-                )),
-                None => Ok(()),
+                Some(code) if chain.owner_checked_at.len() > chain.owner_checks_before_refusal => {
+                    Err(crate::error::Error::coded(
+                        code,
+                        "The rail refuses the step",
+                    ))
+                }
+                _ => Ok(()),
             }
         }
         fn broadcast_owner(
@@ -1694,6 +1743,8 @@ mod code_transactions {
             now: u64,
         ) -> Result<Status> {
             self.validate_owner_signed(p, on, now)?;
+            let time = self.0.lock().unwrap().owner_send_time;
+            std::thread::sleep(time);
             let mut chain = self.0.lock().unwrap();
             chain.owner_packets.push(p.0.document().get().into());
             chain.owner_sends += 1;
@@ -1701,15 +1752,23 @@ mod code_transactions {
             if chain.owner_rejected {
                 return Err(crate::error::Error::config("The network rejected the send"));
             }
-            Ok(if chain.owner_answers.is_empty() {
+            let answer = if chain.owner_answers.is_empty() {
                 Status::Submitted
             } else {
                 chain.owner_answers.remove(0)
-            })
+            };
+            // A network that accepted the step holds something of it again.
+            if answer == Status::Submitted {
+                chain.owner_dropped = false;
+            }
+            Ok(answer)
         }
         fn owner_status(&self, p: &native::OwnerSigned) -> Result<Status> {
+            let time = self.0.lock().unwrap().owner_status_time;
+            std::thread::sleep(time);
             let mut chain = self.0.lock().unwrap();
             chain.owner_packets.push(p.0.document().get().into());
+            chain.owner_status_lookups += 1;
             if chain.owner_status_fails {
                 return Err(crate::error::Error::uncertain("The lookup got no answer"));
             }
@@ -1725,7 +1784,8 @@ mod code_transactions {
             let mut chain = self.0.lock().unwrap();
             chain.owner_packets.push(p.0.document().get().into());
             chain.owner_lapse_since.push(since);
-            Ok(true)
+            // A step that the network holds did not lapse.
+            Ok(!chain.owner_held)
         }
         fn wallet_closed(&self, i: &native::Installation) -> Result<bool> {
             let mut chain = self.0.lock().unwrap();
@@ -3040,10 +3100,15 @@ mod code_transactions {
             assert!(pass(99).is_err());
             chain.lock().unwrap().owner_lookup_fails = None;
             chain.lock().unwrap().owner_dropped = true;
-            let lookups = chain.lock().unwrap().owner_lookups;
+            let (lookups, held) = {
+                let seen = chain.lock().unwrap();
+                (seen.owner_lookups, seen.owner_status_lookups)
+            };
             assert_eq!(pass(12).unwrap(), status.clone());
             let seen = chain.lock().unwrap();
             assert_eq!((seen.owner_sends, seen.owner_lookups), (1, lookups + 1));
+            // A closed step is looked up for its receipt only.
+            assert_eq!(seen.owner_status_lookups, held);
             drop(seen);
             assert_eq!(journaled(&journal), (status, true));
             // Its receipt ends a closed step.
@@ -3145,35 +3210,148 @@ mod code_transactions {
         let seen = chain.lock().unwrap();
         assert_eq!((seen.owner_sends, seen.owner_lookups), (1, 0));
     }
-    /// The journal form counts the time that its lookups take: a step whose cutoff passes
-    /// during them is closed and not sent.
+    /// The journal form reads its clock after each lookup, since a lookup takes time: a
+    /// possibly sent step whose cutoff passes during a lookup of its receipt, also one that
+    /// fails, or during a lookup of what the network holds, is closed and not sent. At its
+    /// cutoff no answer of that lookup clears it, and no later call with an earlier clock sends
+    /// it.
     #[test]
-    fn the_journal_form_checks_a_send_at_the_clock_after_its_lookups() {
+    fn a_step_whose_cutoff_passes_during_a_lookup_is_closed() {
+        let slow = std::time::Duration::from_millis(1_050);
+        // The receipt lookup is slow and answers nothing; it is slow and fails; the lookup of
+        // the network's hold is slow and shows nothing pending.
+        for case in 0..3 {
+            let (runtime, chain, step) = owner_run(
+                Chain {
+                    owner_answers: vec![Status::SubmissionUnknown],
+                    ..Chain::default()
+                },
+                12,
+            );
+            let mut journal = MemoryOwnerSteps::default();
+            let mut pass = |now| runtime.submit_owner_step(&mut journal, &step, None, now);
+            assert_eq!(pass(9).unwrap(), Status::SubmissionUnknown);
+            {
+                let mut chain = chain.lock().unwrap();
+                match case {
+                    0 => chain.owner_lookup_time = slow,
+                    1 => {
+                        chain.owner_lookup_time = slow;
+                        chain.owner_lookup_fails =
+                            Some(crate::error::Error::uncertain("no answer"));
+                    }
+                    _ => {
+                        chain.owner_status_time = slow;
+                        chain.owner_dropped = true;
+                    }
+                }
+            }
+            // The call begins at clock 11, before the cutoff 12, and reaches it in the lookup.
+            let answer = pass(10);
+            if case == 1 {
+                assert!(answer.is_err());
+            } else {
+                assert_eq!(answer.unwrap(), Status::SubmissionUnknown, "{case}");
+            }
+            // A later call with an earlier clock, quick lookups and nothing pending: not sent.
+            {
+                let mut chain = chain.lock().unwrap();
+                chain.owner_lookup_time = std::time::Duration::ZERO;
+                chain.owner_status_time = std::time::Duration::ZERO;
+                chain.owner_lookup_fails = None;
+                chain.owner_dropped = true;
+            }
+            assert_eq!(pass(5).unwrap(), Status::SubmissionUnknown, "{case}");
+            assert_eq!(
+                journaled(&journal),
+                (Status::SubmissionUnknown, true),
+                "{case}"
+            );
+            let seen = chain.lock().unwrap();
+            // The one send of the first call, and its two checks: no check came after.
+            assert_eq!(seen.owner_sent_at, [10], "{case}");
+            assert_eq!(seen.owner_checked_at, [10, 10], "{case}");
+        }
+    }
+    /// A send takes time too: a step whose cutoff passes during its send is closed with the
+    /// send's own answer, and no later call sends it again.
+    #[test]
+    fn a_step_whose_cutoff_passes_during_its_send_is_closed() {
         let (runtime, chain, step) = owner_run(
             Chain {
                 owner_answers: vec![Status::SubmissionUnknown],
+                owner_send_time: std::time::Duration::from_millis(1_050),
                 ..Chain::default()
             },
             12,
         );
         let mut journal = MemoryOwnerSteps::default();
-        assert_eq!(
-            runtime
-                .submit_owner_step(&mut journal, &step, None, 9)
-                .unwrap(),
-            Status::SubmissionUnknown
-        );
-        chain.lock().unwrap().owner_lookup_time = std::time::Duration::from_millis(1_050);
-        assert_eq!(
-            runtime
-                .submit_owner_step(&mut journal, &step, None, 10)
-                .unwrap(),
-            Status::SubmissionUnknown
-        );
+        let mut pass = |now| runtime.submit_owner_step(&mut journal, &step, None, now);
+        assert_eq!(pass(10).unwrap(), Status::SubmissionUnknown);
+        chain.lock().unwrap().owner_send_time = std::time::Duration::ZERO;
+        assert_eq!(pass(5).unwrap(), Status::SubmissionUnknown);
         assert_eq!(journaled(&journal), (Status::SubmissionUnknown, true));
+        assert_eq!(chain.lock().unwrap().owner_sends, 1);
+    }
+    /// A refusal for this attempt that comes from the send's own check, after the step was
+    /// recorded as possibly sent, sends nothing: a step that was never sent before is recorded
+    /// as not sent, and the next call sends it with no lookup.
+    #[test]
+    fn a_first_send_that_its_own_check_refuses_leaves_the_step_not_sent() {
+        let (runtime, chain, step) = owner_run(
+            Chain {
+                owner_refusal: Some(native::CONTRACT_EXPIRED),
+                // The check before the record passes; the check of the send refuses.
+                owner_checks_before_refusal: 1,
+                ..Chain::default()
+            },
+            100,
+        );
+        let mut journal = MemoryOwnerSteps::default();
+        let error = runtime
+            .submit_owner_step(&mut journal, &step, None, 10)
+            .unwrap_err();
+        assert_eq!(error.api_code.as_deref(), Some(native::CONTRACT_EXPIRED));
+        assert_eq!(journaled(&journal), (Status::Prepared, false));
+        assert_eq!(chain.lock().unwrap().owner_sends, 0);
+        chain.lock().unwrap().owner_refusal = None;
+        assert_eq!(
+            runtime
+                .submit_owner_step(&mut journal, &step, None, 11)
+                .unwrap(),
+            Status::Submitted
+        );
         let seen = chain.lock().unwrap();
-        assert_eq!(seen.owner_sent_at, [10]);
-        assert_eq!(seen.owner_checked_at.last(), Some(&12));
+        assert_eq!((seen.owner_sends, seen.owner_lookups), (1, 0));
+    }
+    /// The journal in memory keeps what is final: a closed record is not reopened and the
+    /// status of a receipt is not replaced, also by a copy of the record that was read before.
+    #[test]
+    fn the_memory_journal_never_reopens_a_final_record() {
+        let (_, _, step) = owner_run(Chain::default(), 100);
+        let record = |status, closed| OwnerStepRecord {
+            step: step.clone(),
+            wallet: None,
+            status,
+            closed,
+        };
+        let id = [9u8; 32];
+        let mut journal = MemoryOwnerSteps::default();
+        let open = record(Status::SubmissionUnknown, false);
+        journal.record(&id, &open).unwrap();
+        journal
+            .record(&id, &record(Status::SubmissionUnknown, true))
+            .unwrap();
+        // The earlier copy would reopen the step.
+        assert!(journal.record(&id, &open).is_err());
+        assert_eq!(journaled(&journal), (Status::SubmissionUnknown, true));
+        // A closed step still takes its receipt, and the receipt's status then stays.
+        journal.record(&id, &record(Status::Failed, true)).unwrap();
+        for other in [Status::Confirmed, Status::Submitted, Status::Prepared] {
+            assert!(journal.record(&id, &record(other, true)).is_err());
+        }
+        journal.record(&id, &record(Status::Failed, true)).unwrap();
+        assert_eq!(journaled(&journal), (Status::Failed, true));
     }
     /// A journal write that fails ends the call with that failure: a step is not sent before
     /// its record as possibly sent is kept.
@@ -3215,6 +3393,8 @@ mod code_transactions {
         );
         chain.lock().unwrap().owner_held = true;
         assert_eq!(runtime.owner_status(&step).unwrap(), Status::Submitted);
+        assert!(!runtime.owner_step_lapsed(&step, 41).unwrap());
+        chain.lock().unwrap().owner_held = false;
         assert!(runtime.owner_step_lapsed(&step, 42).unwrap());
         assert!(runtime.wallet_closed(&wallet).unwrap());
         let close = runtime.prepare_close(&wallet, 55, 66).unwrap();
@@ -3225,15 +3405,15 @@ mod code_transactions {
             ("fund", vec![9; 32], 100)
         );
         let seen = chain.lock().unwrap();
-        // The two checks, the send with its own check, two lookups and the lapse proof carried
-        // the step's own packet.
-        assert_eq!(seen.owner_packets, vec![r#"{"expires":100}"#; 7]);
+        // The two checks, the send with its own check, two lookups and the two lapse proofs
+        // carried the step's own packet.
+        assert_eq!(seen.owner_packets, vec![r#"{"expires":100}"#; 8]);
         assert_eq!(seen.owner_checked_at, [7, 8, 9]);
         // Each wrapper passed the installation that it was given, or none.
         let wallet = Some("wallet".to_owned());
         assert_eq!(seen.owner_checked_on, [wallet.clone(), wallet, None]);
         assert_eq!(seen.owner_sent_at, [8]);
-        assert_eq!(seen.owner_lapse_since, [42]);
+        assert_eq!(seen.owner_lapse_since, [41, 42]);
         assert_eq!(seen.owner_closed_wallets, ["wallet"]);
         assert_eq!(seen.owner_closes, [("wallet".to_owned(), 55, 66)]);
     }
