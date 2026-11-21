@@ -258,7 +258,8 @@ export interface RailPlugin {
   readonly test: {
     network: string;
     skips: Readonly<Partial<Record<Feature, string>>>;
-    fixtures: {address: string; invalidAddress: string; txHash: string; asset: string};
+    /** `accounts`: more valid accounts, each distinct from `address`, for a test that needs several roles. */
+    fixtures: {address: string; invalidAddress: string; txHash: string; asset: string; accounts?: readonly string[]};
   };
 }
 
