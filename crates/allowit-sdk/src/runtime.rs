@@ -2883,6 +2883,29 @@ mod code_transactions {
                 .is_err()
         );
     }
+    /// After an uncertain send, a step that the network holds is not sent again: the journal
+    /// records it as accepted, and it waits for its receipt.
+    #[test]
+    fn a_possibly_sent_step_that_the_network_holds_is_not_sent_again() {
+        let (runtime, chain, step) = owner_run(
+            Chain {
+                owner_answers: vec![Status::SubmissionUnknown],
+                ..Chain::default()
+            },
+            100,
+        );
+        let mut journal = MemoryOwnerSteps::default();
+        let mut pass = |now| runtime.submit_owner_step(&mut journal, &step, None, now);
+        assert_eq!(pass(10).unwrap(), Status::SubmissionUnknown);
+        chain.lock().unwrap().owner_held = true;
+        assert_eq!(pass(11).unwrap(), Status::Submitted);
+        // The lookup then finds nothing: an accepted step still waits.
+        chain.lock().unwrap().owner_held = false;
+        assert_eq!(pass(12).unwrap(), Status::Submitted);
+        assert_eq!(journaled(&journal), (Status::Submitted, false));
+        let seen = chain.lock().unwrap();
+        assert_eq!((seen.owner_sends, seen.owner_lookups), (1, 2));
+    }
     /// The journal binds a step to its installation: every check and every send carries it, and
     /// a call for the same step with another installation, or with none, is refused before
     /// anything is read or sent.
@@ -3182,9 +3205,10 @@ mod code_transactions {
             .validate_owner_signed(&step, Some(&wallet), 7)
             .unwrap();
         assert_eq!(
-            runtime.broadcast_owner(&step, None, 8).unwrap(),
+            runtime.broadcast_owner(&step, Some(&wallet), 8).unwrap(),
             Status::Submitted
         );
+        runtime.validate_owner_signed(&step, None, 9).unwrap();
         assert_eq!(
             runtime.owner_status(&step).unwrap(),
             Status::SubmissionUnknown
@@ -3201,12 +3225,13 @@ mod code_transactions {
             ("fund", vec![9; 32], 100)
         );
         let seen = chain.lock().unwrap();
-        // The check, the send with its own check, two lookups and the lapse proof carried the
-        // step's own packet.
-        assert_eq!(seen.owner_packets, vec![r#"{"expires":100}"#; 6]);
-        assert_eq!(seen.owner_checked_at, [7, 8]);
-        // Each wrapper passed its own installation.
-        assert_eq!(seen.owner_checked_on, [Some("wallet".to_owned()), None]);
+        // The two checks, the send with its own check, two lookups and the lapse proof carried
+        // the step's own packet.
+        assert_eq!(seen.owner_packets, vec![r#"{"expires":100}"#; 7]);
+        assert_eq!(seen.owner_checked_at, [7, 8, 9]);
+        // Each wrapper passed the installation that it was given, or none.
+        let wallet = Some("wallet".to_owned());
+        assert_eq!(seen.owner_checked_on, [wallet.clone(), wallet, None]);
         assert_eq!(seen.owner_sent_at, [8]);
         assert_eq!(seen.owner_lapse_since, [42]);
         assert_eq!(seen.owner_closed_wallets, ["wallet"]);
