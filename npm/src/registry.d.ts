@@ -1,4 +1,4 @@
-import type {OwnerChain, OwnerStep as CoreOwnerStep, PolicyValue as ParamValue, WalletAsset} from '@allowit/core';
+import type {OwnerChain, OwnerStep as CoreOwnerStep, PolicyValue as ParamValue, ReviewedPolicy} from '@allowit/core';
 import type {
   WalletKindId,
   WalletKindInfo,
@@ -160,7 +160,7 @@ export interface InstallAndFundInput {
    * the asset that the policy pays in, as the policy names it. A keypair wallet is set up to hold it, `amount` is in
    * it, and the approval must name it. Without one it is the asset of the network itself.
    */
-  reviewed?: {source: string; params: Record<string, ParamValue>; rules?: unknown; tier?: unknown; asset?: WalletAsset | null | undefined};
+  reviewed?: ReviewedPolicy;
   /**
    * The wallet kind that the owner reviewed. It decides the workflow, never the service's reply: whether the owner sets
    * up a wallet account (`native`) and whether a creation needs the owner's build (`custom`). A deployment reply that
@@ -196,7 +196,7 @@ export interface UpdateParamsInput {
    * whose change is an approval of the whole policy signs only this policy with the changed params replaced. `asset`
    * is the asset that the policy pays in; without one it is the asset of the network itself.
    */
-  installed?: {wallet: string; source: string; rules: unknown; params: Record<string, ParamValue>; tier?: unknown; asset?: WalletAsset | null | undefined};
+  installed?: ReviewedPolicy & {readonly wallet: string; readonly rules: unknown};
   onStep: (text: string) => void;
 }
 /** Typed codes of the owner workflow. `OwnerFlowFailure.code` holds one, another server code or null. */
