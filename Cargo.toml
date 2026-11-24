@@ -12,6 +12,8 @@ repository = "https://github.com/allowit-hq/allowit-sdk"
 # revision, so Cargo builds one copy of core and the plugin trait objects match.
 [workspace.dependencies]
 allowit-core = { git = "https://github.com/allowit-hq/allowit-core.git", rev = "2631c66a47465268d160eee66c9f8d1a3c2300d5", default-features = false }
+# Local verification only: the Solana rail from its worktree. A release names a git revision.
+allowit-solana = { path = "../solana-rail-plugin/crates/allowit-solana" }
 allowit-stellar = { git = "https://github.com/allowit-hq/allowit-contracts-stellar.git", rev = "252272855824abb766ddca28b7c3ba7756e867ec" }
 
 # Every Allowit workspace uses this profile block, so a shared target directory

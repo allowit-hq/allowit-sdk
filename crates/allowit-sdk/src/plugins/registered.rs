@@ -5,6 +5,7 @@ use allowit_core::{policy_package::PolicyPackage, vendor::plugin::RailPlugin};
 #[rustfmt::skip]
 pub(super) static RAILS: &[&dyn RailPlugin] = &[
     &allowit_stellar::PLUGIN,
+    &allowit_solana::PLUGIN,
 ];
 
 /// Each imported package, under its import alias. This build registers none.
