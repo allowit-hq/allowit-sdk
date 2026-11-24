@@ -43,6 +43,18 @@ test('at least one rail is registered', () => {
   assert.equal(customElements.get('allowit-rail'), sdk.AllowitRail);
 });
 
+test('rails keep the stated registration order, which decides the first network', async () => {
+  // The export names of the registration module start with each rail's place, and the registry follows them.
+  const registered = await import('../src/registered.js');
+  const place = (name) => Number(/^rail([1-9][0-9]*)[A-Z]/.exec(name)[1]);
+  const names = Object.keys(registered).sort((a, b) => place(a) - place(b));
+  assert.deepEqual(names.map(place), names.map((_, index) => index + 1));
+  assert.deepEqual(sdk.rails(), names.map((name) => registered[name]));
+  assert.equal(new Set(sdk.rails()).size, sdk.rails().length);
+  // A new rail is registered after the rails that hosts already default to.
+  assert.equal(sdk.networks()[0], sdk.rails()[0].networks[0]);
+});
+
 for (const rail of sdk.rails()) {
   const {network, skips, fixtures} = rail.test;
 

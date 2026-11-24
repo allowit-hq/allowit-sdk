@@ -17,6 +17,7 @@ e2e = []
 
 [dependencies]
 allowit-core = { workspace = true, features = ["std", "policy-source", "client", "transport", "vendor"] }
+allowit-solana = { workspace = true }
 allowit-stellar = { workspace = true, features = ["test-support"] }
 base64 = "0.22"
 getrandom = "0.3"
