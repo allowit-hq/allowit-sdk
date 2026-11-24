@@ -170,8 +170,8 @@ importers:
         specifier: github:allowit-hq/allowit-core#463c244aec5111c36d0cb09db6de312c6bd737f4
         version: https://codeload.github.com/allowit-hq/allowit-core/tar.gz/463c244aec5111c36d0cb09db6de312c6bd737f4
       '@allowit/solana':
-        specifier: github:allowit-hq/allowit-contracts-solana#5ddb898a560001a2e1d4abc463e02e015bb8e7ca&path:/npm/solana
-        version: https://codeload.github.com/allowit-hq/allowit-contracts-solana/tar.gz/5ddb898a560001a2e1d4abc463e02e015bb8e7ca#path:/npm/solana
+        specifier: github:allowit-hq/allowit-contracts-solana#0b2b463dfb565e13ce1a4d86e6d9dba07db92860&path:/npm/solana
+        version: https://codeload.github.com/allowit-hq/allowit-contracts-solana/tar.gz/0b2b463dfb565e13ce1a4d86e6d9dba07db92860#path:/npm/solana
       '@allowit/stellar':
         specifier: github:allowit-hq/allowit-contracts-stellar#718cce3c720c756669cc3a1ce7d0bdb88c109de1&path:/npm/stellar
         version: https://codeload.github.com/allowit-hq/allowit-contracts-stellar/tar.gz/718cce3c720c756669cc3a1ce7d0bdb88c109de1#path:/npm/stellar(debug@4.4.3)
@@ -186,8 +186,8 @@ packages:
     resolution: {gitHosted: true, integrity: sha512-IRkF24silztrv+AnYFwlTma8rM+tMKu26f2EAOb5jZPn1Iqg0WQUwxy/1MzbmBoeltcxrT9pfqyQA6Cx3X/G6A==, tarball: https://codeload.github.com/allowit-hq/allowit-core/tar.gz/463c244aec5111c36d0cb09db6de312c6bd737f4}
     version: 0.15.5
 
-  '@allowit/solana@https://codeload.github.com/allowit-hq/allowit-contracts-solana/tar.gz/5ddb898a560001a2e1d4abc463e02e015bb8e7ca#path:/npm/solana':
-    resolution: {gitHosted: true, integrity: sha512-DIIRnIEvyMl9IPj2t1p8gWzu2/riFQfi7rEk2NSVofSywlPaewYqzAtIeGzjDQZQTaXivdXRp+oL0RF3/kR5Xg==, path: /npm/solana, tarball: https://codeload.github.com/allowit-hq/allowit-contracts-solana/tar.gz/5ddb898a560001a2e1d4abc463e02e015bb8e7ca}
+  '@allowit/solana@https://codeload.github.com/allowit-hq/allowit-contracts-solana/tar.gz/0b2b463dfb565e13ce1a4d86e6d9dba07db92860#path:/npm/solana':
+    resolution: {gitHosted: true, integrity: sha512-HsbRB4DlGu33vkr7k0BlQ17BFg0sF06A8KI4PTcoEVv2gklKxDNCa2C4tWF9uc1Fy33LF6I6p212WFSfyMBNzQ==, path: /npm/solana, tarball: https://codeload.github.com/allowit-hq/allowit-contracts-solana/tar.gz/0b2b463dfb565e13ce1a4d86e6d9dba07db92860}
     version: 0.1.0
 
   '@allowit/stellar@https://codeload.github.com/allowit-hq/allowit-contracts-stellar/tar.gz/718cce3c720c756669cc3a1ce7d0bdb88c109de1#path:/npm/stellar':
@@ -400,7 +400,7 @@ snapshots:
 
   '@allowit/core@https://codeload.github.com/allowit-hq/allowit-core/tar.gz/463c244aec5111c36d0cb09db6de312c6bd737f4': {}
 
-  '@allowit/solana@https://codeload.github.com/allowit-hq/allowit-contracts-solana/tar.gz/5ddb898a560001a2e1d4abc463e02e015bb8e7ca#path:/npm/solana':
+  '@allowit/solana@https://codeload.github.com/allowit-hq/allowit-contracts-solana/tar.gz/0b2b463dfb565e13ce1a4d86e6d9dba07db92860#path:/npm/solana':
     dependencies:
       '@allowit/core': https://codeload.github.com/allowit-hq/allowit-core/tar.gz/463c244aec5111c36d0cb09db6de312c6bd737f4
       '@noble/curves': 1.9.7
