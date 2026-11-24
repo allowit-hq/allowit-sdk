@@ -76,11 +76,23 @@ rail supplies only `ownerChain`, which implements Core's `OwnerChain` contract f
 steps of a keypair wallet's setup (build, read and send its transaction) and the check of the owner's approval
 signature. The SDK keeps each signed step and setup in the host's journal and replaces one only when the rail proves
 that it can never apply.
+`installAndFund` takes the wallet kind that the owner reviewed (`walletKind`). That kind, never the service's reply,
+decides whether the owner sets up a wallet account and whether a creation needs the owner's build, and a deployment
+reply that names another kind is refused before anything is signed.
 
 A host never prints a unit of its own. An asset without a known unit is an error in Rust and `null` in npm.
 `npm/src/wallet-kinds.js` is generated from Core by the test `npm_wallet_kinds_equal_the_core_description`;
 run it with `ALLOWIT_WRITE_WALLET_KINDS=1` after a Core change.
 `progress::set_sink` installs the sink for the progress lines of long provider steps.
+
+A typed code names its entry in Core's error catalogue: a title and the help page `<app origin>/help/<code>`. A host
+shows the title, then the sender's own message as the cause and the step, then the help link. A newer server can send
+a code that this release does not know: `errors::entry` then gives no entry, and the host shows the sender's message
+and still links the code's help page. `allowit_sdk::errors` is that catalogue for Rust hosts (`errors::entry(code)`,
+`errors::help_url(origin, code)`), and `@allowit/core` exports it for JavaScript hosts (`errorEntry`,
+`errorHelpPath`). `crates/allowit-sdk/tests/error_catalogue.rs` fails for a code that the SDK's Rust source names
+without an entry, and `npm/tests/error-catalogue.test.mjs` for a code constant of the owner workflow or a declared
+code type without one.
 
 ## Write a portable policy
 
@@ -109,12 +121,15 @@ See the [portable policy reference](docs/policy-reference.md) for source restric
 [`crates/allowit-sdk/`](crates/allowit-sdk/) contains shared workflows without terminal I/O:
 
 - `runtime::Runtime` composes native preparation, required durable retention, submission and recovery.
+- Owner steps that a server sends run in the SDK, over Core's owner-step methods of the rail; a rail without them is refused by their default. `Runtime::submit_owner(step, on, retain, poll, now)` checks the signed step with the rail (`validate_owner_signed`), retains it, sends it once (`broadcast_owner`), again only while the network did not accept it yet, and then looks up its receipt (`observe_owner`) at each polling attempt. The check of the send cutoff before a send is a courtesy by the caller's clock: the network enforces the bound, and a lapse is proven only by `owner_step_lapsed`. A step that the check refuses is not sent by the call: only its receipt answers. `now` is a whole second that the caller read before the call: every check and send takes the second after it plus the whole seconds that the call has taken, so the last second before a cutoff sends nothing. An uncertain send ends the call, and so does a lookup that fails; each error names the step's transaction. Before any other send the caller looks the step up by Core's rule: its receipt (`observe_owner`), then what the network holds (`owner_status`); a step that the network holds waits for its receipt. A rejected send is the rail's error. `on` is the installation that the step acts on, or none for a step that leaves before its wallet is installed, as a creation: every check and every send carries it, and the rail reads the liveness of that wallet before each send. A step on a lapsed wallet is refused for that attempt with Core's `contract_expired` and not sent, the step that renews the wallet's own lifetime excepted; a liveness read without an answer is an uncertain error, no lapse and no pass. `Runtime::submit_owner_step(store, step, on, now)` is the journal form for a caller that keeps a durable record: one pass over the step's record in an `OwnerStepStore` (`MemoryOwnerSteps` in memory), which binds the step's identity to its signed bytes and its installation. It records the step as possibly sent before it leaves, looks a possibly sent step up before any other send, sends the same bytes again only while that lookup stays inconclusive and the rail's check passes, closes a possibly sent step for good when its clock has reached the cutoff (it reads the clock after each lookup, also one that failed, and after a send, since each takes time), and answers the recorded status, which is final only with the step's receipt. A store keeps what is final: it never reopens a closed record and never replaces the status of a receipt. A journal write that fails ends the call with that failure. `Runtime::validate_owner_signed`, `broadcast_owner`, `owner_status`, `owner_step_lapsed`, `wallet_closed` and `prepare_close` pass through to the rail.
 - `plugins` holds the rail plugin registry. `plugins::for_network(network)` returns the registered `RailPlugin` (trait in `allowit_core::vendor::plugin`) for a CAIP-2 id or alias. Engine, CLI and app code reach vendor behavior only through it.
 - `generation`, `owner` and `execution` dispatch owner sign-in, policy generation, owner workflows, execution, status and recovery to the selected plugin. Callers pass their signer capability and a private core `Store`.
 - `typed_request` bounds document ingress and derives the versioned operation identity.
 - `wallet`, `routing` and `config` supply explicit caller bindings and registered network selection.
 - `paid_service` and `marketplace` serve paid calls. See [Paid calls and the marketplace](#paid-calls-and-the-marketplace).
 - `custom_build` serves the build of a Custom wallet. See [Custom wallet build](#custom-wallet-build).
+- `accounting::post_flight(counters, now, usage)` updates the counters that a server keeps for a wallet after one approved operation. It runs Core's standard post-flight (`allowit_core::post_flight`), the one definition that a wallet and the server's policy evaluation also use: the UTC day rolls over, the call counts, the spent units add to the day and the lifetime, the gross amount with its gas adds to the day's volume, and an unpriced operation is marked. Counters of a later day are refused. `accounting::apply_settlement(accounting, evaluated_at, debit, settlement)` applies the operation part of what the rail says a receipt changes (`Runtime::settle_receipt`, Core's `Settlement`): Core's `Settlement::usage_for` counts by the post-flight in the day of the evaluation, and the nonce is the settlement's. For a wallet that counts no gas itself, the server also prices the settlement's `fee_units` with the rail's `price_fee` and charges it with Core's `accounting::charge_fee`, once for each operation and transaction, also when the operation failed. On a final settlement (`Executed` or `Failed`), figures that hold a reserved fee bound for the operation, as a keypair wallet's policy state does when its policy counts the fee, take the price less that reservation (a negative difference releases the unused part), and figures without a reservation take the price. An `Open` settlement charges the price to every figure that it reaches and leaves the reservation whole for the final settlement. The server stores the settlement's gas carry beside the account.
+- `Runtime::settle_receipt` and `Runtime::expense` pass a receipt and an operation's fee ceiling to the rail, which reads what the receipt changes and bounds the operation's expense.
 
 ## Custom wallet build
 
@@ -132,7 +147,9 @@ network supplies the build and the code hash.
    that it computed; another hash is `custom_code_hash_mismatch`.
 
 `custom_build::owner_view(cx, policy_id)` reads the build ticket, the signed source hash and the build with the
-owner's session. `check_code_hash` compares two code hashes. `custom_build::supported(network)` is true when the
+owner's session. `custom_build::check(network, source)` refuses, without building, a source that the rail's Custom
+wallet cannot hold, as its build would: the rail's own limits beyond Core's derivation, such as its storage of the
+state keys that the contract keeps. `check_code_hash` compares two code hashes. `custom_build::supported(network)` is true when the
 rail implements the hook; a rail without it declares `Feature::CustomBuild` skipped. The refusal codes are in
 `custom_build::code`.
 

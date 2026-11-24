@@ -46,6 +46,7 @@ Rail packages can use common core primitives directly. Core has no dependency on
 | `settlement_service` | A settlement service for sellers: the rail's check, submission and settlement read of a payment authorization |
 | `custom_build` | The build of a Custom wallet: the rail's build hook and the client of the server's build routes. The owner's CLI builds the source that the owner signed and hands the code to the server, which uploads it at deployment |
 | `marketplace` | The catalog client of one configured server: `search` and `entry` |
+| `accounting` | The counters that a server keeps for a wallet: `post_flight` updates them after one operation by Core's standard post-flight transition; `apply_settlement` applies a rail's settlement of a receipt (`Runtime::settle_receipt`) |
 | `transport_failure` | Class of a failed rail call: `network_unavailable` (code 7), unknown outcome (code 5) or other |
 | `error` | The error type from `allowit_core::client::error` |
 
@@ -64,6 +65,8 @@ The complete authorization must be durable before the second native simulation s
 Retention failure prevents that RPC step. The caller retains the returned final packet before exposing it to an agent.
 
 `wallet::local_signer` selects the compiled key provider without exposing native private-key bytes.
+`wallet::LocalSigner::from_seed` builds the same signer from a seed that the caller holds, such as
+a server's sending account: the server keeps the seed, and the rail derives the key and signs.
 Native key formats, cryptography and message domains live in the vendor library.
 SDK engine retains secure files, configuration, sessions and workflow sequencing.
 `generation::generate` requires a matching signer network before selecting its registered backend capability.

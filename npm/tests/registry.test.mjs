@@ -245,6 +245,14 @@ for (const rail of sdk.rails()) {
     assert.throws(() => sdk.parseReviewLink(encode({proposal, workPrompt: 'w', extra: 1})), /invalid/);
     assert.match(sdk.reviewAgentPrompt(link, 'https://example.test', 'policy-1', 'wallet-1', fixtures.address), /^Do the work\./);
     assert.deepEqual(sdk.reviewParamLines(network, {}), []);
+    // Every network of the rail opens a review link, and its amounts count in that network's unit.
+    for (const each of rail.networks) {
+      const opened = sdk.parseReviewLink(encode({proposal: {...proposal, network: each.id}, workPrompt: 'w'}));
+      assert.equal(opened.proposal.network, each.id);
+      const native = rail.nativeAsset(each.id);
+      const [line] = sdk.reviewParamLines(each.id, {payment_limit: {Int: String(10 ** native.decimals)}});
+      assert.equal(line.value, `1 ${native.symbol}`);
+    }
 
     // Dispatch only: the SDK's workflow gets the host's transport and the rail's hooks, and a transport failure signs
     // nothing. The SDK tests the workflows with fake hooks; each rail tests its hooks in its repository.
@@ -254,7 +262,7 @@ for (const rail of sdk.rails()) {
     const input = {
       ask: async () => { throw offline; }, sign: async (step) => (signed.push(step), 'signed'),
       journal: {get: (k) => journal.get(k) ?? null, set: (k, v) => void journal.set(k, v), remove: (k) => void journal.delete(k)},
-      key: 'k', policyId: 'p', agent: fixtures.address, amount: '5', onStep() {},
+      key: 'k', policyId: 'p', agent: fixtures.address, amount: '5', walletKind: 'standard', onStep() {},
     };
     await assert.rejects(sdk.installAndFund(network, input), (error) => error === offline);
     for (const alias of rail.networks.find((n) => n.id === network).aliases) {
@@ -317,6 +325,17 @@ test('server documents give their wallet kind, settlement, charged fee and limit
   assert.equal(sdk.limitsOf({limits: [{param: '', limit: {}, spent: {}, remaining: {}}]}), null);
   assert.equal(sdk.paymentLimitsOf({paymentLimits: [{param: '', limit: {}}]}), null);
   assert.equal(sdk.paymentLimitsOf({paymentLimits: {param: 'payment_limit'}}), null);
+  // The readers return Core's declarations: an asset without Core's `name` and `native` is no quantity, and a
+  // settlement that reports no amount has `amount: null`.
+  const partial = {symbol: 'XYZ', decimals: 2};
+  for (const asset of [partial, {...partial, name: 'Example'}, {...partial, native: false}, {...unit, native: 'no'}]) {
+    const short = {units: '150', asset, text: '1.50 XYZ'};
+    assert.equal(sdk.feeChargedOf({feeCharged: short}), null);
+    assert.equal(sdk.settlementOf({settlement: {height: 3, fee: short, amount: null}}), null);
+    assert.equal(sdk.limitsOf({limits: [{param: 'p', limit: short, spent: short, remaining: short}]}), null);
+  }
+  const fee = {units: '150', asset: unit, text: '1.50 XYZ'};
+  assert.deepEqual(sdk.settlementOf({settlement: {height: 3, fee}}), {height: 3, fee, amount: null});
 });
 
 test('a receipt document gives its bounded paid-service context', async () => {

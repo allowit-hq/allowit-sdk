@@ -1,4 +1,4 @@
-import type {OwnerChain, OwnerStep as CoreOwnerStep, PolicyValue as ParamValue} from '@allowit/core';
+import type {OwnerChain, OwnerStep as CoreOwnerStep, PolicyValue as ParamValue, ReviewedPolicy} from '@allowit/core';
 import type {
   WalletKindId,
   WalletKindInfo,
@@ -156,10 +156,26 @@ export interface InstallAndFundInput {
   amount: string;
   /**
    * The policy that the owner reviewed: its exact source and every value, and its ordered rules and tier when the host
-   * shows them. A rail whose deployment ends with an approval of the whole policy signs only this policy.
+   * shows them. A rail whose deployment ends with an approval of the whole policy signs only this policy. `asset` is
+   * the asset that the policy pays in, as the policy names it. A keypair wallet is set up to hold it, `amount` is in
+   * it, and the approval must name it. Without one it is the asset of the network itself.
    */
-  reviewed?: {source: string; params: Record<string, ParamValue>; rules?: unknown; tier?: unknown};
+  reviewed?: ReviewedPolicy;
+  /**
+   * The wallet kind that the owner reviewed. It decides the workflow, never the service's reply: whether the owner sets
+   * up a wallet account (`native`) and whether a creation needs the owner's build (`custom`). A deployment reply that
+   * names another kind is refused, and nothing is signed.
+   */
+  walletKind: WalletKindId;
   onStep: (text: string) => void;
+  /**
+   * Waits for the owner's build of a Custom wallet's code from the reviewed source and resolves with its code hash (64
+   * lowercase hex digits). The workflow decides when a build is needed: when the service holds none
+   * (`custom_build_missing`), and before the owner signs a Custom wallet's creation. It calls `build` once, and the owner
+   * signs only a creation that names that code hash; another one is refused with `custom_code_hash_mismatch` and
+   * nothing is signed. Without it a Custom deployment is refused with `custom_build_missing` before anything is signed.
+   */
+  build?: () => Promise<string>;
 }
 /** One typed param value: Core's `PolicyValue`, the JSON of a policy value. An integer is canonical decimal text. */
 export type {ParamValue};
@@ -177,9 +193,10 @@ export interface UpdateParamsInput {
   expectedRevision?: number;
   /**
    * The installed policy that the owner reviewed: its wallet, exact source, ordered rules and every value. A rail
-   * whose change is an approval of the whole policy signs only this policy with the changed params replaced.
+   * whose change is an approval of the whole policy signs only this policy with the changed params replaced. `asset`
+   * is the asset that the policy pays in; without one it is the asset of the network itself.
    */
-  installed?: {wallet: string; source: string; rules: unknown; params: Record<string, ParamValue>; tier?: unknown};
+  installed?: ReviewedPolicy & {readonly wallet: string; readonly rules: unknown};
   onStep: (text: string) => void;
 }
 /** Typed codes of the owner workflow. `OwnerFlowFailure.code` holds one, another server code or null. */
@@ -192,7 +209,10 @@ export type OwnerFlowCode =
   | 'param_invalid'
   | 'param_out_of_range'
   | 'update_unavailable'
-  | 'revision_changed';
+  | 'revision_changed'
+  | 'asset_mismatch'
+  | 'custom_build_missing'
+  | 'custom_code_hash_mismatch';
 /** The error that `installAndFund` and `updateParams` reject with. */
 export interface OwnerFlowFailure extends Error {
   code: OwnerFlowCode | string | null;
@@ -203,7 +223,7 @@ export interface OwnerFlowFailure extends Error {
 /**
  * The rail hooks of the owner workflows: Core's contract, which the SDK runs and each rail's `ownerChain` implements.
  */
-export type {OwnerChain, TransactionRecord, ApprovalFields, PreparedKeypairSetup, SignedKeypairSetup, ReviewedPolicy} from '@allowit/core';
+export type {OwnerChain, TransactionRecord, ApprovalFields, PreparedKeypairSetup, SignedKeypairSetup, ReviewedPolicy, WalletAsset} from '@allowit/core';
 
 export interface RailPlugin {
   readonly id: string;
@@ -226,8 +246,9 @@ export interface RailPlugin {
     /** The URL fragment prefix of a Review and sign link. */
     fragment: string;
     parseLink(fragment: string): ReviewLink;
-    agentPrompt(link: Pick<ReviewLink, 'workPrompt'>, origin: string, policyId: string, wallet: string, agent: string): string;
-    paramLines(params: ReviewProposal['params']): ReviewParamLine[];
+    agentPrompt(link: Pick<ReviewLink, 'workPrompt' | 'proposal'>, origin: string, policyId: string, wallet: string, agent: string): string;
+    /** Owner-readable lines for the params of a proposal on `network`, in the units of that network's assets. */
+    paramLines(params: ReviewProposal['params'], network: string): ReviewParamLine[];
   };
   /**
    * What the SDK's owner workflows read from the network and check with its keys. The SDK holds the workflows, their
@@ -237,7 +258,8 @@ export interface RailPlugin {
   readonly test: {
     network: string;
     skips: Readonly<Partial<Record<Feature, string>>>;
-    fixtures: {address: string; invalidAddress: string; txHash: string; asset: string};
+    /** `accounts`: more valid accounts, each distinct from `address`, for a test that needs several roles. */
+    fixtures: {address: string; invalidAddress: string; txHash: string; asset: string; accounts?: readonly string[]};
   };
 }
 
@@ -329,9 +351,12 @@ export const PARAM_OUT_OF_RANGE: 'param_out_of_range';
 export const UPDATE_UNAVAILABLE: 'update_unavailable';
 export const REVISION_CHANGED: 'revision_changed';
 export const UPDATE_PARAMS: 'update_params';
+export const ASSET_MISMATCH: 'asset_mismatch';
 export const WALLET_SETUP_REQUIRED: 'wallet_setup_required';
 export const SET_UP_WALLET: 'set_up_wallet';
 export const APPROVE_POLICY: 'approve_policy';
+export const CUSTOM_BUILD_MISSING: 'custom_build_missing';
+export const CUSTOM_CODE_HASH_MISMATCH: 'custom_code_hash_mismatch';
 
 export class AllowitRail extends HTMLElement {
   data: ElementData[ElementKind] | undefined;

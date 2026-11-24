@@ -107,8 +107,7 @@ fn the_on_chain_part_of_a_server_policy_is_portable_and_reports_what_left() {
     assert!(same.left.is_empty() && same.server_only.is_empty());
     assert_eq!(same.kept, ["payment_limit"]);
     assert!(same.figures.is_empty());
-    // A contract wallet keeps only the figures of its kept rules, and no policy state of its
-    // own: a source that writes state is refused.
+    // A contract wallet keeps the figures of its kept rules.
     let daily = portable
         .replace("PAYMENT_LIMIT", "DAILY_SPENDING_LIMIT")
         .replace("payment_limit", "daily_spending_limit");
@@ -119,14 +118,38 @@ fn the_on_chain_part_of_a_server_policy_is_portable_and_reports_what_left() {
         .map(|figure| figure.key)
         .collect();
     assert_eq!(keys, ["day_spent", "day_unpriced"]);
-    let writes = portable.replace(
+    // A policy may keep its own state. The contract keeps a key whose writes all stay, and
+    // the server keeps a key whose write depends on a server function.
+    use allowit_sdk::authoring::Keeper;
+    let counts = portable.replace(
         "    Ok(())",
-        "    allowit::set_state(ctx, \"last\", ctx.request.amount)?;\n    Ok(())",
+        "    let paid: u64 = allowit::get_state(ctx, \"day_paid\")?.unwrap_or(0);\n    allowit::set_state(ctx, \"day_paid\", paid + 1)?;\n    let score = allowit::decision(ctx, &allowit::AllowitDecision { id: \"a\", query: \"Is this research?\", deny_below: 1, allow_above: 2 })?;\n    allowit::set_state(ctx, \"last_score\", score)?;\n    Ok(())",
+    );
+    check_server(&counts).unwrap();
+    let derived = onchain_part(&counts).unwrap();
+    let state: Vec<(&str, Keeper, bool)> = derived
+        .state
+        .iter()
+        .map(|entry| (entry.key.as_str(), entry.keeper, entry.daily))
+        .collect();
+    assert_eq!(
+        state,
+        [
+            ("day_paid", Keeper::Chain, true),
+            ("last_score", Keeper::Server, false)
+        ]
+    );
+    assert!(derived.source.contains("\"day_paid\"") && !derived.source.contains("last_score"));
+    check(&derived.source).unwrap();
+    // The contract must know each key before it runs.
+    let dynamic = portable.replace(
+        "    Ok(())",
+        "    let key = \"last\";\n    allowit::set_state(ctx, key, ctx.request.amount)?;\n    Ok(())",
     );
     assert!(
-        onchain_part(&writes)
+        onchain_part(&dynamic)
             .unwrap_err()
             .message
-            .contains("cannot write policy state")
+            .contains("string literal")
     );
 }
