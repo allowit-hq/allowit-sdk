@@ -41,7 +41,7 @@ dependencies = [
 [[package]]
 name = "allowit-solana"
 version = "0.1.0"
-source = "git+https://github.com/allowit-hq/allowit-contracts-solana.git?rev=295594043da6382d211c106df079f10ea709bf3e#295594043da6382d211c106df079f10ea709bf3e"
+source = "git+https://github.com/allowit-hq/allowit-contracts-solana.git?rev=3f5581cafded32d3d8635324b570c7e0406571cb#3f5581cafded32d3d8635324b570c7e0406571cb"
 dependencies = [
  "allowit-core",
  "base64 0.22.1",
@@ -50,6 +50,7 @@ dependencies = [
  "ed25519-dalek",
  "serde",
  "serde_json",
+ "serde_json_canonicalizer",
  "sha2",
  "solana-address",
  "solana-hash",
