@@ -43,6 +43,14 @@ test('at least one rail is registered', () => {
   assert.equal(customElements.get('allowit-rail'), sdk.AllowitRail);
 });
 
+test('rails keep the stated registration order, which decides the first network', async () => {
+  const registered = await import('../src/registered.js');
+  assert.deepEqual(sdk.rails(), registered.order.map((name) => registered[name]));
+  assert.equal(new Set(sdk.rails()).size, sdk.rails().length);
+  // A new rail is registered after the rails that hosts already default to.
+  assert.equal(sdk.networks()[0], sdk.rails()[0].networks[0]);
+});
+
 for (const rail of sdk.rails()) {
   const {network, skips, fixtures} = rail.test;
 

@@ -9,7 +9,11 @@ export {OwnerFlowError, ownerArchiveKey, OWNER_TRANSACTION_EXPIRED, OWNER_TRANSA
   UPDATE_PARAMS, ASSET_MISMATCH, WALLET_SETUP_REQUIRED, SET_UP_WALLET, APPROVE_POLICY, CUSTOM_BUILD_MISSING,
   CUSTOM_CODE_HASH_MISMATCH} from './owner-workflow.js';
 
-const RAILS = Object.freeze(Object.values(registered));
+const {order, ...plugins} = registered;
+// Every registered plugin is in the stated order once, and the order names nothing else.
+if (new Set(order).size !== order.length || order.length !== Object.keys(plugins).length || order.some((name) => !plugins[name]))
+  throw new Error('The rail registration order differs from the registered rails.');
+const RAILS = Object.freeze(order.map((name) => plugins[name]));
 
 /** Every registered rail plugin, in registration order. */
 export function rails() {
