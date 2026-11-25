@@ -41,7 +41,7 @@ dependencies = [
 [[package]]
 name = "allowit-solana"
 version = "0.1.0"
-source = "git+https://github.com/allowit-hq/allowit-contracts-solana.git?rev=0b2b463dfb565e13ce1a4d86e6d9dba07db92860#0b2b463dfb565e13ce1a4d86e6d9dba07db92860"
+source = "git+https://github.com/allowit-hq/allowit-contracts-solana.git?rev=ecd05d31f197a87cf0f8146102a2176206ee9803#ecd05d31f197a87cf0f8146102a2176206ee9803"
 dependencies = [
  "allowit-core",
  "base64 0.22.1",
