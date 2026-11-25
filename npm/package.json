@@ -17,6 +17,7 @@
   },
   "dependencies": {
     "@allowit/core": "github:allowit-hq/allowit-core#463c244aec5111c36d0cb09db6de312c6bd737f4",
+    "@allowit/solana": "github:allowit-hq/allowit-contracts-solana#fa0e8dc90fb8e8414dcfe46afc048a61e796ddda&path:/npm/solana",
     "@allowit/stellar": "github:allowit-hq/allowit-contracts-stellar#718cce3c720c756669cc3a1ce7d0bdb88c109de1&path:/npm/stellar"
   },
   "scripts": {

@@ -165,9 +165,13 @@ fn generated_keys_round_trip_through_the_private_file() {
         assert_eq!(wallet::inspect_wallet(network, &path).unwrap(), public);
         let family = routing::family(network).unwrap();
         address::check_account(family, &public.address).unwrap();
+        // A key that can sign: the Ed25519 base point. A rail may refuse 32 bytes that are no
+        // point of the curve, because no signer holds such a key.
+        let mut point = [0x66; 32];
+        point[0] = 0x58;
         assert_eq!(
-            runtime::signer_identity(network, &[7; 32]).unwrap(),
-            runtime::signer_identity(network, &[7; 32]).unwrap()
+            runtime::signer_identity(network, &point).unwrap(),
+            runtime::signer_identity(network, &point).unwrap()
         );
         assert!(
             wallet::generate_wallet(network, &path).is_err(),
