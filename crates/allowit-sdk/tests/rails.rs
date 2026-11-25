@@ -664,6 +664,18 @@ fn an_imported_profile_prints_its_params_in_human_units() {
         let read = rail.draft_params(network, &document).unwrap();
         let lines = kinds::param_lines(network, &document).unwrap();
         assert_eq!(lines.len(), description.params.len());
+        // A host reads each value as the profile decodes it, wherever the rail keeps it.
+        let values = kinds::param_values(network, &document).unwrap();
+        assert_eq!(values.len(), description.params.len());
+        for (key, value) in &values {
+            assert_eq!(
+                serde_json::to_value(&description.params[key]).unwrap(),
+                *value,
+                "{}: {key}",
+                rail.id()
+            );
+        }
+        assert!(kinds::param_values(network, &serde_json::json!({})).is_err());
         let registry = allowit_sdk::policy_metadata::canonical_function_registry().unwrap();
         for line in &lines {
             assert!(description.params.contains_key(&line.key), "{line:?}");
