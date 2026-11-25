@@ -65,6 +65,20 @@ pub fn param_lines(network: &str, document: &serde_json::Value) -> Result<Vec<Pa
     )
 }
 
+/// The params of a generated draft, a policy, a public wallet profile or an installation document
+/// of the rail of `network`, as that rail reads its own document: each key with its
+/// `PolicyValue` JSON, in the order of the document. A host reads a param's value here, never at
+/// a place in the document, whose shape is the rail's.
+pub fn param_values(
+    network: &str,
+    document: &serde_json::Value,
+) -> Result<Vec<(String, serde_json::Value)>> {
+    let network = normalize(network)?;
+    Ok(for_network(network)?
+        .draft_params(network, document)?
+        .params)
+}
+
 /// Owner-readable lines for the params of an imported wallet profile. The rail reads the
 /// profile document, so the unit of its installed asset is the one that the rail resolves.
 pub fn profile_param_lines(profile: &crate::profiles::Profile) -> Result<Vec<ParamLine>> {
